@@ -1,0 +1,4 @@
+Behavior notes for calculator
+
+- divide by zero: confirm expected behavior before changing
+- average for empty list: prefer explicit decision

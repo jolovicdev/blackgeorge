@@ -1,0 +1,57 @@
+site_name: Blackgeorge
+docs_dir: docs
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: blue grey
+      accent: indigo
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - scheme: slate
+      primary: blue grey
+      accent: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.top
+    - toc.follow
+    - search.highlight
+    - search.suggest
+    - content.code.copy
+plugins:
+  - search
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __line
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - tables
+  - toc:
+      permalink: true
+exclude_docs: README.md
+nav:
+  - Home: index.md
+  - Quickstart: quickstart.md
+  - Concepts: concepts.md
+  - Desk: desk.md
+  - Worker: worker.md
+  - Workforce: workforce.md
+  - Workflow: workflow.md
+  - Tools: tools.md
+  - Events and streaming: events.md
+  - Storage: storage.md
+  - Memory: memory.md
+  - Adapters: adapters.md
+  - Core types: core-types.md
+  - Examples: examples.md
+  - Development: development.md

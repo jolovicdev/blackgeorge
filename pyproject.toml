@@ -1,0 +1,46 @@
+[project]
+name = "blackgeorge"
+version = "0.1.0"
+description = "Agentic framework with desk/worker/workforce primitives"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "instructor[litellm]>=1.11.0",
+    "litellm>=1.80.0",
+    "pydantic>=2.8.0",
+]
+
+[dependency-groups]
+dev = [
+    "mypy>=1.11.0",
+    "mkdocs",
+    "mkdocs-material",
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.23.0",
+    "ruff>=0.6.0",
+]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.12"
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_any_generics = true
+no_implicit_optional = true
+strict_equality = true
+warn_return_any = true
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[build-system]
+requires = ["uv_build>=0.9.11,<0.10.0"]
+build-backend = "uv_build"
