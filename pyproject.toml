@@ -3,6 +3,9 @@ name = "blackgeorge"
 version = "0.1.0"
 description = "Agentic framework with desk/worker/workforce primitives"
 readme = "README.md"
+license = { file = "LICENCE.md" }
+authors = [{ name = "Dušsan Jolović", email = "jolovic@pm.me" }]
+urls = { Repository = "https://github.com/jolovicdev/blackgeorge" }
 requires-python = ">=3.12"
 dependencies = [
     "instructor[litellm]>=1.11.0",
