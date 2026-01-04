@@ -10,8 +10,14 @@ Preview locally with `uv run mkdocs serve`.
 ## Install
 
 ```
-uv pip install -e .
+uv add blackgeorge
 ```
+
+```
+pip install blackgeorge
+```
+
+For development setup, see `docs/development.md`.
 
 ## Basic usage
 

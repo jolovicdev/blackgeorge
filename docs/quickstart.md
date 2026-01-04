@@ -4,17 +4,15 @@ This guide gets you from zero to a running worker quickly.
 
 ## Install
 
-Use editable install during development.
-
 ```
-uv pip install -e .
+uv add blackgeorge
 ```
 
-Or use pip if you do not use uv.
+```
+pip install blackgeorge
+```
 
-```
-pip install -e .
-```
+For development setup, see `development.md`.
 
 ## Provider setup
 
