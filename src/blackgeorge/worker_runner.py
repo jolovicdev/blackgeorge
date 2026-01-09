@@ -12,7 +12,7 @@ from blackgeorge.core.tool_call import ToolCall
 from blackgeorge.core.types import RunStatus
 from blackgeorge.store.state import RunState
 from blackgeorge.tools.base import Tool, ToolResult
-from blackgeorge.tools.execution import execute_tool
+from blackgeorge.tools.execution import aexecute_tool, execute_tool
 from blackgeorge.tools.registry import Toolbelt
 from blackgeorge.utils import new_id
 from blackgeorge.worker_context import (
@@ -641,7 +641,7 @@ class WorkerRunner:
                 emit_assistant_message(emit, self.name, assistant_message)
                 for call in response.tool_calls:
                     tool_calls.append(call)
-                    if len(tool_calls) > max_tool_calls:
+                    if len(tool_calls) >= max_tool_calls:
                         errors.append("Max tool calls exceeded")
                         emit("worker.failed", self.name, {"error": errors[-1]})
                         report = _build_report(
@@ -657,6 +657,17 @@ class WorkerRunner:
                             errors,
                         )
                         return report, None
+                    if call.error:
+                        result = ToolResult(error=call.error)
+                        emit(
+                            "tool.failed",
+                            call.name,
+                            {"tool_call_id": call.id, "error": result.error},
+                        )
+                        messages.append(tool_message(result, call))
+                        replace_tool_call(tool_calls, tool_call_with_result(call, result))
+                        continue
+
                     tool = self.toolbelt.resolve(call.name)
                     if tool is None:
                         result = ToolResult(error=f"Tool not found: {call.name}")
@@ -1092,7 +1103,7 @@ class WorkerRunner:
                 emit_assistant_message(emit, self.name, assistant_message)
                 for call in response.tool_calls:
                     tool_calls.append(call)
-                    if len(tool_calls) > max_tool_calls:
+                    if len(tool_calls) >= max_tool_calls:
                         errors.append("Max tool calls exceeded")
                         emit("worker.failed", self.name, {"error": errors[-1]})
                         report = _build_report(
@@ -1108,6 +1119,17 @@ class WorkerRunner:
                             errors,
                         )
                         return report, None
+                    if call.error:
+                        result = ToolResult(error=call.error)
+                        emit(
+                            "tool.failed",
+                            call.name,
+                            {"tool_call_id": call.id, "error": result.error},
+                        )
+                        messages.append(tool_message(result, call))
+                        replace_tool_call(tool_calls, tool_call_with_result(call, result))
+                        continue
+
                     tool = self.toolbelt.resolve(call.name)
                     if tool is None:
                         result = ToolResult(error=f"Tool not found: {call.name}")
@@ -1161,7 +1183,7 @@ class WorkerRunner:
                         return report, state
 
                     emit("tool.started", tool.name, {"tool_call_id": call.id})
-                    result = execute_tool(tool, call)
+                    result = await aexecute_tool(tool, call)
                     if result.error:
                         emit(
                             "tool.failed",
