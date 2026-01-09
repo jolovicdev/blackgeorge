@@ -231,3 +231,52 @@ def test_context_window_respect_disabled() -> None:
     report = desk.run(worker, Job(input="run"))
     assert report.status == "failed"
     assert report.errors
+
+
+def test_max_tool_calls_limit_enforced() -> None:
+    @tool()
+    def dummy_tool() -> str:
+        return "ok"
+
+    responses = [
+        ModelResponse(
+            content=None,
+            tool_calls=[
+                ToolCall(id=f"call_{i}", name="dummy_tool", arguments={}) for i in range(5)
+            ],
+            usage={},
+            raw={},
+        ),
+    ]
+    desk = Desk(
+        model="fake",
+        adapter=FakeAdapter(responses),
+        run_store=InMemoryRunStore(),
+        max_tool_calls=3,
+    )
+    worker = Worker(name="Worker", model="fake", tools=[dummy_tool])
+    report = desk.run(worker, Job(input="run"))
+    assert report.status == "failed"
+    assert len(report.tool_calls) == 3
+    assert any("Max tool calls exceeded" in error for error in report.errors)
+
+
+def test_streaming_with_content_only() -> None:
+    from tests.utils import StreamingAdapter
+
+    streams = [
+        [
+            {"choices": [{"delta": {"content": "Hello"}}]},
+            {"choices": [{"delta": {"content": " world"}}]},
+            {"choices": [{"delta": {}}], "usage": {"total_tokens": 10}},
+        ]
+    ]
+    desk = Desk(
+        model="fake", adapter=StreamingAdapter(streams), run_store=InMemoryRunStore(), stream=True
+    )
+    worker = Worker(name="Worker", model="fake")
+    report = desk.run(worker, Job(input="run"))
+    assert report.status == "completed"
+    assert report.content == "Hello world"
+
+

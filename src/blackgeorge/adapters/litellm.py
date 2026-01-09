@@ -23,13 +23,17 @@ def _parse_tool_calls(message: Any) -> list[ToolCall]:
         name = _get(function, "name")
         arguments_raw = _get(function, "arguments")
         arguments: dict[str, Any] = {}
+        error: str | None = None
+
         if isinstance(arguments_raw, str) and arguments_raw:
             try:
                 arguments = json.loads(arguments_raw)
-            except json.JSONDecodeError:
+            except json.JSONDecodeError as e:
+                error = f"Invalid JSON in tool arguments: {e}. Raw: {arguments_raw[:100]}"
                 arguments = {}
+
         call_id = _get(call, "id") or new_id()
-        parsed.append(ToolCall(id=call_id, name=name, arguments=arguments))
+        parsed.append(ToolCall(id=call_id, name=name, arguments=arguments, error=error))
 
     return parsed
 

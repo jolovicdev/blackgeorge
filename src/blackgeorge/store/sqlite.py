@@ -76,6 +76,10 @@ class SQLiteRunStore(RunStore):
                 )
                 """
             )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_events_run_id ON events(run_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_created_at ON runs(created_at)")
             conn.commit()
 
     def _connect(self) -> sqlite3.Connection:

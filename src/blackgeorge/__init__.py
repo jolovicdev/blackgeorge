@@ -6,6 +6,7 @@ from blackgeorge.core.report import Report
 from blackgeorge.core.tool_call import ToolCall
 from blackgeorge.core.types import MessageRole, PendingActionType, RunStatus, WorkforceMode
 from blackgeorge.desk import Desk
+from blackgeorge.logging import StructuredLogger, get_logger
 from blackgeorge.tools import Tool, Toolbelt, Toolkit, tool
 from blackgeorge.worker import Worker
 from blackgeorge.workforce import Workforce
@@ -25,6 +26,7 @@ __all__ = [
     "Report",
     "RunOutput",
     "RunStatus",
+    "StructuredLogger",
     "Tool",
     "ToolCall",
     "Toolbelt",
@@ -32,5 +34,6 @@ __all__ = [
     "Workforce",
     "WorkforceMode",
     "Worker",
+    "get_logger",
     "tool",
 ]
