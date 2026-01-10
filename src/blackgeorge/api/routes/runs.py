@@ -30,7 +30,7 @@ async def run_worker(
     job = Job(
         input=request.input,
         expected_output=request.expected_output,
-        response_schema=None,
+        response_schema=request.response_schema,
         constraints=request.constraints,
         metadata=request.metadata,
     )
@@ -50,7 +50,7 @@ async def run_workforce(
     job = Job(
         input=request.input,
         expected_output=request.expected_output,
-        response_schema=None,
+        response_schema=request.response_schema,
         constraints=request.constraints,
         metadata=request.metadata,
     )

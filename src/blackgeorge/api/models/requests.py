@@ -9,7 +9,6 @@ class WorkerCreateRequest(BaseModel):
     name: str
     model: str | None = None
     instructions: str | None = None
-    tools: list[str] = Field(default_factory=list)
     memory_scope: str | None = None
 
 
