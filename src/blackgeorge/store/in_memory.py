@@ -67,3 +67,6 @@ class InMemoryRunStore(RunStore):
 
     def get_events(self, run_id: str) -> list[Event]:
         return list(self._events.get(run_id, []))
+
+    def list_runs(self) -> list[RunRecord]:
+        return list(self._runs.values())

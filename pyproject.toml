@@ -8,13 +8,17 @@ authors = [{ name = "Dušsan Jolović", email = "jolovic@pm.me" }]
 urls = { Repository = "https://github.com/jolovicdev/blackgeorge" }
 requires-python = ">=3.12"
 dependencies = [
+    "fastapi>=0.115.0",
     "instructor[litellm]>=1.11.0",
     "litellm>=1.80.0",
     "pydantic>=2.8.0",
+    "pydantic-settings>=2.6.0",
+    "uvicorn[standard]>=0.32.0",
 ]
 
 [dependency-groups]
 dev = [
+    "httpx>=0.28.0",
     "mypy>=1.11.0",
     "mkdocs",
     "mkdocs-material",
@@ -43,6 +47,7 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
+per-file-ignores = { "src/blackgeorge/api/routes/*.py" = ["B008"] }
 
 [build-system]
 requires = ["uv_build>=0.9.11,<0.10.0"]

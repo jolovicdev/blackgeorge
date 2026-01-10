@@ -191,6 +191,36 @@ class SQLiteRunStore(RunStore):
             rows = cursor.fetchall()
         return [_deserialize_event(row[0]) for row in rows]
 
+    def list_runs(self) -> list[RunRecord]:
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                SELECT id, status, input, output, output_json, state_json, created_at, updated_at
+                FROM runs ORDER BY created_at DESC
+                """
+            )
+            rows = cursor.fetchall()
+        records = []
+        for row in rows:
+            input_payload = json.loads(row[2]) if row[2] else None
+            output_json = json.loads(row[4]) if row[4] else None
+            state = _deserialize_state(row[5])
+            created_at = datetime_from_iso(row[6])
+            updated_at = datetime_from_iso(row[7])
+            records.append(
+                RunRecord(
+                    run_id=row[0],
+                    status=row[1],
+                    input=input_payload,
+                    output=row[3],
+                    output_json=output_json,
+                    created_at=created_at,
+                    updated_at=updated_at,
+                    state=state,
+                )
+            )
+        return records
+
 
 def datetime_from_iso(value: str) -> datetime:
     return datetime.fromisoformat(value)
