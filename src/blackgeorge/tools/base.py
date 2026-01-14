@@ -8,6 +8,7 @@ from blackgeorge.core.tool_call import ToolCall
 
 ToolPreHook = Callable[[ToolCall], Any]
 ToolPostHook = Callable[[ToolCall, "ToolResult"], Any]
+ProgressCallback = Callable[[str], None]
 
 
 @dataclass(frozen=True)
@@ -15,6 +16,8 @@ class ToolResult:
     content: str | None = None
     data: Any | None = None
     error: str | None = None
+    timed_out: bool = False
+    cancelled: bool = False
 
 
 @dataclass(frozen=True)
@@ -31,3 +34,6 @@ class Tool:
     post: tuple[ToolPostHook, ...] = ()
     confirmation_prompt: str | None = None
     user_input_prompt: str | None = None
+    timeout: float | None = None
+    retries: int = 0
+    retry_delay: float = 1.0

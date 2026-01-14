@@ -17,6 +17,9 @@ A tool includes:
 - pre and post hooks
 - confirmation_prompt
 - user_input_prompt
+- timeout
+- retries
+- retry_delay
 
 `external_execution` is available for your own conventions. The core worker does not change behavior based on this flag.
 
@@ -61,6 +64,34 @@ def ask(question: str, user_input: str) -> str:
 
 When resuming, the provided input is inserted into the tool arguments under `user_input` by default.
 
+## Timeouts and retries
+
+Tools can specify timeout and retry behavior for resilient execution.
+Retries use exponential backoff based on `retry_delay`.
+
+```python
+from blackgeorge.tools import tool
+
+@tool(timeout=5.0, retries=3, retry_delay=1.0)
+async def fetch_data(url: str) -> str:
+    ...
+```
+
+The `ToolResult` includes `timed_out` and `cancelled` flags to detect failure modes.
+
+## Cancellation
+
+Async tool execution supports cancellation via an event:
+
+```python
+import asyncio
+from blackgeorge.tools.execution import aexecute_tool
+
+cancel_event = asyncio.Event()
+result = await aexecute_tool(tool, call, cancel_event=cancel_event)
+cancel_event.set()
+```
+
 ## ToolResult
 
 Tools can return a `ToolResult` to control content, data, and error fields directly.
@@ -88,6 +119,22 @@ from blackgeorge.tools import Toolbelt
 
 belt = Toolbelt()
 ```
+
+## MCP Tool Integration
+
+Connect to MCP (Model Context Protocol) servers and use their tools.
+Use `connect_sse` when pointing at an SSE endpoint.
+
+```python
+from blackgeorge.tools import MCPToolProvider
+
+async with MCPToolProvider() as provider:
+    await provider.connect_stdio("uv", ["run", "my-mcp-server"])
+    tools = provider.list_tools()
+    result = await provider.acall_tool("fetch", {"url": "https://example.com"})
+```
+
+MCP tools are automatically converted to the blackgeorge `Tool` format and can be passed to workers.
 
 ## Execution path
 

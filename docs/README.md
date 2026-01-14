@@ -1,8 +1,15 @@
 # Blackgeorge Docs
 
-Blackgeorge is a code-first agent framework built around three primitives: Desk, Worker, and Workforce. It focuses on clear APIs, structured outputs, tool safety, and pause/resume flows.
+Blackgeorge is a Python LLM agent framework built around three primitives: Desk, Worker, and Workforce. It provides clear APIs for tool calling, multi-agent coordination, workflow orchestration, structured outputs, and run persistence.
 
 If you want a fast start, read the quickstart first. If you want to understand how the system works, read Concepts and then the component guides.
+
+## What this documentation covers
+
+- building tool-using agents and multi-agent teams
+- orchestrating workflows with steps and parallel execution
+- handling pause/resume flows and persisted run state
+- integrating memory, events, LiteLLM adapters, and external tool providers
 
 ## Start here
 

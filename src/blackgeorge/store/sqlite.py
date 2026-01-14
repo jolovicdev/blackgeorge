@@ -15,7 +15,7 @@ from blackgeorge.utils import utc_now
 
 def _normalize(value: Any) -> Any:
     if isinstance(value, BaseModel):
-        return value.model_dump(mode="json")
+        return value.model_dump(mode="json", warnings=False)
     if is_dataclass(value) and not isinstance(value, type):
         return asdict(cast(Any, value))
     if isinstance(value, dict):
@@ -34,7 +34,7 @@ def _serialize(value: Any) -> str:
 def _serialize_state(state: RunState | None) -> str | None:
     if state is None:
         return None
-    return _serialize(state.model_dump(mode="json"))
+    return _serialize(state.model_dump(mode="json", warnings=False))
 
 
 def _deserialize_state(payload: str | None) -> RunState | None:
@@ -174,7 +174,7 @@ class SQLiteRunStore(RunStore):
                     event.event_id,
                     event.run_id,
                     event.type,
-                    _serialize(event.model_dump(mode="json")),
+                    _serialize(event.model_dump(mode="json", warnings=False)),
                     event.timestamp.isoformat(),
                 ),
             )

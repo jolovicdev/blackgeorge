@@ -64,6 +64,9 @@ Tool events:
 - tool.confirmation_requested
 - tool.user_input_requested
 
+`tool.completed` payloads include `tool_call_id` and may include `result_preview`,
+`result_truncated`, `timed_out`, and `cancelled` when available.
+
 Streaming and message events:
 
 - stream.token

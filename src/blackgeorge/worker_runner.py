@@ -1,3 +1,4 @@
+import json
 from collections.abc import Callable, Iterable
 from typing import Any, cast
 
@@ -123,6 +124,36 @@ def _report_error(
 
 def _should_stream(stream: bool, tools: list[Tool], response_schema: Any | None) -> bool:
     return stream and not tools and response_schema is None
+
+
+def _tool_result_preview(result: ToolResult, limit: int) -> tuple[str | None, bool]:
+    if result.content is not None:
+        text = result.content
+    elif result.data is not None:
+        try:
+            text = json.dumps(result.data, ensure_ascii=True)
+        except (TypeError, ValueError):
+            text = str(result.data)
+    elif result.error is not None:
+        text = result.error
+    else:
+        return None, False
+    if len(text) > limit:
+        return f"{text[:limit]}...", True
+    return text, False
+
+
+def _tool_event_payload(call: ToolCall, result: ToolResult, limit: int = 200) -> dict[str, Any]:
+    payload: dict[str, Any] = {"tool_call_id": call.id}
+    preview, truncated = _tool_result_preview(result, limit)
+    if preview is not None:
+        payload["result_preview"] = preview
+        payload["result_truncated"] = truncated
+    if result.timed_out:
+        payload["timed_out"] = True
+    if result.cancelled:
+        payload["cancelled"] = True
+    return payload
 
 
 class WorkerRunner:
@@ -729,7 +760,7 @@ class WorkerRunner:
                             {"tool_call_id": call.id, "error": result.error},
                         )
                     else:
-                        emit("tool.completed", tool.name, {"tool_call_id": call.id})
+                        emit("tool.completed", tool.name, _tool_event_payload(call, result))
                     tool_result_message = tool_message(result, call)
                     messages.append(tool_result_message)
                     replace_tool_call(tool_calls, tool_call_with_result(call, result))
@@ -1191,7 +1222,7 @@ class WorkerRunner:
                             {"tool_call_id": call.id, "error": result.error},
                         )
                     else:
-                        emit("tool.completed", tool.name, {"tool_call_id": call.id})
+                        emit("tool.completed", tool.name, _tool_event_payload(call, result))
                     tool_result_message = tool_message(result, call)
                     messages.append(tool_result_message)
                     replace_tool_call(tool_calls, tool_call_with_result(call, result))
@@ -1446,7 +1477,7 @@ class WorkerRunner:
                 if result.error:
                     emit("tool.failed", tool.name, {"tool_call_id": call.id, "error": result.error})
                 else:
-                    emit("tool.completed", tool.name, {"tool_call_id": call.id})
+                    emit("tool.completed", tool.name, _tool_event_payload(call, result))
                 tool_result_message = tool_message(result, call)
                 messages.append(tool_result_message)
                 replace_tool_call(tool_calls, tool_call_with_result(call, result))
@@ -1546,7 +1577,7 @@ class WorkerRunner:
                 if result.error:
                     emit("tool.failed", tool.name, {"tool_call_id": call.id, "error": result.error})
                 else:
-                    emit("tool.completed", tool.name, {"tool_call_id": call.id})
+                    emit("tool.completed", tool.name, _tool_event_payload(call, result))
                 tool_result_message = tool_message(result, call)
                 messages.append(tool_result_message)
                 replace_tool_call(tool_calls, tool_call_with_result(call, result))

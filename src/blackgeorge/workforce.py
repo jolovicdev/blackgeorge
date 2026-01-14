@@ -3,6 +3,8 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from blackgeorge.collaboration.blackboard import Blackboard
+from blackgeorge.collaboration.channel import Channel
 from blackgeorge.core.event import Event
 from blackgeorge.core.job import Job
 from blackgeorge.core.report import Report
@@ -122,6 +124,8 @@ class Workforce:
         name: str | None = None,
         manager: Worker | None = None,
         reducer: Reducer | None = None,
+        channel: Channel | None = None,
+        blackboard: Blackboard | None = None,
     ) -> None:
         if not workers:
             raise ValueError("Workforce requires at least one worker")
@@ -130,6 +134,8 @@ class Workforce:
         self.name = name or "workforce"
         self.manager = manager
         self.reducer = reducer
+        self.channel = channel or Channel()
+        self.blackboard = blackboard or Blackboard()
 
     def _run_worker(
         self,

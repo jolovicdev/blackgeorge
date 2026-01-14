@@ -18,7 +18,7 @@ class ToolCall(BaseModel):
         if value is None:
             return None
         if isinstance(value, BaseModel):
-            return value.model_dump(mode="json")
+            return value.model_dump(mode="json", warnings=False)
         if is_dataclass(value) and not isinstance(value, type):
             return asdict(cast(Any, value))
         return value
