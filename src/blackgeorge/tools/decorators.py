@@ -13,6 +13,9 @@ def tool(
     external_execution: bool = False,
     confirmation_prompt: str | None = None,
     user_input_prompt: str | None = None,
+    timeout: float | None = None,
+    retries: int = 0,
+    retry_delay: float = 1.0,
 ) -> Callable[[Callable[..., Any]], Tool]:
     def wrapper(fn: Callable[..., Any]) -> Tool:
         input_model = build_input_model(fn)
@@ -30,6 +33,9 @@ def tool(
             external_execution=external_execution,
             confirmation_prompt=confirmation_prompt,
             user_input_prompt=user_input_prompt,
+            timeout=timeout,
+            retries=retries,
+            retry_delay=retry_delay,
         )
 
     return wrapper

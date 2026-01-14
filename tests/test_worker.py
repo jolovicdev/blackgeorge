@@ -278,5 +278,3 @@ def test_streaming_with_content_only() -> None:
     report = desk.run(worker, Job(input="run"))
     assert report.status == "completed"
     assert report.content == "Hello world"
-
-

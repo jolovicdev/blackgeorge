@@ -21,6 +21,32 @@ The in-memory store keeps data in a dictionary. It is fast and does not persist 
 
 The SQLite store persists memory to a file. Values are serialized as JSON strings and can be searched by key or value substring.
 
+## VectorMemoryStore
+
+The vector store uses ChromaDB for semantic search with embeddings. It persists locally and supports similarity-based retrieval.
+
+```python
+from blackgeorge.memory import VectorMemoryStore
+
+store = VectorMemoryStore("/path/to/db", chunk_size=4000, chunk_overlap=200)
+
+store.write("doc1", "AI is transforming healthcare", "global")
+store.write("doc2", "Machine learning predicts outcomes", "global")
+
+results = store.search("artificial intelligence medicine", "global", top_k=5)
+for key, value in results:
+    print(f"{key}: {value}")
+
+doc = store.read("doc1", "global")
+```
+
+Features:
+
+- Configurable chunking for long documents
+- Cosine similarity for semantic matching
+- Scope-based isolation between workers/runs
+- JSON serialization for complex values
+
 ## ExternalMemoryStore
 
 `ExternalMemoryStore` is a stub you can implement if you want to integrate with another storage system.

@@ -51,6 +51,13 @@ def main() -> None:
     require_api_key()
 
     from blackgeorge import Desk, Job, Worker, Workforce
+    from blackgeorge.collaboration import (
+        Blackboard,
+        Channel,
+        blackboard_write_tool,
+        channel_receive_tool,
+        channel_send_tool,
+    )
     from blackgeorge.workflow import Parallel, Step
     from examples.coding_agent.schema import ChangeReport
     from examples.coding_agent.tools import (
@@ -58,12 +65,23 @@ def main() -> None:
         list_files,
         modified_files,
         read_file,
+        recall,
+        remember,
         restore_modified_files,
+        search_docs,
         write_file,
     )
 
     storage_dir = str(Path(__file__).resolve().parent / ".blackgeorge")
     stream_enabled = os.getenv("BLACKGEORGE_STREAM", "1") == "1"
+
+    channel = Channel()
+    blackboard = Blackboard()
+    manager_blackboard_write = blackboard_write_tool(blackboard, author="Manager")
+    reviewer_blackboard_write = blackboard_write_tool(blackboard, author="Reviewer")
+    coder_channel_send = channel_send_tool(channel, sender="Coder")
+    reviewer_channel_receive = channel_receive_tool(channel, recipient="Reviewer")
+
     desk = Desk(
         model=MODEL_NAME,
         storage_dir=storage_dir,
@@ -96,31 +114,57 @@ def main() -> None:
     manager = Worker(
         name="Manager",
         model=MODEL_NAME,
+        tools=[manager_blackboard_write],
         instructions=(
             "You select the best worker for the task. "
-            "Always choose Coder unless the task is only a summary."
+            "Always choose Coder unless the task is only a summary. "
+            "Post your decision to the blackboard under 'manager_decision' using blackboard_write."
         ),
     )
 
     coder = Worker(
         name="Coder",
         model=MODEL_NAME,
-        tools=[list_files, read_file, write_file, ask_user],
+        tools=[
+            list_files,
+            read_file,
+            write_file,
+            ask_user,
+            search_docs,
+            remember,
+            recall,
+            coder_channel_send,
+        ],
         instructions=(
             "You are a coding agent working inside a small project. "
             "Use list_files and read_file to inspect the project. "
+            "Use search_docs to find relevant code by semantic search. "
+            "Use remember/recall to save and retrieve notes. "
             "Spec is in spec.txt. "
             "Before deciding behavior for divide by zero or empty averages, "
             "call ask_user with a specific question in the question field. "
-            "Use write_file to apply changes."
+            "Use write_file to apply changes. "
+            "When done, send a message to Reviewer via channel_send."
         ),
     )
 
     reviewer = Worker(
         name="Reviewer",
         model=MODEL_NAME,
+        tools=[
+            search_docs,
+            read_file,
+            recall,
+            reviewer_channel_receive,
+            reviewer_blackboard_write,
+        ],
         instructions=(
             "You summarize the changes and provide a structured report. "
+            "Use search_docs and read_file to verify changes in the codebase. "
+            "Use recall to check any notes left by the Coder. "
+            "Use changed_files from the job input to avoid guessing. "
+            "Post your review summary to the blackboard under 'review_summary' "
+            "using blackboard_write. "
             "Only respond with the schema fields."
         ),
     )
@@ -128,7 +172,11 @@ def main() -> None:
     narrator = Worker(
         name="Narrator",
         model=MODEL_NAME,
-        instructions=("You produce a concise human-readable summary of the changes."),
+        tools=[recall],
+        instructions=(
+            "You produce a concise human-readable summary of the changes. "
+            "Use recall to check notes from the team."
+        ),
     )
 
     workforce = Workforce(
@@ -136,7 +184,12 @@ def main() -> None:
         mode="managed",
         name="coding_team",
         manager=manager,
+        channel=channel,
+        blackboard=blackboard,
     )
+
+    blackboard.write("project_name", "calculator", author="system")
+    blackboard.write("task_started", True, author="system")
 
     job = Job(
         input={
@@ -146,6 +199,8 @@ def main() -> None:
                 "Confirm divide-by-zero behavior with ask_user.",
                 "Confirm empty-average behavior with ask_user.",
                 "Apply changes using write_file.",
+                "Use search_docs to find relevant code.",
+                "Use remember to save important decisions.",
             ],
         },
         expected_output="Updated project files with consistent behavior.",
@@ -167,10 +222,20 @@ def main() -> None:
             print(report.errors)
             return
 
+        print("\n--- Blackboard State ---")
+        bb_keys = blackboard.keys()
+        for key in bb_keys:
+            print(f"  {key}: {blackboard.read(key)}")
+
+        print("\n--- Channel Messages ---")
+        for msg in channel.all_messages():
+            print(f"  [{msg.sender} -> {msg.recipient or 'all'}]: {msg.content}")
+
         flow_job = Job(
             input={
                 "source_report": report.content or "",
                 "notes": "Generate a summary and a structured change report.",
+                "changed_files": modified_files(),
             }
         )
 
@@ -193,17 +258,21 @@ def main() -> None:
 
         flow = desk.flow(
             [
-                Step(reviewer, job_builder=review_job),
                 Parallel(
-                    Step(narrator, job_builder=narrative_job),
                     Step(reviewer, job_builder=review_job),
+                    Step(narrator, job_builder=narrative_job),
                 ),
             ]
         )
 
         flow_report = flow.run(flow_job)
 
-        print("Final report status:", flow_report.status)
+        print("\n--- Blackboard State After Flow ---")
+        bb_keys = blackboard.keys()
+        for key in bb_keys:
+            print(f"  {key}: {blackboard.read(key)}")
+
+        print("\nFinal report status:", flow_report.status)
         print("Final report content:\n", flow_report.content)
         print("Run store path:", desk.db_path)
         print("Events stored:", len(desk.run_store.get_events(report.run_id)))

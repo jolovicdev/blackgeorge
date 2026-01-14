@@ -1,11 +1,47 @@
-# Blackgeorge
+# Blackgeorge: Python Agent Framework for LLM Tool-Calling and Multi-Agent Orchestration
 
-Blackgeorge is a code-first agentic framework built around the Desk, Worker, and Workforce primitives. It focuses on clear APIs, structured outputs, tool safety, and pause/resume flows.
+[![PyPI version](https://badge.fury.io/py/blackgeorge.svg)](https://pypi.org/project/blackgeorge/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 
-## Docs
+A code-first Python framework for building AI agents, tool-calling workflows, and multi-agent systems with explicit APIs, structured outputs, safe tool execution, and pause/resume flows.
 
-See `docs/README.md` for the full documentation set.
-Preview locally with `uv run mkdocs serve`.
+## What you can build with this Python AI agent framework
+
+- tool-calling AI agents with validated inputs
+- multi-agent teams that coordinate work
+- agentic workflows with parallel and sequential steps
+- LLM services with durable run state, events, and resume
+
+## Core primitives for agent orchestration
+
+- **Desk**: orchestrates runs, events, and persistence
+- **Worker**: single-agent execution with tools and memory
+- **Workforce**: multi-worker coordination and management modes
+- **Workflow**: step-based flows with parallel execution
+
+## Feature highlights for tool-calling and multi-agent workflows
+
+- tool execution with confirmation, user input, timeouts, retries, and cancellation
+- structured output support with Pydantic models
+- event streaming and run store persistence
+- collaboration primitives: channel messaging and blackboard state
+- memory stores including vector memory with configurable chunking
+- LiteLLM adapter for OpenAI-compatible model providers
+- MCP tool integration for external tool providers
+
+## Why Blackgeorge
+
+If you want a LangChain alternative that stays close to the metal, Blackgeorge emphasizes small, explicit primitives and clear execution flow. Compared to CrewAI or AutoGen, it keeps orchestration and tool calling predictable while still supporting multi-agent systems, workflows, and OpenAI-compatible function calling through LiteLLM.
+
+## Use cases and examples
+
+- coding agents that edit files with confirmation and audit trails
+- research and summarization agents with structured outputs
+- support triage and routing across multiple workers
+- operational workflows that pause for approvals and resume safely
+
+See `examples/coding_agent` for a full end-to-end example.
 
 ## Install
 
@@ -13,13 +49,9 @@ Preview locally with `uv run mkdocs serve`.
 uv add blackgeorge
 ```
 
-```
-pip install blackgeorge
-```
-
 For development setup, see `docs/development.md`.
 
-## Basic usage
+## Quick Start: build your first AI agent
 
 ```python
 from blackgeorge import Desk, Worker, Job
@@ -31,6 +63,11 @@ job = Job(input="Summarize this topic", expected_output="A short summary")
 report = desk.run(worker, job)
 print(report.content)
 ```
+
+## Documentation
+
+See `docs/README.md` for the full documentation set.
+Preview locally with `uv run mkdocs serve`.
 
 ## Job input
 
