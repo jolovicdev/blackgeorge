@@ -46,11 +46,18 @@ def _parse_response(response: Any) -> ModelResponse:
     choices = _get(response, "choices", [])
     message = _get(choices[0], "message") if choices else None
     content = _get(message, "content") if message else None
+    reasoning_content = _get(message, "reasoning_content") if message else None
     tool_calls = _parse_tool_calls(message) if message else []
     usage = _get(response, "usage", {}) or {}
     if isinstance(usage, BaseModel):
         usage = usage.model_dump(mode="json", warnings=False)
-    return ModelResponse(content=content, tool_calls=tool_calls, usage=usage, raw=response)
+    return ModelResponse(
+        content=content,
+        reasoning_content=reasoning_content,
+        tool_calls=tool_calls,
+        usage=usage,
+        raw=response,
+    )
 
 
 class LiteLLMAdapter(BaseModelAdapter):
@@ -65,20 +72,32 @@ class LiteLLMAdapter(BaseModelAdapter):
         max_tokens: int | None,
         stream: bool,
         stream_options: dict[str, Any] | None,
+        thinking: dict[str, Any] | None = None,
+        drop_params: bool | None = None,
+        extra_body: dict[str, Any] | None = None,
     ) -> ModelResponse | list[dict[str, Any]]:
         stream_options = stream_options if stream else None
+        litellm_params: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "tools": tools,
+            "tool_choice": tool_choice,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "stream": stream,
+            "stream_options": stream_options,
+        }
+
+        if thinking is not None:
+            litellm_params["thinking"] = thinking
+        if drop_params is not None:
+            litellm_params["drop_params"] = drop_params
+        if extra_body is not None:
+            litellm_params["extra_body"] = extra_body
+
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", message="Pydantic serializer warnings:.*")
-            response = litellm.completion(
-                model=model,
-                messages=messages,
-                tools=tools,
-                tool_choice=tool_choice,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                stream=stream,
-                stream_options=stream_options,
-            )
+            response = litellm.completion(**litellm_params)
         if stream:
             return cast(list[dict[str, Any]], response)
         return _parse_response(response)
@@ -94,20 +113,32 @@ class LiteLLMAdapter(BaseModelAdapter):
         max_tokens: int | None,
         stream: bool,
         stream_options: dict[str, Any] | None,
+        thinking: dict[str, Any] | None = None,
+        drop_params: bool | None = None,
+        extra_body: dict[str, Any] | None = None,
     ) -> ModelResponse | Any:
         stream_options = stream_options if stream else None
+        litellm_params: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "tools": tools,
+            "tool_choice": tool_choice,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "stream": stream,
+            "stream_options": stream_options,
+        }
+
+        if thinking is not None:
+            litellm_params["thinking"] = thinking
+        if drop_params is not None:
+            litellm_params["drop_params"] = drop_params
+        if extra_body is not None:
+            litellm_params["extra_body"] = extra_body
+
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", message="Pydantic serializer warnings:.*")
-            response = await litellm.acompletion(
-                model=model,
-                messages=messages,
-                tools=tools,
-                tool_choice=tool_choice,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                stream=stream,
-                stream_options=stream_options,
-            )
+            response = await litellm.acompletion(**litellm_params)
         if stream:
             return response
         return _parse_response(response)

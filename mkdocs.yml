@@ -1,4 +1,6 @@
 site_name: Blackgeorge
+site_description: Code-first agentic framework built around Desk, Worker, and Workforce.
+site_url: https://jolovicdev.github.io/blackgeorge/
 docs_dir: docs
 theme:
   name: material
@@ -24,6 +26,34 @@ theme:
     - content.code.copy
 plugins:
   - search
+  - llmstxt:
+      markdown_description: Code-first agentic framework built around Desk, Worker, and Workforce primitives for building predictable AI agents with tool calling, structured output, and multi-agent coordination.
+      full_output: llms-full.txt
+      sections:
+        Core Documentation:
+          - quickstart.md
+          - concepts.md
+          - desk.md
+          - worker.md
+          - workforce.md
+          - session.md
+          - workflow.md
+          - tools.md
+          - tool-hooks.md
+          - collaboration.md
+          - events.md
+          - core-types.md
+        Advanced Features:
+          - storage.md
+          - memory.md
+          - adapters.md
+        Reference:
+          - configuration.md
+          - logging.md
+        Examples:
+          - examples.md
+        Development:
+          - development.md
 markdown_extensions:
   - admonition
   - pymdownx.details
@@ -46,12 +76,17 @@ nav:
   - Desk: desk.md
   - Worker: worker.md
   - Workforce: workforce.md
+  - WorkerSession: session.md
   - Workflow: workflow.md
   - Tools: tools.md
+  - Tool hooks: tool-hooks.md
+  - Collaboration: collaboration.md
   - Events and streaming: events.md
   - Storage: storage.md
   - Memory: memory.md
   - Adapters: adapters.md
   - Core types: core-types.md
+  - Configuration: configuration.md
+  - Logging: logging.md
   - Examples: examples.md
   - Development: development.md

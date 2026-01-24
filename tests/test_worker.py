@@ -25,6 +25,9 @@ class ContextLimitAdapter(BaseModelAdapter):
         max_tokens: int | None,
         stream: bool,
         stream_options: dict[str, Any] | None,
+        thinking: dict[str, Any] | None = None,
+        drop_params: bool | None = None,
+        extra_body: dict[str, Any] | None = None,
     ) -> ModelResponse:
         self.calls += 1
         if self.calls == 1:
@@ -44,6 +47,9 @@ class ContextLimitAdapter(BaseModelAdapter):
         max_tokens: int | None,
         stream: bool,
         stream_options: dict[str, Any] | None,
+        thinking: dict[str, Any] | None = None,
+        drop_params: bool | None = None,
+        extra_body: dict[str, Any] | None = None,
     ) -> ModelResponse:
         return self.complete(
             model=model,
@@ -69,6 +75,9 @@ class ContextLimitFailingAdapter(BaseModelAdapter):
         max_tokens: int | None,
         stream: bool,
         stream_options: dict[str, Any] | None,
+        thinking: dict[str, Any] | None = None,
+        drop_params: bool | None = None,
+        extra_body: dict[str, Any] | None = None,
     ) -> ModelResponse:
         raise RuntimeError("context length exceeded")
 
@@ -83,6 +92,9 @@ class ContextLimitFailingAdapter(BaseModelAdapter):
         max_tokens: int | None,
         stream: bool,
         stream_options: dict[str, Any] | None,
+        thinking: dict[str, Any] | None = None,
+        drop_params: bool | None = None,
+        extra_body: dict[str, Any] | None = None,
     ) -> ModelResponse:
         return self.complete(
             model=model,

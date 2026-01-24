@@ -14,6 +14,7 @@ class Report(BaseModel):
     status: RunStatus
     pending_action: PendingAction | None = None
     content: str | None = None
+    reasoning_content: str | None = None
     data: Any | None = None
     messages: list[Message] = Field(default_factory=list)
     tool_calls: list[ToolCall] = Field(default_factory=list)

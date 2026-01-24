@@ -52,6 +52,24 @@ report = desk.run(worker, job)
 print(report.status)
 ```
 
+### Async running
+
+Use `arun()` for async execution:
+
+```python
+report = await desk.arun(worker, job)
+print(report.status)
+```
+
+Both `run()` and `arun()` accept a `stream` parameter:
+
+```python
+report = desk.run(worker, job, stream=True)
+report = await desk.arun(worker, job, stream=True)
+```
+
+When `stream=True`, `report.events` contains `stream.token` events with incremental content.
+
 ## Running a workforce
 
 ```python
@@ -86,6 +104,26 @@ report = desk.run(worker, job)
 if report.status == "paused" and report.pending_action is not None:
     report = desk.resume(report, True)
 ```
+
+## Creating sessions
+
+Sessions manage multi-turn conversations with automatic persistence:
+
+```python
+session = desk.session(worker)
+report = session.run("Hello")
+report = session.run("What's my name?")
+```
+
+Resume an existing session:
+
+```python
+session = desk.session(worker, session_id="user-123")
+if session:
+    report = session.run("Continue")
+```
+
+See [session.md](session.md) for full documentation.
 
 ## Cleanup registries
 

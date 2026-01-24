@@ -1,5 +1,5 @@
 import os
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
 
@@ -16,6 +16,9 @@ from blackgeorge.utils import new_id, utc_now
 from blackgeorge.worker import Worker
 from blackgeorge.workflow.flow import Flow
 from blackgeorge.workforce import Workforce
+
+if TYPE_CHECKING:
+    from blackgeorge.session import WorkerSession
 
 
 class Desk:
@@ -77,6 +80,21 @@ class Desk:
 
     def flow(self, steps: list[Any], name: str | None = None) -> Flow:
         return Flow(self, steps, name=name)
+
+    def session(
+        self,
+        worker: Worker,
+        *,
+        session_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> "WorkerSession | None":
+        from blackgeorge.session import WorkerSession
+
+        if session_id:
+            return WorkerSession.resume(session_id=session_id, worker=worker, desk=self)
+        return WorkerSession.start(
+            worker=worker, desk=self, session_id=session_id, metadata=metadata
+        )
 
     def _emit(
         self,
@@ -178,6 +196,87 @@ class Desk:
 
         return report
 
+    async def arun(
+        self,
+        runner: Worker | Workforce,
+        job: Job,
+        *,
+        stream: bool | None = None,
+    ) -> Report:
+        run_id = new_id()
+        events: list[Event] = []
+        stream_enabled = self.stream if stream is None else stream
+        stream_options = {"include_usage": True} if stream_enabled else None
+        self.run_store.create_run(run_id, job.model_dump(mode="json"))
+        self._emit(events, run_id, "run.started", "desk", {"job_id": job.id})
+
+        def emit(event_type: str, source: str, payload: dict[str, Any]) -> None:
+            self._emit(events, run_id, event_type, source, payload)
+
+        if isinstance(runner, Worker):
+            self.register_worker(runner)
+            report, state = await runner.arun(
+                adapter=self.adapter,
+                job=job,
+                run_id=run_id,
+                events=events,
+                emit=emit,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                stream=stream_enabled,
+                stream_options=stream_options,
+                structured_output_retries=self.structured_output_retries,
+                max_iterations=self.max_iterations,
+                max_tool_calls=self.max_tool_calls,
+                model_name=runner.model or self.model,
+                respect_context_window=self.respect_context_window,
+            )
+        elif isinstance(runner, Workforce):
+            self.register_workforce(runner)
+            report, state = await runner.arun(
+                adapter=self.adapter,
+                job=job,
+                run_id=run_id,
+                events=events,
+                emit=emit,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                stream=stream_enabled,
+                stream_options=stream_options,
+                structured_output_retries=self.structured_output_retries,
+                max_iterations=self.max_iterations,
+                max_tool_calls=self.max_tool_calls,
+                default_model=self.model,
+                respect_context_window=self.respect_context_window,
+            )
+        else:
+            raise TypeError("Runner must be Worker or Workforce")
+
+        if state is not None and report.status == "paused":
+            state.payload["stream"] = stream_enabled
+            self._emit(events, run_id, "run.paused", "desk", {})
+            self.run_store.update_run(run_id, "paused", report.content, None, state)
+        elif report.status == "completed":
+            self._emit(events, run_id, "run.completed", "desk", {})
+            self.run_store.update_run(
+                run_id,
+                "completed",
+                report.content,
+                self._output_json(report),
+                None,
+            )
+        else:
+            self._emit(events, run_id, "run.failed", "desk", {"errors": report.errors})
+            self.run_store.update_run(
+                run_id,
+                "failed",
+                report.content,
+                self._output_json(report),
+                None,
+            )
+
+        return report
+
     def resume(
         self,
         report: Report,
@@ -191,6 +290,7 @@ class Desk:
                 run_id=report.run_id,
                 status="failed",
                 content=None,
+                reasoning_content=None,
                 data=None,
                 messages=report.messages,
                 tool_calls=report.tool_calls,
@@ -209,6 +309,7 @@ class Desk:
                     run_id=report.run_id,
                     status="failed",
                     content=None,
+                    reasoning_content=None,
                     data=None,
                     messages=report.messages,
                     tool_calls=report.tool_calls,

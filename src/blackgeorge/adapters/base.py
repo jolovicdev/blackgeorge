@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from blackgeorge.core.tool_call import ToolCall
@@ -7,9 +7,10 @@ from blackgeorge.core.tool_call import ToolCall
 @dataclass(frozen=True)
 class ModelResponse:
     content: str | None
-    tool_calls: list[ToolCall]
-    usage: dict[str, Any]
-    raw: Any
+    reasoning_content: str | None = None
+    tool_calls: list[ToolCall] = field(default_factory=list)
+    usage: dict[str, Any] = field(default_factory=dict)
+    raw: Any = None
 
 
 class BaseModelAdapter:
@@ -24,6 +25,9 @@ class BaseModelAdapter:
         max_tokens: int | None,
         stream: bool,
         stream_options: dict[str, Any] | None,
+        thinking: dict[str, Any] | None = None,
+        drop_params: bool | None = None,
+        extra_body: dict[str, Any] | None = None,
     ) -> ModelResponse | list[dict[str, Any]]:
         raise NotImplementedError
 
@@ -38,5 +42,8 @@ class BaseModelAdapter:
         max_tokens: int | None,
         stream: bool,
         stream_options: dict[str, Any] | None,
+        thinking: dict[str, Any] | None = None,
+        drop_params: bool | None = None,
+        extra_body: dict[str, Any] | None = None,
     ) -> ModelResponse | Any:
         raise NotImplementedError

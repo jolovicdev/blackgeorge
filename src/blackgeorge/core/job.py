@@ -3,6 +3,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_serializer, field_validator
 
+from blackgeorge.core.message import Message
 from blackgeorge.utils import new_id
 
 
@@ -49,6 +50,10 @@ class Job(BaseModel):
     response_schema: type[BaseModel] | TypeAdapter[Any] | None = None
     constraints: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
+    initial_messages: list[Message] | None = None
+    thinking: dict[str, Any] | None = None
+    drop_params: bool | None = None
+    extra_body: dict[str, Any] | None = None
 
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
