@@ -52,26 +52,28 @@ EventEmitter = Callable[[str, str, dict[str, Any]], None]
 def _build_report(
     run_id: str,
     status: RunStatus,
-    content: str | None,
-    data: Any | None,
-    messages: list[Message],
-    tool_calls: list[ToolCall],
-    metrics: dict[str, Any],
-    events: list[Event],
-    pending_action: PendingAction | None,
-    errors: list[str],
+    content: str | None = None,
+    reasoning_content: str | None = None,
+    data: Any | None = None,
+    messages: list[Message] | None = None,
+    tool_calls: list[ToolCall] | None = None,
+    metrics: dict[str, Any] | None = None,
+    events: list[Event] | None = None,
+    pending_action: PendingAction | None = None,
+    errors: list[str] | None = None,
 ) -> Report:
     return Report(
         run_id=run_id,
         status=status,
         content=content,
+        reasoning_content=reasoning_content,
         data=data,
-        messages=messages,
-        tool_calls=tool_calls,
-        metrics=metrics,
-        events=events,
+        messages=list(messages) if messages else [],
+        tool_calls=list(tool_calls) if tool_calls else [],
+        metrics=metrics or {},
+        events=list(events) if events else [],
         pending_action=pending_action,
-        errors=errors,
+        errors=list(errors) if errors else [],
     )
 
 
@@ -112,6 +114,7 @@ def _report_error(
         run_id=run_id,
         status="failed",
         content=None,
+        reasoning_content=None,
         data=None,
         messages=messages,
         tool_calls=[],
@@ -164,9 +167,20 @@ class WorkerRunner:
 
     def _build_messages(self, job: Job) -> list[Message]:
         messages: list[Message] = []
+
+        if job.initial_messages:
+            messages.extend(job.initial_messages)
+
         system_content = system_message(self.instructions, job)
         if system_content:
-            messages.append(Message(role="system", content=system_content))
+            if not messages or messages[0].role != "system":
+                messages.insert(0, Message(role="system", content=system_content))
+            else:
+                messages[0] = Message(
+                    role="system",
+                    content=f"{messages[0].content}\n\n{system_content}",
+                )
+
         messages.append(Message(role="user", content=render_input(job.input)))
         return messages
 
@@ -252,6 +266,9 @@ class WorkerRunner:
         temperature: float | None,
         max_tokens: int | None,
         stream_options: dict[str, Any] | None,
+        thinking: dict[str, Any] | None = None,
+        drop_params: bool | None = None,
+        extra_body: dict[str, Any] | None = None,
     ) -> ModelResponse:
         response = adapter.complete(
             model=model,
@@ -262,6 +279,9 @@ class WorkerRunner:
             max_tokens=max_tokens,
             stream=False,
             stream_options=stream_options,
+            thinking=thinking,
+            drop_params=drop_params,
+            extra_body=extra_body,
         )
         if isinstance(response, ModelResponse):
             return response
@@ -277,6 +297,9 @@ class WorkerRunner:
         temperature: float | None,
         max_tokens: int | None,
         stream_options: dict[str, Any] | None,
+        thinking: dict[str, Any] | None = None,
+        drop_params: bool | None = None,
+        extra_body: dict[str, Any] | None = None,
     ) -> ModelResponse:
         response = await adapter.acomplete(
             model=model,
@@ -287,6 +310,9 @@ class WorkerRunner:
             max_tokens=max_tokens,
             stream=False,
             stream_options=stream_options,
+            thinking=thinking,
+            drop_params=drop_params,
+            extra_body=extra_body,
         )
         if isinstance(response, ModelResponse):
             return response
@@ -302,6 +328,9 @@ class WorkerRunner:
         max_tokens: int | None,
         stream_options: dict[str, Any] | None,
         on_token: Callable[[str], None],
+        thinking: dict[str, Any] | None = None,
+        drop_params: bool | None = None,
+        extra_body: dict[str, Any] | None = None,
     ) -> ModelResponse:
         stream = cast(
             Iterable[Any],
@@ -314,6 +343,9 @@ class WorkerRunner:
                 max_tokens=max_tokens,
                 stream=True,
                 stream_options=stream_options,
+                thinking=thinking,
+                drop_params=drop_params,
+                extra_body=extra_body,
             ),
         )
         content_parts: list[str] = []
@@ -343,6 +375,9 @@ class WorkerRunner:
         max_tokens: int | None,
         stream_options: dict[str, Any] | None,
         on_token: Callable[[str], None],
+        thinking: dict[str, Any] | None = None,
+        drop_params: bool | None = None,
+        extra_body: dict[str, Any] | None = None,
     ) -> ModelResponse:
         stream = await adapter.acomplete(
             model=model,
@@ -353,6 +388,9 @@ class WorkerRunner:
             max_tokens=max_tokens,
             stream=True,
             stream_options=stream_options,
+            thinking=thinking,
+            drop_params=drop_params,
+            extra_body=extra_body,
         )
         content_parts: list[str] = []
         usage: dict[str, Any] = {}
@@ -421,6 +459,9 @@ class WorkerRunner:
                         max_tokens=max_tokens,
                         stream_options=stream_options,
                         on_token=lambda token: emit("stream.token", self.name, {"token": token}),
+                        thinking=job.thinking,
+                        drop_params=job.drop_params,
+                        extra_body=job.extra_body,
                     )
                 except Exception as exc:
                     if not is_context_limit_error(exc):
@@ -431,6 +472,7 @@ class WorkerRunner:
                         report = _build_report(
                             run_id,
                             "failed",
+                            None,
                             None,
                             None,
                             messages,
@@ -447,6 +489,7 @@ class WorkerRunner:
                         report = _build_report(
                             run_id,
                             "failed",
+                            None,
                             None,
                             None,
                             messages,
@@ -472,6 +515,7 @@ class WorkerRunner:
                         report = _build_report(
                             run_id,
                             "failed",
+                            None,
                             None,
                             None,
                             messages,
@@ -502,6 +546,7 @@ class WorkerRunner:
                                 "failed",
                                 None,
                                 None,
+                                None,
                                 messages,
                                 tool_calls,
                                 metrics,
@@ -516,6 +561,7 @@ class WorkerRunner:
                             report = _build_report(
                                 run_id,
                                 "failed",
+                                None,
                                 None,
                                 None,
                                 messages,
@@ -543,6 +589,7 @@ class WorkerRunner:
                                 "failed",
                                 None,
                                 None,
+                                None,
                                 messages,
                                 tool_calls,
                                 metrics,
@@ -558,6 +605,7 @@ class WorkerRunner:
                     report = _build_report(
                         run_id,
                         "failed",
+                        None,
                         None,
                         None,
                         messages,
@@ -577,6 +625,7 @@ class WorkerRunner:
                     run_id,
                     "completed",
                     content,
+                    None,
                     data,
                     messages,
                     tool_calls,
@@ -596,6 +645,9 @@ class WorkerRunner:
                         temperature=temperature,
                         max_tokens=max_tokens,
                         stream_options=stream_options,
+                        thinking=job.thinking,
+                        drop_params=job.drop_params,
+                        extra_body=job.extra_body,
                     )
                 except Exception as exc:
                     if not is_context_limit_error(exc):
@@ -606,6 +658,7 @@ class WorkerRunner:
                         report = _build_report(
                             run_id,
                             "failed",
+                            None,
                             None,
                             None,
                             messages,
@@ -622,6 +675,7 @@ class WorkerRunner:
                         report = _build_report(
                             run_id,
                             "failed",
+                            None,
                             None,
                             None,
                             messages,
@@ -647,6 +701,7 @@ class WorkerRunner:
                         report = _build_report(
                             run_id,
                             "failed",
+                            None,
                             None,
                             None,
                             messages,
@@ -678,6 +733,7 @@ class WorkerRunner:
                         report = _build_report(
                             run_id,
                             "failed",
+                            None,
                             None,
                             None,
                             messages,
@@ -729,6 +785,7 @@ class WorkerRunner:
                         report = _build_report(
                             run_id,
                             "paused",
+                            None,
                             None,
                             None,
                             messages,
@@ -782,6 +839,7 @@ class WorkerRunner:
                         "failed",
                         None,
                         None,
+                        None,
                         messages,
                         tool_calls,
                         metrics,
@@ -799,6 +857,7 @@ class WorkerRunner:
                     run_id,
                     "completed",
                     content,
+                    None,
                     data,
                     messages,
                     tool_calls,
@@ -817,6 +876,7 @@ class WorkerRunner:
                 run_id,
                 "completed",
                 response.content,
+                response.reasoning_content,
                 None,
                 messages,
                 tool_calls,
@@ -832,6 +892,7 @@ class WorkerRunner:
         report = _build_report(
             run_id,
             "failed",
+            None,
             None,
             None,
             messages,
@@ -883,6 +944,9 @@ class WorkerRunner:
                         max_tokens=max_tokens,
                         stream_options=stream_options,
                         on_token=lambda token: emit("stream.token", self.name, {"token": token}),
+                        thinking=job.thinking,
+                        drop_params=job.drop_params,
+                        extra_body=job.extra_body,
                     )
                 except Exception as exc:
                     if not is_context_limit_error(exc):
@@ -893,6 +957,7 @@ class WorkerRunner:
                         report = _build_report(
                             run_id,
                             "failed",
+                            None,
                             None,
                             None,
                             messages,
@@ -909,6 +974,7 @@ class WorkerRunner:
                         report = _build_report(
                             run_id,
                             "failed",
+                            None,
                             None,
                             None,
                             messages,
@@ -934,6 +1000,7 @@ class WorkerRunner:
                         report = _build_report(
                             run_id,
                             "failed",
+                            None,
                             None,
                             None,
                             messages,
@@ -964,6 +1031,7 @@ class WorkerRunner:
                                 "failed",
                                 None,
                                 None,
+                                None,
                                 messages,
                                 tool_calls,
                                 metrics,
@@ -978,6 +1046,7 @@ class WorkerRunner:
                             report = _build_report(
                                 run_id,
                                 "failed",
+                                None,
                                 None,
                                 None,
                                 messages,
@@ -1005,6 +1074,7 @@ class WorkerRunner:
                                 "failed",
                                 None,
                                 None,
+                                None,
                                 messages,
                                 tool_calls,
                                 metrics,
@@ -1020,6 +1090,7 @@ class WorkerRunner:
                     report = _build_report(
                         run_id,
                         "failed",
+                        None,
                         None,
                         None,
                         messages,
@@ -1039,6 +1110,7 @@ class WorkerRunner:
                     run_id,
                     "completed",
                     content,
+                    None,
                     data,
                     messages,
                     tool_calls,
@@ -1058,6 +1130,9 @@ class WorkerRunner:
                         temperature=temperature,
                         max_tokens=max_tokens,
                         stream_options=stream_options,
+                        thinking=job.thinking,
+                        drop_params=job.drop_params,
+                        extra_body=job.extra_body,
                     )
                 except Exception as exc:
                     if not is_context_limit_error(exc):
@@ -1068,6 +1143,7 @@ class WorkerRunner:
                         report = _build_report(
                             run_id,
                             "failed",
+                            None,
                             None,
                             None,
                             messages,
@@ -1084,6 +1160,7 @@ class WorkerRunner:
                         report = _build_report(
                             run_id,
                             "failed",
+                            None,
                             None,
                             None,
                             messages,
@@ -1109,6 +1186,7 @@ class WorkerRunner:
                         report = _build_report(
                             run_id,
                             "failed",
+                            None,
                             None,
                             None,
                             messages,
@@ -1140,6 +1218,7 @@ class WorkerRunner:
                         report = _build_report(
                             run_id,
                             "failed",
+                            None,
                             None,
                             None,
                             messages,
@@ -1193,6 +1272,7 @@ class WorkerRunner:
                             "paused",
                             None,
                             None,
+                            None,
                             messages,
                             tool_calls,
                             metrics,
@@ -1244,6 +1324,7 @@ class WorkerRunner:
                         "failed",
                         None,
                         None,
+                        None,
                         messages,
                         tool_calls,
                         metrics,
@@ -1261,6 +1342,7 @@ class WorkerRunner:
                     run_id,
                     "completed",
                     content,
+                    None,
                     data,
                     messages,
                     tool_calls,
@@ -1279,6 +1361,7 @@ class WorkerRunner:
                 run_id,
                 "completed",
                 response.content,
+                response.reasoning_content,
                 None,
                 messages,
                 tool_calls,
@@ -1294,6 +1377,7 @@ class WorkerRunner:
         report = _build_report(
             run_id,
             "failed",
+            None,
             None,
             None,
             messages,
@@ -1436,6 +1520,7 @@ class WorkerRunner:
                 "failed",
                 None,
                 None,
+                None,
                 state.messages,
                 state.tool_calls,
                 state.metrics,
@@ -1536,6 +1621,7 @@ class WorkerRunner:
                 "failed",
                 None,
                 None,
+                None,
                 state.messages,
                 state.tool_calls,
                 state.metrics,
@@ -1573,7 +1659,7 @@ class WorkerRunner:
                     key = resume_argument_key(pending)
                     call = update_arguments(call, key, decision_or_input)
                 emit("tool.started", tool.name, {"tool_call_id": call.id})
-                result = execute_tool(tool, call)
+                result = await aexecute_tool(tool, call)
                 if result.error:
                     emit("tool.failed", tool.name, {"tool_call_id": call.id, "error": result.error})
                 else:

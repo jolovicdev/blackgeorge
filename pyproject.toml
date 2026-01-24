@@ -1,6 +1,6 @@
 [project]
 name = "blackgeorge"
-version = "0.3.0"
+version = "1.0.0"
 description = "Agentic framework with desk/worker/workforce primitives"
 readme = "README.md"
 license = { file = "LICENCE.md" }
@@ -23,6 +23,7 @@ dev = [
     "pytest>=8.3.0",
     "pytest-asyncio>=0.23.0",
     "ruff>=0.6.0",
+    "mkdocs-llmstxt>=0.5.0",
 ]
 
 [tool.pytest.ini_options]

@@ -10,6 +10,7 @@ class SQLiteMemoryStore(MemoryStore):
     def __init__(self, path: str) -> None:
         self._path = path
         self._conn = sqlite3.connect(self._path)
+        self._closed = False
         self._conn.execute(
             """
             CREATE TABLE IF NOT EXISTS memories (
@@ -24,6 +25,17 @@ class SQLiteMemoryStore(MemoryStore):
             """
         )
         self._conn.commit()
+
+    def close(self) -> None:
+        if not self._closed:
+            self._conn.close()
+            self._closed = True
+
+    def __enter__(self) -> "SQLiteMemoryStore":
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        self.close()
 
     def write(self, key: str, value: Any, scope: MemoryScope) -> None:
         payload = json.dumps(value, ensure_ascii=True)

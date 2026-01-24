@@ -19,6 +19,8 @@ coverage.xml
 htmlcov/
 
 .blackgeorge/
+*.db
+*.db-journal
 site/
 
 .DS_Store

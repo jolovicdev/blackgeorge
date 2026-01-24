@@ -48,10 +48,10 @@ class Blackboard:
                 )
             callbacks = list(self._subscribers.get(key, []))
             global_callbacks = list(self._global_subscribers)
-        for callback in callbacks:
-            callback(key, value, author)
-        for callback in global_callbacks:
-            callback(key, value, author)
+            for callback in callbacks:
+                callback(key, value, author)
+            for callback in global_callbacks:
+                callback(key, value, author)
 
     def read(self, key: str) -> Any | None:
         with self._lock:

@@ -22,6 +22,7 @@ If you want a fast start, read the quickstart first. If you want to understand h
 - [Worker](worker.md): single-agent execution loop
 - [Workforce](workforce.md): multi-worker coordination
 - [Workflow](workflow.md): multi-step flows
+- [Session](session.md): multi-turn conversations with persistence
 - [Tools](tools.md): tool definition, validation, and execution
 - [Events and streaming](events.md): event bus and runtime signals
 - [Storage](storage.md): run store and run state

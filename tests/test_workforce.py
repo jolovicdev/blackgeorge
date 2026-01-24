@@ -26,6 +26,9 @@ class FailingAdapter(BaseModelAdapter):
         max_tokens: int | None,
         stream: bool,
         stream_options: dict[str, Any] | None,
+        thinking: dict[str, Any] | None = None,
+        drop_params: bool | None = None,
+        extra_body: dict[str, Any] | None = None,
     ) -> ModelResponse:
         self.calls += 1
         if self.calls == 1:
@@ -43,6 +46,9 @@ class FailingAdapter(BaseModelAdapter):
         max_tokens: int | None,
         stream: bool,
         stream_options: dict[str, Any] | None,
+        thinking: dict[str, Any] | None = None,
+        drop_params: bool | None = None,
+        extra_body: dict[str, Any] | None = None,
     ) -> ModelResponse:
         return self.complete(
             model=model,
@@ -53,6 +59,9 @@ class FailingAdapter(BaseModelAdapter):
             max_tokens=max_tokens,
             stream=stream,
             stream_options=stream_options,
+            thinking=thinking,
+            drop_params=drop_params,
+            extra_body=extra_body,
         )
 
 

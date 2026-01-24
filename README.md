@@ -146,3 +146,22 @@ report = desk.run(worker, job)
 if report.status == "paused":
     report = desk.resume(report, True)
 ```
+
+## Session: multi-turn conversations
+
+```python
+from blackgeorge import Desk, Worker
+
+desk = Desk(model="openai/gpt-5-nano")
+worker = Worker(name="ChatBot")
+
+session = desk.session(worker)
+
+session.run("My name is Alice")
+session.run("What's my name?")
+
+session_id = session.session_id
+
+later_session = desk.session(worker, session_id=session_id)
+later_session.run("Where do I live?")
+```

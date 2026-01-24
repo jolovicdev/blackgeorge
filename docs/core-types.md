@@ -15,6 +15,10 @@ Fields:
 - response_schema: Pydantic model or TypeAdapter for structured output
 - constraints: extra constraints appended to the system message
 - metadata: arbitrary metadata for your application
+- initial_messages: optional list of messages to pre-populate conversation history
+- thinking: enables thinking mode for reasoning models (e.g., `{"type": "enabled", "budget_tokens": 1000}`)
+- drop_params: drops unsupported parameters instead of erroring
+- extra_body: provider-specific parameters passed to the model API
 
 `Job` is immutable.
 
@@ -28,6 +32,7 @@ Fields:
 - status: completed, paused, failed, or running
 - pending_action: present when the run is paused
 - content: assistant output
+- reasoning_content: separate reasoning output from thinking models (DeepSeek Reasoner, Claude 3.7, o1, etc.)
 - data: structured output if a response schema is set
 - messages: full conversation history
 - tool_calls: tool calls made during the run
@@ -43,6 +48,7 @@ Fields:
 
 - role: system, user, assistant, tool
 - content
+- reasoning_content: separate reasoning content from thinking models
 - tool_calls: tool calls emitted by the assistant
 - tool_call_id: set for tool results
 - metadata
