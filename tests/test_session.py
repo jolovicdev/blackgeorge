@@ -1,3 +1,4 @@
+import sqlite3
 import tempfile
 
 import pytest
@@ -264,3 +265,21 @@ def test_session_record_frozen() -> None:
 
     assert record.session_id == "test"
     assert record.worker_name == "worker"
+
+
+def test_sqlite_session_message_order(tmp_path) -> None:
+    store = SQLiteSessionStore(str(tmp_path / "sessions.db"))
+    store.create_session("s1", "worker")
+    store.add_messages(
+        "s1",
+        [
+            Message(role="user", content="a"),
+            Message(role="assistant", content="b"),
+            Message(role="user", content="c"),
+        ],
+    )
+    messages = store.get_messages("s1")
+    assert [message.content for message in messages] == ["a", "b", "c"]
+    with sqlite3.connect(str(tmp_path / "sessions.db")) as conn:
+        row = conn.execute("SELECT count(*) FROM session_messages").fetchone()
+    assert row is not None and row[0] == 3

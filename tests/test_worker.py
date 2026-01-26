@@ -1,9 +1,12 @@
 from typing import Any
 
+from pydantic import BaseModel
+
 from blackgeorge.adapters.base import BaseModelAdapter, ModelResponse
 from blackgeorge.core.job import Job
 from blackgeorge.core.tool_call import ToolCall
 from blackgeorge.desk import Desk
+from blackgeorge.memory.base import MemoryScope, MemoryStore
 from blackgeorge.store.in_memory import InMemoryRunStore
 from blackgeorge.tools import tool
 from blackgeorge.worker import Worker
@@ -106,6 +109,78 @@ class ContextLimitFailingAdapter(BaseModelAdapter):
             stream=stream,
             stream_options=stream_options,
         )
+
+
+class StructuredAdapter(BaseModelAdapter):
+    def __init__(self) -> None:
+        self.called = False
+
+    def complete(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        tool_choice: str | dict[str, Any] | None,
+        temperature: float | None,
+        max_tokens: int | None,
+        stream: bool,
+        stream_options: dict[str, Any] | None,
+        thinking: dict[str, Any] | None = None,
+        drop_params: bool | None = None,
+        extra_body: dict[str, Any] | None = None,
+    ) -> ModelResponse:
+        raise RuntimeError("complete should not be used")
+
+    async def acomplete(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        tool_choice: str | dict[str, Any] | None,
+        temperature: float | None,
+        max_tokens: int | None,
+        stream: bool,
+        stream_options: dict[str, Any] | None,
+        thinking: dict[str, Any] | None = None,
+        drop_params: bool | None = None,
+        extra_body: dict[str, Any] | None = None,
+    ) -> ModelResponse:
+        raise RuntimeError("acomplete should not be used")
+
+    def structured_complete(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, Any]],
+        response_schema: Any,
+        retries: int,
+    ) -> Any:
+        self.called = True
+        return response_schema(answer="ok")
+
+
+class AnswerModel(BaseModel):
+    answer: str
+
+
+class RecordingMemoryStore(MemoryStore):
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str]] = []
+
+    def write(self, key: str, value: Any, scope: MemoryScope) -> None:
+        self.calls.append(("write", key))
+
+    def read(self, key: str, scope: MemoryScope) -> Any | None:
+        self.calls.append(("read", key))
+        return "memory"
+
+    def search(self, query: str, scope: MemoryScope) -> list[tuple[str, Any]]:
+        return []
+
+    def reset(self, scope: MemoryScope) -> None:
+        return None
 
 
 def test_worker_tool_loop() -> None:
@@ -290,3 +365,50 @@ def test_streaming_with_content_only() -> None:
     report = desk.run(worker, Job(input="run"))
     assert report.status == "completed"
     assert report.content == "Hello world"
+
+
+def test_structured_output_uses_adapter() -> None:
+    adapter = StructuredAdapter()
+    desk = Desk(model="fake", adapter=adapter, run_store=InMemoryRunStore())
+    worker = Worker(name="Worker", model="fake")
+    report = desk.run(worker, Job(input="run", response_schema=AnswerModel))
+    assert adapter.called is True
+    assert report.data.answer == "ok"
+
+
+def test_user_input_key_is_respected() -> None:
+    @tool(requires_user_input=True, input_key="query")
+    def ask(query: str) -> str:
+        return f"ok:{query}"
+
+    responses = [
+        ModelResponse(
+            content=None,
+            tool_calls=[ToolCall(id="1", name="ask", arguments={"question": "Provide input"})],
+            usage={},
+            raw={},
+        ),
+        ModelResponse(content="done", tool_calls=[], usage={}, raw={}),
+    ]
+    desk = Desk(model="fake", adapter=FakeAdapter(responses), run_store=InMemoryRunStore())
+    worker = Worker(name="Worker", tools=[ask], model="fake")
+    report = desk.run(worker, Job(input="run"))
+    assert report.status == "paused"
+    resumed = desk.resume(report, "hello")
+    assert resumed.status == "completed"
+    assert resumed.tool_calls[0].error is None
+
+
+def test_memory_store_used_in_run() -> None:
+    store = RecordingMemoryStore()
+    desk = Desk(
+        model="fake",
+        adapter=FakeAdapter([ModelResponse(content="done", tool_calls=[], usage={}, raw={})]),
+        run_store=InMemoryRunStore(),
+        memory_store=store,
+    )
+    worker = Worker(name="Worker", model="fake")
+    report = desk.run(worker, Job(input="run"))
+    assert report.status == "completed"
+    assert ("read", "context") in store.calls
+    assert ("write", "last_output") in store.calls

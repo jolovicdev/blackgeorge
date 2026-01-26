@@ -40,7 +40,7 @@ def test_reasoning_content_sync():
 
     job = Job(
         input="What is 2+2? Keep it brief.",
-        thinking={"type": "enabled", "budget_tokens": 1000},
+        thinking={"type": "enabled"},
     )
 
     try:
@@ -76,7 +76,7 @@ async def test_reasoning_content_async():
 
     job = Job(
         input="What is 2+2? Keep it brief.",
-        thinking={"type": "enabled", "budget_tokens": 1000},
+        thinking={"type": "enabled"},
     )
 
     try:
@@ -493,8 +493,12 @@ def test_thinking_parameter():
     desk = Desk(model="deepseek/deepseek-reasoner", storage_dir=":memory:")
     worker = Worker(name="test_worker", instructions="You are a helpful assistant.")
 
-    print("\nTest 1: thinking with budget_tokens")
-    job1 = Job(input="2+2?", thinking={"type": "enabled", "budget_tokens": 500})
+    print("\nTest 1: thinking with budget_tokens (uses drop_params)")
+    job1 = Job(
+        input="2+2?",
+        thinking={"type": "enabled", "budget_tokens": 500},
+        drop_params=True,
+    )
     try:
         report1 = desk.run(worker, job1)
         print(f"Content: {report1.content}")

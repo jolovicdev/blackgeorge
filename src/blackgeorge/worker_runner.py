@@ -201,12 +201,22 @@ class WorkerRunner:
     def _structured_completion(
         self,
         *,
+        adapter: BaseModelAdapter,
         model: str,
         messages: list[Message],
         response_schema: Any,
         retries: int,
     ) -> Any:
         payload = messages_to_payload(messages)
+        try:
+            return adapter.structured_complete(
+                model=model,
+                messages=payload,
+                response_schema=response_schema,
+                retries=retries,
+            )
+        except NotImplementedError:
+            pass
         client = instructor_clients.get(model, async_client=False)
         attempts = 0
         while True:
@@ -218,7 +228,7 @@ class WorkerRunner:
                 )
             except Exception as exc:
                 if attempts >= retries:
-                    raise exc
+                    raise
                 payload.append(
                     {
                         "role": "user",
@@ -230,12 +240,22 @@ class WorkerRunner:
     async def _astructured_completion(
         self,
         *,
+        adapter: BaseModelAdapter,
         model: str,
         messages: list[Message],
         response_schema: Any,
         retries: int,
     ) -> Any:
         payload = messages_to_payload(messages)
+        try:
+            return await adapter.astructured_complete(
+                model=model,
+                messages=payload,
+                response_schema=response_schema,
+                retries=retries,
+            )
+        except NotImplementedError:
+            pass
         client = instructor_clients.get(model, async_client=True)
         attempts = 0
         while True:
@@ -247,7 +267,7 @@ class WorkerRunner:
                 )
             except Exception as exc:
                 if attempts >= retries:
-                    raise exc
+                    raise
                 payload.append(
                     {
                         "role": "user",
@@ -443,6 +463,7 @@ class WorkerRunner:
         respect_context_window: bool,
     ) -> tuple[Report, RunState | None]:
         tools = self._resolve_tools(job)
+        allowed_tools = {tool.name: tool for tool in tools}
         response_schema = job.response_schema
         context_summaries = 0
         model_registered = litellm_model_registered(model_name)
@@ -531,6 +552,7 @@ class WorkerRunner:
             elif response_schema is not None and not tools:
                 try:
                     data = self._structured_completion(
+                        adapter=adapter,
                         model=model_name,
                         messages=messages,
                         response_schema=response_schema,
@@ -755,7 +777,7 @@ class WorkerRunner:
                         replace_tool_call(tool_calls, tool_call_with_result(call, result))
                         continue
 
-                    tool = self.toolbelt.resolve(call.name)
+                    tool = allowed_tools.get(call.name)
                     if tool is None:
                         result = ToolResult(error=f"Tool not found: {call.name}")
                         emit(
@@ -768,13 +790,16 @@ class WorkerRunner:
                         continue
                     action_type = tool_action_type(tool)
                     if action_type:
+                        metadata = {"tool": tool.name}
+                        if tool.input_key:
+                            metadata["input_key"] = tool.input_key
                         pending = PendingAction(
                             action_id=new_id(),
                             type=action_type,
                             tool_call=call,
                             prompt=tool_prompt(tool, action_type, call),
                             options=pending_options(action_type),
-                            metadata={"tool": tool.name},
+                            metadata=metadata,
                         )
                         emit(
                             f"tool.{action_type}_requested",
@@ -826,6 +851,7 @@ class WorkerRunner:
             if response_schema is not None:
                 try:
                     data = self._structured_completion(
+                        adapter=adapter,
                         model=model_name,
                         messages=messages,
                         response_schema=response_schema,
@@ -928,6 +954,7 @@ class WorkerRunner:
         respect_context_window: bool,
     ) -> tuple[Report, RunState | None]:
         tools = self._resolve_tools(job)
+        allowed_tools = {tool.name: tool for tool in tools}
         response_schema = job.response_schema
         context_summaries = 0
         model_registered = litellm_model_registered(model_name)
@@ -1016,6 +1043,7 @@ class WorkerRunner:
             elif response_schema is not None and not tools:
                 try:
                     data = await self._astructured_completion(
+                        adapter=adapter,
                         model=model_name,
                         messages=messages,
                         response_schema=response_schema,
@@ -1240,7 +1268,7 @@ class WorkerRunner:
                         replace_tool_call(tool_calls, tool_call_with_result(call, result))
                         continue
 
-                    tool = self.toolbelt.resolve(call.name)
+                    tool = allowed_tools.get(call.name)
                     if tool is None:
                         result = ToolResult(error=f"Tool not found: {call.name}")
                         emit(
@@ -1253,13 +1281,16 @@ class WorkerRunner:
                         continue
                     action_type = tool_action_type(tool)
                     if action_type:
+                        metadata = {"tool": tool.name}
+                        if tool.input_key:
+                            metadata["input_key"] = tool.input_key
                         pending = PendingAction(
                             action_id=new_id(),
                             type=action_type,
                             tool_call=call,
                             prompt=tool_prompt(tool, action_type, call),
                             options=pending_options(action_type),
-                            metadata={"tool": tool.name},
+                            metadata=metadata,
                         )
                         emit(
                             f"tool.{action_type}_requested",
@@ -1311,6 +1342,7 @@ class WorkerRunner:
             if response_schema is not None:
                 try:
                     data = await self._astructured_completion(
+                        adapter=adapter,
                         model=model_name,
                         messages=messages,
                         response_schema=response_schema,

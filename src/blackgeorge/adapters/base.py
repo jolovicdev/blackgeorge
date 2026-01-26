@@ -47,3 +47,23 @@ class BaseModelAdapter:
         extra_body: dict[str, Any] | None = None,
     ) -> ModelResponse | Any:
         raise NotImplementedError
+
+    def structured_complete(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, Any]],
+        response_schema: Any,
+        retries: int,
+    ) -> Any:
+        raise NotImplementedError
+
+    async def astructured_complete(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, Any]],
+        response_schema: Any,
+        retries: int,
+    ) -> Any:
+        raise NotImplementedError

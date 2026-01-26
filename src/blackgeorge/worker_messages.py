@@ -101,13 +101,19 @@ def tool_message(result: ToolResult | dict[str, Any], tool_call: ToolCall) -> Me
         if result.content is not None:
             content = result.content
         elif result.data is not None:
-            content = json.dumps(result.data, ensure_ascii=True)
+            try:
+                content = json.dumps(result.data, ensure_ascii=True, default=str)
+            except TypeError:
+                content = str(result.data)
         elif result.error is not None:
             content = result.error
         else:
             content = ""
     else:
-        content = json.dumps(result, ensure_ascii=True)
+        try:
+            content = json.dumps(result, ensure_ascii=True, default=str)
+        except TypeError:
+            content = str(result)
     return Message(role="tool", content=content, tool_call_id=tool_call.id)
 
 

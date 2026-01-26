@@ -313,6 +313,7 @@ class Workforce:
                     "workers": [worker.name for worker in self.workers],
                 },
                 response_schema=WorkerDecision,
+                tools_override=[],
             )
             manager_report, manager_state = self._run_worker(
                 worker=manager,
@@ -466,6 +467,7 @@ class Workforce:
                     "workers": [worker.name for worker in self.workers],
                 },
                 response_schema=WorkerDecision,
+                tools_override=[],
             )
             manager_report, manager_state = await self._arun_worker(
                 worker=manager,
@@ -744,6 +746,34 @@ class Workforce:
             completed_reports_payload = payload.get("completed_reports", [])
             completed_reports = [Report.model_validate(rep) for rep in completed_reports_payload]
             pending_index = payload.get("pending_worker_index", 0)
+            if not isinstance(pending_index, int) or pending_index < 0:
+                report = Report(
+                    run_id=state.run_id,
+                    status="failed",
+                    content=None,
+                    data=None,
+                    messages=state.messages,
+                    tool_calls=state.tool_calls,
+                    metrics=state.metrics,
+                    events=events,
+                    pending_action=None,
+                    errors=["Invalid pending worker index"],
+                )
+                return report, None
+            if pending_index >= len(self.workers):
+                report = Report(
+                    run_id=state.run_id,
+                    status="failed",
+                    content=None,
+                    data=None,
+                    messages=state.messages,
+                    tool_calls=state.tool_calls,
+                    metrics=state.metrics,
+                    events=events,
+                    pending_action=None,
+                    errors=["Invalid pending worker index"],
+                )
+                return report, None
             pending_worker = self.workers[pending_index]
             report, next_state = self._resume_worker(
                 worker=pending_worker,
@@ -1006,6 +1036,34 @@ class Workforce:
             completed_reports_payload = payload.get("completed_reports", [])
             completed_reports = [Report.model_validate(rep) for rep in completed_reports_payload]
             pending_index = payload.get("pending_worker_index", 0)
+            if not isinstance(pending_index, int) or pending_index < 0:
+                report = Report(
+                    run_id=state.run_id,
+                    status="failed",
+                    content=None,
+                    data=None,
+                    messages=state.messages,
+                    tool_calls=state.tool_calls,
+                    metrics=state.metrics,
+                    events=events,
+                    pending_action=None,
+                    errors=["Invalid pending worker index"],
+                )
+                return report, None
+            if pending_index >= len(self.workers):
+                report = Report(
+                    run_id=state.run_id,
+                    status="failed",
+                    content=None,
+                    data=None,
+                    messages=state.messages,
+                    tool_calls=state.tool_calls,
+                    metrics=state.metrics,
+                    events=events,
+                    pending_action=None,
+                    errors=["Invalid pending worker index"],
+                )
+                return report, None
             pending_worker = self.workers[pending_index]
             report, next_state = await self._aresume_worker(
                 worker=pending_worker,

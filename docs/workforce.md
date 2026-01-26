@@ -19,6 +19,7 @@ In managed mode, a manager chooses which worker should handle the job.
 - If you pass `manager`, that worker is used.
 - If you do not pass `manager`, the first worker in the list is used.
 - The manager receives a job with a response schema that contains a single field, `worker`.
+- Manager selection runs with tools disabled, even if the manager has tools, to force a structured selection response.
 
 The selection rules are:
 
@@ -108,3 +109,5 @@ Resuming a workforce uses the stored stage in run state:
 - collaborate: resume the paused worker in sequence
 
 The desk handles these transitions when you call `desk.resume(report, decision_or_input)`.
+
+If the stored pending worker index no longer matches the current worker list, resume fails with a `failed` report rather than raising.

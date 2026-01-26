@@ -16,7 +16,9 @@ Fields:
 - constraints: extra constraints appended to the system message
 - metadata: arbitrary metadata for your application
 - initial_messages: optional list of messages to pre-populate conversation history
-- thinking: enables thinking mode for reasoning models (e.g., `{"type": "enabled", "budget_tokens": 1000}`)
+- thinking: enables thinking mode for reasoning models (format varies by provider)
+  - DeepSeek: `{"type": "enabled"}`
+  - Anthropic: `{"type": "enabled", "budget_tokens": 1024}` - example.
 - drop_params: drops unsupported parameters instead of erroring
 - extra_body: provider-specific parameters passed to the model API
 

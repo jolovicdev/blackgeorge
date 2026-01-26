@@ -51,6 +51,8 @@ event = Event(
 bus.emit(event)
 ```
 
+`emit` supports async handlers as well. If a handler is a coroutine function or returns an awaitable (including a Task or Future), it is scheduled on the current event loop when available, or run to completion with a temporary loop when called from a sync context.
+
 ### Asynchronous event emission
 
 ```python

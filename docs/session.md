@@ -191,11 +191,18 @@ For models that output separate reasoning content (DeepSeek Reasoner, Claude 3.7
 ```python
 from blackgeorge import Job
 
-# Enable thinking mode with token budget
+# DeepSeek Reasoner (no budget_tokens support)
+report = session.run(
+    "Which is larger: 9.11 or 9.8?",
+    thinking={"type": "enabled"},
+)
+
+# Anthropic Claude 3.7+ (supports budget_tokens)
 report = session.run(
     "Which is larger: 9.11 or 9.8?",
     thinking={"type": "enabled", "budget_tokens": 1024},
 )
+
 print(f"Reasoning: {report.reasoning_content}")
 print(f"Answer: {report.content}")
 ```

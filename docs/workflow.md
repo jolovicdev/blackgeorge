@@ -90,6 +90,7 @@ loop = Loop(
 ## Pause and resume
 
 If a step pauses, the flow stores the current step state and outputs. Resume with the same report and a decision or input.
+Composite nodes (`Condition`, `Router`, `Loop`) short-circuit on paused or failed results to prevent subsequent steps from running.
 
 ```python
 report = flow.run(job)

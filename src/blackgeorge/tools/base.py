@@ -34,6 +34,7 @@ class Tool:
     post: tuple[ToolPostHook, ...] = ()
     confirmation_prompt: str | None = None
     user_input_prompt: str | None = None
+    input_key: str | None = None
     timeout: float | None = None
     retries: int = 0
     retry_delay: float = 1.0
