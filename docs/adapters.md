@@ -8,6 +8,8 @@ Adapters define how Blackgeorge talks to a model provider.
 
 - complete(...): synchronous completion
 - acomplete(...): async completion
+- structured_complete(...): structured output completion
+- astructured_complete(...): async structured output completion
 
 Both methods accept OpenAI-style message payloads and optional tool schemas.
 
@@ -32,6 +34,10 @@ Structured output uses Instructor with LiteLLM. Blackgeorge initializes Instruct
 - `instructor.from_provider("litellm/<model>", async_client=True)`
 
 The worker calls `chat.completions.create(..., response_model=YourModel)` and returns the validated Pydantic object as `Report.data`.
+
+## Adapter hooks for structured output
+
+If your adapter implements `structured_complete`/`astructured_complete`, the worker will call those hooks for response-schema jobs. This lets you route structured output through non-LiteLLM providers or custom pipelines. If the hooks are not implemented, the worker falls back to the LiteLLM + Instructor path.
 
 ## Custom adapters
 

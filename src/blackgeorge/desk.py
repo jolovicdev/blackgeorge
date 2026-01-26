@@ -1,3 +1,4 @@
+import json
 import os
 from typing import TYPE_CHECKING, Any
 
@@ -7,6 +8,7 @@ from blackgeorge.adapters.base import BaseModelAdapter
 from blackgeorge.adapters.litellm import LiteLLMAdapter
 from blackgeorge.core.event import Event
 from blackgeorge.core.job import Job
+from blackgeorge.core.message import Message
 from blackgeorge.core.report import Report
 from blackgeorge.event_bus import EventBus
 from blackgeorge.memory.in_memory import InMemoryMemoryStore
@@ -121,11 +123,42 @@ class Desk:
             return report.data.model_dump(mode="json")
         return report.data
 
+    def _apply_memory(self, worker: Worker, job: Job) -> Job:
+        if self.memory_store is None:
+            return job
+        memory_value = self.memory_store.read("context", worker.memory_scope)
+        if memory_value is None:
+            return job
+        if isinstance(memory_value, str):
+            content = memory_value
+        else:
+            content = json.dumps(memory_value, ensure_ascii=True, default=str)
+        memory_message = Message(role="system", content=f"Memory:\n{content}")
+        if job.initial_messages:
+            messages = [memory_message, *job.initial_messages]
+        else:
+            messages = [memory_message]
+        return job.model_copy(update={"initial_messages": messages})
+
+    def _write_memory(self, worker: Worker, report: Report) -> None:
+        if self.memory_store is None:
+            return
+        if report.status != "completed":
+            return
+        value: Any | None = report.data if report.data is not None else report.content
+        if value is None:
+            return
+        if isinstance(value, BaseModel):
+            value = value.model_dump(mode="json")
+        self.memory_store.write("last_output", value, worker.memory_scope)
+
     def run(self, runner: Worker | Workforce, job: Job, *, stream: bool | None = None) -> Report:
         run_id = new_id()
         events: list[Event] = []
         stream_enabled = self.stream if stream is None else stream
         stream_options = {"include_usage": True} if stream_enabled else None
+        if isinstance(runner, Worker):
+            job = self._apply_memory(runner, job)
         self.run_store.create_run(run_id, job.model_dump(mode="json"))
         self._emit(events, run_id, "run.started", "desk", {"job_id": job.id})
 
@@ -184,6 +217,8 @@ class Desk:
                 self._output_json(report),
                 None,
             )
+            if isinstance(runner, Worker):
+                self._write_memory(runner, report)
         else:
             self._emit(events, run_id, "run.failed", "desk", {"errors": report.errors})
             self.run_store.update_run(
@@ -207,6 +242,8 @@ class Desk:
         events: list[Event] = []
         stream_enabled = self.stream if stream is None else stream
         stream_options = {"include_usage": True} if stream_enabled else None
+        if isinstance(runner, Worker):
+            job = self._apply_memory(runner, job)
         self.run_store.create_run(run_id, job.model_dump(mode="json"))
         self._emit(events, run_id, "run.started", "desk", {"job_id": job.id})
 
@@ -265,6 +302,8 @@ class Desk:
                 self._output_json(report),
                 None,
             )
+            if isinstance(runner, Worker):
+                self._write_memory(runner, report)
         else:
             self._emit(events, run_id, "run.failed", "desk", {"errors": report.errors})
             self.run_store.update_run(
@@ -329,6 +368,7 @@ class Desk:
 
         self._emit(events, report.run_id, "run.resumed", "desk", {})
 
+        worker: Worker | None = None
         if state.runner_type == "worker":
             worker = self._workers.get(state.runner_name)
             if worker is None:
@@ -426,6 +466,8 @@ class Desk:
                 self._output_json(updated_report),
                 None,
             )
+            if worker is not None:
+                self._write_memory(worker, updated_report)
         else:
             self._emit(
                 events,

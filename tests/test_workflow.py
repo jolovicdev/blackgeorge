@@ -1,13 +1,17 @@
 import asyncio
+from typing import Any
 
 from blackgeorge.adapters.base import ModelResponse
 from blackgeorge.core.job import Job
+from blackgeorge.core.report import Report
 from blackgeorge.core.tool_call import ToolCall
 from blackgeorge.desk import Desk
 from blackgeorge.store.in_memory import InMemoryRunStore
 from blackgeorge.tools import tool
 from blackgeorge.worker import Worker
-from blackgeorge.workflow import Step
+from blackgeorge.workflow import Condition, Step
+from blackgeorge.workflow.context import WorkflowContext
+from blackgeorge.workflow.result import StepOutput
 from blackgeorge.workforce import Workforce
 from tests.utils import AsyncOnlyAdapter, FakeAdapter
 
@@ -143,3 +147,35 @@ def test_flow_arun_with_workforce_uses_async_adapter() -> None:
     assert report.status == "completed"
     assert "[A]" in report.content
     assert "[B]" in report.content
+
+
+def test_condition_stops_on_pause() -> None:
+    side_effect = {"ran": False}
+
+    class SideStep:
+        async def execute(
+            self,
+            flow: Any,
+            context: WorkflowContext,
+        ) -> list[StepOutput]:
+            side_effect["ran"] = True
+            return [Report(run_id="side", status="completed")]
+
+    @tool(requires_confirmation=True)
+    def risky(action: str) -> str:
+        return f"ok:{action}"
+
+    responses = [
+        ModelResponse(
+            content=None,
+            tool_calls=[ToolCall(id="1", name="risky", arguments={"action": "go"})],
+            usage={},
+            raw={},
+        )
+    ]
+    desk = Desk(model="fake", adapter=FakeAdapter(responses), run_store=InMemoryRunStore())
+    worker = Worker(name="Worker", tools=[risky], model="fake")
+    flow = desk.flow([Condition(lambda ctx: True, [Step(worker), SideStep()])])
+    report = flow.run(Job(input="run"))
+    assert report.status == "paused"
+    assert side_effect["ran"] is False

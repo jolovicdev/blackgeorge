@@ -190,7 +190,7 @@ class SQLiteSessionStore(SessionStore):
                 """
                 SELECT message_json FROM session_messages
                 WHERE session_id = ?
-                ORDER BY timestamp ASC
+                ORDER BY timestamp ASC, rowid ASC
                 """,
                 (session_id,),
             )

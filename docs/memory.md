@@ -2,6 +2,15 @@
 
 Blackgeorge defines a simple memory interface that can be used by your own tools or custom components.
 
+## Desk integration
+
+When a `Desk` is configured with a `memory_store`, it uses two conventional keys:
+
+- `context`: read before a worker run and inserted as a system message
+- `last_output`: written after a completed run
+
+Both use the worker's `memory_scope` as the namespace. You can ignore these conventions or build on them for more advanced memory behavior.
+
 ## MemoryStore interface
 
 A memory store supports:

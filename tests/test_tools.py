@@ -5,6 +5,7 @@ import pytest
 from blackgeorge.core.tool_call import ToolCall
 from blackgeorge.tools import execute_tool, tool
 from blackgeorge.tools.execution import aexecute_tool
+from blackgeorge.worker_messages import tool_message
 
 
 def test_tool_schema_inference() -> None:
@@ -26,6 +27,19 @@ def test_tool_execution() -> None:
     result = execute_tool(add, call)
     assert result.error is None
     assert result.content == "3"
+
+
+def test_tool_serializes_non_json_output() -> None:
+    @tool()
+    def returns_set() -> set[int]:
+        return {1, 2}
+
+    call = ToolCall(id="1", name="returns_set", arguments={})
+    result = execute_tool(returns_set, call)
+    assert result.error is None
+    assert result.content is not None
+    message = tool_message(result, call)
+    assert message.content
 
 
 @pytest.mark.asyncio

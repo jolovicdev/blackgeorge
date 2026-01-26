@@ -19,7 +19,10 @@ def _to_content(value: Any) -> str:
         return value
     if isinstance(value, BaseModel):
         return value.model_dump_json()
-    return json.dumps(value, ensure_ascii=True)
+    try:
+        return json.dumps(value, ensure_ascii=True, default=str)
+    except TypeError:
+        return str(value)
 
 
 def _run_coroutine_in_thread(coro: Any) -> Any:

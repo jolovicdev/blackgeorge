@@ -60,7 +60,7 @@ Structured output is used when:
 - a response schema is set
 - tools are not required for the current step
 
-If tools are present, the worker may call tools first and then request structured output once the model stops emitting tool calls.
+If tools are present, the worker may call tools first and then request structured output once the model stops emitting tool calls. Structured output uses the adapter's `structured_complete`/`astructured_complete` hooks when implemented, and falls back to the default LiteLLM + Instructor path otherwise.
 
 ## Streaming
 
@@ -101,7 +101,7 @@ if report.status == "paused":
 
 Confirmation actions treat truthy values as acceptance. If you pass a falsy value for confirmation, the tool result will be an error with message "Tool execution declined".
 
-User input actions insert the provided value into the tool call arguments under `user_input` unless the pending action metadata overrides the input key.
+User input actions insert the provided value into the tool call arguments under `user_input` unless the tool sets a different `input_key`.
 
 ## Limits and failure behavior
 

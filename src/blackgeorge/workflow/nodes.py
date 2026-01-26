@@ -33,6 +33,14 @@ class Step:
         return [StepResult(report, state)]
 
 
+def _should_stop(outputs: list[StepOutput]) -> bool:
+    for item in outputs:
+        report = item.report if isinstance(item, StepResult) else item
+        if report.status in ("paused", "failed"):
+            return True
+    return False
+
+
 class Parallel:
     def __init__(self, *steps: Executable) -> None:
         self.steps = list(steps)
@@ -60,7 +68,10 @@ class Condition:
         steps = self.if_true if self.predicate(context) else self.if_false
         reports: list[StepOutput] = []
         for step in steps:
-            reports.extend(await step.execute(flow, context))
+            step_outputs = await step.execute(flow, context)
+            reports.extend(step_outputs)
+            if _should_stop(step_outputs):
+                return reports
         return reports
 
 
@@ -78,7 +89,10 @@ class Router:
         steps = self.routes.get(key, [])
         reports: list[StepOutput] = []
         for step in steps:
-            reports.extend(await step.execute(flow, context))
+            step_outputs = await step.execute(flow, context)
+            reports.extend(step_outputs)
+            if _should_stop(step_outputs):
+                return reports
         return reports
 
 
@@ -99,7 +113,10 @@ class Loop:
         while iteration < self.max_iterations:
             iteration += 1
             for step in self.steps:
-                reports.extend(await step.execute(flow, context))
+                step_outputs = await step.execute(flow, context)
+                reports.extend(step_outputs)
+                if _should_stop(step_outputs):
+                    return reports
             if self.stop(context):
                 break
         return reports

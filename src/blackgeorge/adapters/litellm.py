@@ -6,6 +6,7 @@ import litellm
 from pydantic import BaseModel
 
 from blackgeorge.adapters.base import BaseModelAdapter, ModelResponse
+from blackgeorge.adapters.instructor_client import instructor_clients
 from blackgeorge.core.tool_call import ToolCall
 from blackgeorge.utils import new_id
 
@@ -142,3 +143,61 @@ class LiteLLMAdapter(BaseModelAdapter):
         if stream:
             return response
         return _parse_response(response)
+
+    def structured_complete(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, Any]],
+        response_schema: Any,
+        retries: int,
+    ) -> Any:
+        payload = list(messages)
+        client = instructor_clients.get(model, async_client=False)
+        attempts = 0
+        while True:
+            try:
+                return client.chat.completions.create(
+                    model=model,
+                    messages=payload,
+                    response_model=response_schema,
+                )
+            except Exception as exc:
+                if attempts >= retries:
+                    raise
+                payload.append(
+                    {
+                        "role": "user",
+                        "content": f"Fix validation errors: {exc}",
+                    }
+                )
+                attempts += 1
+
+    async def astructured_complete(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, Any]],
+        response_schema: Any,
+        retries: int,
+    ) -> Any:
+        payload = list(messages)
+        client = instructor_clients.get(model, async_client=True)
+        attempts = 0
+        while True:
+            try:
+                return await client.chat.completions.create(
+                    model=model,
+                    messages=payload,
+                    response_model=response_schema,
+                )
+            except Exception as exc:
+                if attempts >= retries:
+                    raise
+                payload.append(
+                    {
+                        "role": "user",
+                        "content": f"Fix validation errors: {exc}",
+                    }
+                )
+                attempts += 1

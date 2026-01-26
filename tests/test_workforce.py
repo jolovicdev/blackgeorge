@@ -2,12 +2,14 @@ from typing import Any
 
 from blackgeorge.adapters.base import BaseModelAdapter, ModelResponse
 from blackgeorge.core.job import Job
+from blackgeorge.core.report import Report
 from blackgeorge.core.tool_call import ToolCall
 from blackgeorge.desk import Desk
 from blackgeorge.store.in_memory import InMemoryRunStore
+from blackgeorge.store.state import RunState
 from blackgeorge.tools import tool
 from blackgeorge.worker import Worker
-from blackgeorge.workforce import Workforce
+from blackgeorge.workforce import WorkerDecision, Workforce
 from tests.utils import FakeAdapter
 
 
@@ -148,3 +150,96 @@ def test_unregister_workforce_blocks_resume() -> None:
     resumed = desk.resume(report, True)
     assert resumed.status == "failed"
     assert "Workforce not registered" in resumed.errors
+
+
+def test_managed_workforce_disables_manager_tools() -> None:
+    @tool()
+    def manager_tool(info: str) -> str:
+        return info
+
+    manager = Worker(name="Manager", model="fake", tools=[manager_tool])
+    worker = Worker(name="Worker", model="fake")
+    workforce = Workforce([worker], mode="managed", name="team", manager=manager)
+    captured: list[list[Any] | None] = []
+
+    def run_worker(**kwargs: Any) -> tuple[Report, RunState | None]:
+        job = kwargs["job"]
+        captured.append(job.tools_override)
+        report = Report(
+            run_id=kwargs["run_id"],
+            status="completed",
+            content=None,
+            data=WorkerDecision(worker=worker.name),
+            messages=[],
+            tool_calls=[],
+            metrics={},
+            events=[],
+            pending_action=None,
+            errors=[],
+        )
+        return report, None
+
+    workforce._run_worker = run_worker
+    desk = Desk(model="fake", adapter=FakeAdapter([]), run_store=InMemoryRunStore())
+    report = desk.run(workforce, Job(input="work"))
+    assert report.status == "completed"
+    assert captured[0] == []
+
+
+def test_workforce_pending_index_invalid() -> None:
+    workforce = Workforce([Worker(name="A", model="fake")], mode="collaborate", name="team")
+    job = Job(input="x")
+    worker_state = RunState(
+        run_id="r1",
+        status="paused",
+        runner_type="worker",
+        runner_name="A",
+        job=job,
+        messages=[],
+        tool_calls=[],
+        pending_action=None,
+        metrics={},
+        iteration=0,
+        payload={},
+    )
+    state = RunState(
+        run_id="r1",
+        status="paused",
+        runner_type="workforce",
+        runner_name="team",
+        job=job,
+        messages=[],
+        tool_calls=[],
+        pending_action=None,
+        metrics={},
+        iteration=0,
+        payload={
+            "stage": "collaborate",
+            "worker_state": worker_state.model_dump(mode="json"),
+            "completed_reports": [],
+            "pending_worker_index": 5,
+        },
+    )
+
+    def emit(event_type: str, source: str, payload: dict[str, Any]) -> None:
+        return None
+
+    report, next_state = workforce.resume(
+        adapter=FakeAdapter([ModelResponse(content="ok", tool_calls=[], usage={}, raw={})]),
+        state=state,
+        decision_or_input="go",
+        events=[],
+        emit=emit,
+        temperature=None,
+        max_tokens=None,
+        stream=False,
+        stream_options=None,
+        structured_output_retries=0,
+        max_iterations=1,
+        max_tool_calls=1,
+        default_model="fake",
+        respect_context_window=True,
+    )
+    assert report.status == "failed"
+    assert "Invalid pending worker index" in report.errors
+    assert next_state is None

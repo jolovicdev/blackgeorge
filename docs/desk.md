@@ -35,6 +35,15 @@ desk = Desk(
 - adapter: custom model adapter
 - storage_dir: directory for the default SQLite run store
 
+## Memory integration
+
+If you pass a `memory_store`, the desk applies simple read/write behavior for workers:
+
+- Before a worker run, it reads `context` from the store using `worker.memory_scope` and prepends it as a system message.
+- After a completed run, it writes `last_output` (structured data or content) using the same scope.
+
+This is intentionally minimal so you can build your own memory workflows on top.
+
 ## Context window handling
 
 When `respect_context_window` is enabled, workers summarize conversation history on context length errors and retry the call with the summary plus the most recent messages. If you disable it, the run fails on context limit errors. For custom or unmapped models, register model context limits in LiteLLM to avoid repeated overflows.

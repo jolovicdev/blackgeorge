@@ -17,6 +17,7 @@ A tool includes:
 - pre and post hooks
 - confirmation_prompt
 - user_input_prompt
+- input_key
 - timeout
 - retries
 - retry_delay
@@ -62,7 +63,17 @@ def ask(question: str, user_input: str) -> str:
     return user_input
 ```
 
-When resuming, the provided input is inserted into the tool arguments under `user_input` by default.
+When resuming, the provided input is inserted into the tool arguments under `user_input` by default. If you want a different argument name, set `input_key` on the tool.
+
+```python
+from blackgeorge.tools import tool
+
+@tool(requires_user_input=True, input_key="answer")
+def ask(question: str, answer: str) -> str:
+    return answer
+```
+
+`input_key` is optional. If you omit it, `user_input` is used.
 
 ## Timeouts and retries
 
