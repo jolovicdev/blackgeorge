@@ -26,41 +26,40 @@ class SQLiteSessionStore(SessionStore):
         self._db_path = db_path
         self._lock = threading.Lock()
         self._conn = sqlite3.connect(self._db_path, check_same_thread=False)
-        with self._lock:
-            with self._conn:
-                self._conn.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS sessions (
-                        id TEXT PRIMARY KEY,
-                        worker_name TEXT NOT NULL,
-                        metadata TEXT NOT NULL,
-                        created_at TEXT NOT NULL,
-                        updated_at TEXT NOT NULL
-                    )
-                    """
+        with self._lock, self._conn:
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS sessions (
+                    id TEXT PRIMARY KEY,
+                    worker_name TEXT NOT NULL,
+                    metadata TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
                 )
-                self._conn.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS session_messages (
-                        id TEXT PRIMARY KEY,
-                        session_id TEXT NOT NULL,
-                        message_json TEXT NOT NULL,
-                        timestamp TEXT NOT NULL,
-                        FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
-                    )
-                    """
+                """
+            )
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS session_messages (
+                    id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    message_json TEXT NOT NULL,
+                    timestamp TEXT NOT NULL,
+                    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
                 )
-                self._conn.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_sessions_worker ON sessions(worker_name)"
-                )
-                self._conn.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_session_messages_session "
-                    "ON session_messages(session_id)"
-                )
-                self._conn.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_session_messages_timestamp "
-                    "ON session_messages(timestamp)"
-                )
+                """
+            )
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_sessions_worker ON sessions(worker_name)"
+            )
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_session_messages_session "
+                "ON session_messages(session_id)"
+            )
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_session_messages_timestamp "
+                "ON session_messages(timestamp)"
+            )
 
     def _connect(self) -> sqlite3.Connection:
         return self._conn
