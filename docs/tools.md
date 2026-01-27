@@ -157,3 +157,5 @@ The worker executes tools using `execute_tool`:
 - run post hooks
 
 If validation or execution fails, the error is captured in the tool result and the run continues.
+When multiple tool calls are returned in the same model response, the worker executes them in
+parallel and then appends tool results in call order.

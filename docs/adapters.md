@@ -23,6 +23,7 @@ Key behaviors:
 - calls `litellm.acompletion(...)` for async requests
 - passes messages, tools, tool_choice, temperature, max_tokens
 - supports streaming when requested
+- enables `parallel_tool_calls` when LiteLLM reports the model supports parallel function calling
 
 Tool calls are parsed from the response and mapped into `ToolCall` objects.
 

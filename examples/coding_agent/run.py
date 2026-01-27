@@ -1,5 +1,6 @@
 import os
 import sys
+import time
 from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
@@ -8,6 +9,11 @@ if str(ROOT_DIR) not in sys.path:
 
 MODEL_NAME = "deepseek/deepseek-chat"
 _stream_state = {"active": False}
+_tool_state = {
+    "active": set(),
+    "started_at": {},
+    "parallel_batches": 0,
+}
 
 
 def require_api_key() -> None:
@@ -26,25 +32,43 @@ def print_event(event) -> None:
     if _stream_state["active"]:
         print()
         _stream_state["active"] = False
+    pretty_type = event.type.replace(".", " ").upper()
+    if event.type == "tool.started":
+        tool_call_id = event.payload.get("tool_call_id")
+        if tool_call_id:
+            _tool_state["active"].add(tool_call_id)
+            _tool_state["started_at"][tool_call_id] = time.perf_counter()
+            if len(_tool_state["active"]) == 2:
+                _tool_state["parallel_batches"] += 1
+                active_list = ", ".join(sorted(_tool_state["active"]))
+                print(f"[PARALLEL] tools in flight: {active_list}")
+    if event.type in {"tool.completed", "tool.failed"}:
+        tool_call_id = event.payload.get("tool_call_id")
+        if tool_call_id:
+            started = _tool_state["started_at"].pop(tool_call_id, None)
+            _tool_state["active"].discard(tool_call_id)
+            if started is not None:
+                elapsed = time.perf_counter() - started
+                print(f"[TOOL TIMING] {tool_call_id} {elapsed:.3f}s")
     if event.type == "assistant.message":
         content = event.payload.get("content", "")
         tool_calls = event.payload.get("tool_calls", [])
         if content:
-            print(f"assistant.message [{event.source}] {content}")
+            print(f"[{pretty_type}] {event.source}: {content}")
         if tool_calls:
             names = ", ".join(call.get("name", "") for call in tool_calls if call.get("name"))
             if names:
-                print(f"assistant.tools [{event.source}] {names}")
+                print(f"[ASSISTANT TOOLS] {event.source}: {names}")
             else:
-                print(f"assistant.tools [{event.source}]")
+                print(f"[ASSISTANT TOOLS] {event.source}")
         if not content and not tool_calls:
-            print(f"assistant.message [{event.source}]")
+            print(f"[{pretty_type}] {event.source}")
         return
     payload = event.payload
     tail = ""
     if payload:
         tail = f" {payload}"
-    print(f"{event.type} [{event.source}]" + tail)
+    print(f"[{pretty_type}] {event.source}" + tail)
 
 
 def main() -> None:

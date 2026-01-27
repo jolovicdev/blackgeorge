@@ -8,6 +8,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from blackgeorge.async_utils import run_coroutine_in_thread, run_coroutine_sync
 from blackgeorge.core.tool_call import ToolCall
 from blackgeorge.tools.base import ProgressCallback, Tool, ToolResult
 
@@ -26,20 +27,11 @@ def _to_content(value: Any) -> str:
 
 
 def _run_coroutine_in_thread(coro: Any) -> Any:
-    def runner() -> Any:
-        return asyncio.run(coro)
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(runner)
-        return future.result()
+    return run_coroutine_in_thread(coro)
 
 
 def _run_coroutine_sync(coro: Any) -> Any:
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(coro)
-    return _run_coroutine_in_thread(coro)
+    return run_coroutine_sync(coro)
 
 
 def _run_sync_call(tool: Tool, args: dict[str, Any]) -> Any:

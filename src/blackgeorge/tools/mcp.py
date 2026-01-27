@@ -1,5 +1,4 @@
 import asyncio
-import concurrent.futures
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -9,24 +8,16 @@ from mcp.client.sse import sse_client
 from mcp.client.stdio import StdioServerParameters, stdio_client
 from pydantic import BaseModel, create_model
 
+from blackgeorge.async_utils import run_coroutine_in_thread, run_coroutine_sync
 from blackgeorge.tools.base import Tool, ToolResult
 
 
 def _run_coroutine_in_thread(coro: Any) -> Any:
-    def runner() -> Any:
-        return asyncio.run(coro)
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(runner)
-        return future.result()
+    return run_coroutine_in_thread(coro)
 
 
 def _run_coroutine_sync(coro: Any) -> Any:
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(coro)
-    return _run_coroutine_in_thread(coro)
+    return run_coroutine_sync(coro)
 
 
 def _json_schema_to_pydantic_field(

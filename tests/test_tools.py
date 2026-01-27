@@ -4,7 +4,7 @@ import pytest
 
 from blackgeorge.core.tool_call import ToolCall
 from blackgeorge.tools import execute_tool, tool
-from blackgeorge.tools.execution import aexecute_tool
+from blackgeorge.tools.execution import _run_coroutine_sync, aexecute_tool
 from blackgeorge.worker_messages import tool_message
 
 
@@ -65,3 +65,13 @@ async def test_async_tool_execution_with_sync_tool() -> None:
     result = await aexecute_tool(sync_add, call)
     assert result.error is None
     assert result.content == "3"
+
+
+@pytest.mark.asyncio
+async def test_run_coroutine_sync_from_running_loop() -> None:
+    async def coro() -> str:
+        await asyncio.sleep(0)
+        return "ok"
+
+    result = _run_coroutine_sync(coro())
+    assert result == "ok"

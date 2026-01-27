@@ -1,5 +1,6 @@
 import json
 import sqlite3
+import threading
 from datetime import datetime
 from typing import Any
 
@@ -23,42 +24,46 @@ def _datetime_from_iso(value: str) -> datetime:
 class SQLiteSessionStore(SessionStore):
     def __init__(self, db_path: str) -> None:
         self._db_path = db_path
-        with sqlite3.connect(self._db_path) as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS sessions (
-                    id TEXT PRIMARY KEY,
-                    worker_name TEXT NOT NULL,
-                    metadata TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
+        self._lock = threading.Lock()
+        self._conn = sqlite3.connect(self._db_path, check_same_thread=False)
+        with self._lock:
+            with self._conn:
+                self._conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS sessions (
+                        id TEXT PRIMARY KEY,
+                        worker_name TEXT NOT NULL,
+                        metadata TEXT NOT NULL,
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
+                    )
+                    """
                 )
-                """
-            )
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS session_messages (
-                    id TEXT PRIMARY KEY,
-                    session_id TEXT NOT NULL,
-                    message_json TEXT NOT NULL,
-                    timestamp TEXT NOT NULL,
-                    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+                self._conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS session_messages (
+                        id TEXT PRIMARY KEY,
+                        session_id TEXT NOT NULL,
+                        message_json TEXT NOT NULL,
+                        timestamp TEXT NOT NULL,
+                        FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+                    )
+                    """
                 )
-                """
-            )
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_worker ON sessions(worker_name)")
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_session_messages_session "
-                "ON session_messages(session_id)"
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_session_messages_timestamp "
-                "ON session_messages(timestamp)"
-            )
-            conn.commit()
+                self._conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_sessions_worker ON sessions(worker_name)"
+                )
+                self._conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_session_messages_session "
+                    "ON session_messages(session_id)"
+                )
+                self._conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_session_messages_timestamp "
+                    "ON session_messages(timestamp)"
+                )
 
     def _connect(self) -> sqlite3.Connection:
-        return sqlite3.connect(self._db_path)
+        return self._conn
 
     def create_session(
         self,
@@ -68,15 +73,16 @@ class SQLiteSessionStore(SessionStore):
     ) -> None:
         now = utc_now().isoformat()
         metadata_json = json.dumps(metadata or {}, ensure_ascii=True)
-        with self._connect() as conn:
-            conn.execute(
-                """
-                INSERT INTO sessions (id, worker_name, metadata, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (session_id, worker_name, metadata_json, now, now),
-            )
-            conn.commit()
+        with self._lock:
+            conn = self._connect()
+            with conn:
+                conn.execute(
+                    """
+                    INSERT INTO sessions (id, worker_name, metadata, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (session_id, worker_name, metadata_json, now, now),
+                )
 
     def update_session(
         self,
@@ -84,29 +90,31 @@ class SQLiteSessionStore(SessionStore):
         metadata: dict[str, Any] | None = None,
     ) -> None:
         now = utc_now().isoformat()
-        with self._connect() as conn:
-            if metadata is not None:
-                conn.execute(
-                    """
-                    UPDATE sessions
-                    SET metadata = ?, updated_at = ?
-                    WHERE id = ?
-                    """,
-                    (json.dumps(metadata, ensure_ascii=True), now, session_id),
-                )
-            else:
-                conn.execute(
-                    """
-                    UPDATE sessions
-                    SET updated_at = ?
-                    WHERE id = ?
-                    """,
-                    (now, session_id),
-                )
-            conn.commit()
+        with self._lock:
+            conn = self._connect()
+            with conn:
+                if metadata is not None:
+                    conn.execute(
+                        """
+                        UPDATE sessions
+                        SET metadata = ?, updated_at = ?
+                        WHERE id = ?
+                        """,
+                        (json.dumps(metadata, ensure_ascii=True), now, session_id),
+                    )
+                else:
+                    conn.execute(
+                        """
+                        UPDATE sessions
+                        SET updated_at = ?
+                        WHERE id = ?
+                        """,
+                        (now, session_id),
+                    )
 
     def get_session(self, session_id: str) -> SessionRecord | None:
-        with self._connect() as conn:
+        with self._lock:
+            conn = self._connect()
             cursor = conn.execute(
                 """
                 SELECT id, worker_name, metadata, created_at, updated_at
@@ -130,7 +138,8 @@ class SQLiteSessionStore(SessionStore):
         worker_name: str | None = None,
         limit: int | None = None,
     ) -> list[SessionRecord]:
-        with self._connect() as conn:
+        with self._lock:
+            conn = self._connect()
             if worker_name:
                 cursor = conn.execute(
                     """
@@ -165,27 +174,30 @@ class SQLiteSessionStore(SessionStore):
         ]
 
     def delete_session(self, session_id: str) -> None:
-        with self._connect() as conn:
-            conn.execute("DELETE FROM session_messages WHERE session_id = ?", (session_id,))
-            conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
-            conn.commit()
+        with self._lock:
+            conn = self._connect()
+            with conn:
+                conn.execute("DELETE FROM session_messages WHERE session_id = ?", (session_id,))
+                conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
 
     def add_messages(self, session_id: str, messages: list[Message]) -> None:
         now = utc_now().isoformat()
-        with self._connect() as conn:
-            for i, message in enumerate(messages):
-                message_id = f"{session_id}_{i}_{new_id()}"
-                conn.execute(
-                    """
-                    INSERT INTO session_messages (id, session_id, message_json, timestamp)
-                    VALUES (?, ?, ?, ?)
-                    """,
-                    (message_id, session_id, _serialize_message(message), now),
-                )
-            conn.commit()
+        with self._lock:
+            conn = self._connect()
+            with conn:
+                for i, message in enumerate(messages):
+                    message_id = f"{session_id}_{i}_{new_id()}"
+                    conn.execute(
+                        """
+                        INSERT INTO session_messages (id, session_id, message_json, timestamp)
+                        VALUES (?, ?, ?, ?)
+                        """,
+                        (message_id, session_id, _serialize_message(message), now),
+                    )
 
     def get_messages(self, session_id: str) -> list[Message]:
-        with self._connect() as conn:
+        with self._lock:
+            conn = self._connect()
             cursor = conn.execute(
                 """
                 SELECT message_json FROM session_messages
