@@ -53,41 +53,40 @@ class SQLiteRunStore(RunStore):
         self._path = path
         self._lock = threading.Lock()
         self._conn = sqlite3.connect(self._path, check_same_thread=False)
-        with self._lock:
-            with self._conn:
-                self._conn.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS runs (
-                        id TEXT PRIMARY KEY,
-                        status TEXT NOT NULL,
-                        input TEXT,
-                        output TEXT,
-                        output_json TEXT,
-                        state_json TEXT,
-                        created_at TEXT NOT NULL,
-                        updated_at TEXT NOT NULL
-                    )
-                    """
+        with self._lock, self._conn:
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS runs (
+                    id TEXT PRIMARY KEY,
+                    status TEXT NOT NULL,
+                    input TEXT,
+                    output TEXT,
+                    output_json TEXT,
+                    state_json TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
                 )
-                self._conn.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS events (
-                        id TEXT PRIMARY KEY,
-                        run_id TEXT NOT NULL,
-                        type TEXT NOT NULL,
-                        payload TEXT NOT NULL,
-                        timestamp TEXT NOT NULL
-                    )
-                    """
+                """
+            )
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS events (
+                    id TEXT PRIMARY KEY,
+                    run_id TEXT NOT NULL,
+                    type TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    timestamp TEXT NOT NULL
                 )
-                self._conn.execute("CREATE INDEX IF NOT EXISTS idx_events_run_id ON events(run_id)")
-                self._conn.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp)"
-                )
-                self._conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status)")
-                self._conn.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_runs_created_at ON runs(created_at)"
-                )
+                """
+            )
+            self._conn.execute("CREATE INDEX IF NOT EXISTS idx_events_run_id ON events(run_id)")
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp)"
+            )
+            self._conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status)")
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_runs_created_at ON runs(created_at)"
+            )
 
     def _connect(self) -> sqlite3.Connection:
         return self._conn
