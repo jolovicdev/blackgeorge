@@ -27,3 +27,4 @@ site/
 .idea/
 .vscode/
 *.swp
+tests/inte_test.py

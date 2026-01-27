@@ -1,5 +1,7 @@
+import threading
 from typing import Any
 
+import pytest
 from pydantic import BaseModel
 
 from blackgeorge.adapters.base import BaseModelAdapter, ModelResponse
@@ -10,6 +12,7 @@ from blackgeorge.memory.base import MemoryScope, MemoryStore
 from blackgeorge.store.in_memory import InMemoryRunStore
 from blackgeorge.tools import tool
 from blackgeorge.worker import Worker
+from blackgeorge.worker_messages import replace_tool_call
 from tests.utils import FakeAdapter
 
 
@@ -205,6 +208,39 @@ def test_worker_tool_loop() -> None:
     assert report.content == "done"
     assert report.tool_calls
     assert report.tool_calls[0].result is not None
+
+
+def test_parallel_tool_calls_execute_concurrently() -> None:
+    barrier = threading.Barrier(2)
+
+    @tool()
+    def tool_a() -> str:
+        barrier.wait(timeout=1)
+        return "a"
+
+    @tool()
+    def tool_b() -> str:
+        barrier.wait(timeout=1)
+        return "b"
+
+    responses = [
+        ModelResponse(
+            content=None,
+            tool_calls=[
+                ToolCall(id="1", name="tool_a", arguments={}),
+                ToolCall(id="2", name="tool_b", arguments={}),
+            ],
+            usage={},
+            raw={},
+        ),
+        ModelResponse(content="done", tool_calls=[], usage={}, raw={}),
+    ]
+    desk = Desk(model="fake", adapter=FakeAdapter(responses), run_store=InMemoryRunStore())
+    worker = Worker(name="Worker", tools=[tool_a, tool_b], model="fake")
+    report = desk.run(worker, Job(input="run"))
+    assert report.status == "completed"
+    assert len(report.tool_calls) == 2
+    assert all(call.error is None for call in report.tool_calls)
 
 
 def test_pause_and_resume_confirmation() -> None:
@@ -412,3 +448,10 @@ def test_memory_store_used_in_run() -> None:
     assert report.status == "completed"
     assert ("read", "context") in store.calls
     assert ("write", "last_output") in store.calls
+
+
+def test_replace_tool_call_missing_id_raises() -> None:
+    tool_calls = [ToolCall(id="call-1", name="tool", arguments={})]
+    updated = ToolCall(id="missing", name="tool", arguments={})
+    with pytest.raises(ValueError):
+        replace_tool_call(tool_calls, updated)

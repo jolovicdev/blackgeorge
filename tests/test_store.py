@@ -1,3 +1,5 @@
+import threading
+
 from pydantic import BaseModel
 
 from blackgeorge.core.event import Event
@@ -47,6 +49,26 @@ def test_sqlite_run_store(tmp_path) -> None:
     assert events
 
 
+def test_sqlite_run_store_in_memory() -> None:
+    store = SQLiteRunStore(":memory:")
+    run_id = "run_memory"
+    store.create_run(run_id, {"input": "x"})
+    event = Event(
+        event_id=new_id(),
+        type="run.started",
+        timestamp=utc_now(),
+        run_id=run_id,
+        source="test",
+        payload={},
+    )
+    store.add_event(event)
+    record = store.get_run(run_id)
+    assert record is not None
+    assert record.run_id == run_id
+    events = store.get_events(run_id)
+    assert len(events) == 1
+
+
 def test_sqlite_run_store_serializes_base_models(tmp_path) -> None:
     path = tmp_path / "run_models.db"
     store = SQLiteRunStore(str(path))
@@ -57,6 +79,24 @@ def test_sqlite_run_store_serializes_base_models(tmp_path) -> None:
     updated = store.get_run(run_id)
     assert updated is not None
     assert updated.output_json == {"items": [{"value": 1}, {"nested": {"value": 2}}]}
+
+
+def test_sqlite_memory_store_thread_safe(tmp_path) -> None:
+    store = SQLiteMemoryStore(str(tmp_path / "mem_thread.db"))
+    errors: list[BaseException] = []
+
+    def worker() -> None:
+        try:
+            store.write("key", {"value": 1}, "desk")
+            store.read("key", "desk")
+            store.search("key", "desk")
+        except Exception as exc:
+            errors.append(exc)
+
+    thread = threading.Thread(target=worker)
+    thread.start()
+    thread.join()
+    assert not errors
 
 
 def test_run_state_response_schema_round_trip(tmp_path) -> None:

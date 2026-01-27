@@ -1,5 +1,6 @@
 import json
 import sqlite3
+import threading
 from dataclasses import asdict, is_dataclass
 from datetime import datetime
 from typing import Any, cast
@@ -50,63 +51,70 @@ def _deserialize_event(payload: str) -> Event:
 class SQLiteRunStore(RunStore):
     def __init__(self, path: str) -> None:
         self._path = path
-        with sqlite3.connect(self._path) as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS runs (
-                    id TEXT PRIMARY KEY,
-                    status TEXT NOT NULL,
-                    input TEXT,
-                    output TEXT,
-                    output_json TEXT,
-                    state_json TEXT,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
+        self._lock = threading.Lock()
+        self._conn = sqlite3.connect(self._path, check_same_thread=False)
+        with self._lock:
+            with self._conn:
+                self._conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS runs (
+                        id TEXT PRIMARY KEY,
+                        status TEXT NOT NULL,
+                        input TEXT,
+                        output TEXT,
+                        output_json TEXT,
+                        state_json TEXT,
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
+                    )
+                    """
                 )
-                """
-            )
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS events (
-                    id TEXT PRIMARY KEY,
-                    run_id TEXT NOT NULL,
-                    type TEXT NOT NULL,
-                    payload TEXT NOT NULL,
-                    timestamp TEXT NOT NULL
+                self._conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS events (
+                        id TEXT PRIMARY KEY,
+                        run_id TEXT NOT NULL,
+                        type TEXT NOT NULL,
+                        payload TEXT NOT NULL,
+                        timestamp TEXT NOT NULL
+                    )
+                    """
                 )
-                """
-            )
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_events_run_id ON events(run_id)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_created_at ON runs(created_at)")
-            conn.commit()
+                self._conn.execute("CREATE INDEX IF NOT EXISTS idx_events_run_id ON events(run_id)")
+                self._conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp)"
+                )
+                self._conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status)")
+                self._conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_runs_created_at ON runs(created_at)"
+                )
 
     def _connect(self) -> sqlite3.Connection:
-        return sqlite3.connect(self._path)
+        return self._conn
 
     def create_run(self, run_id: str, input_payload: Any) -> None:
         now = utc_now().isoformat()
-        with self._connect() as conn:
-            conn.execute(
-                """
-                INSERT INTO runs (
-                    id, status, input, output, output_json, state_json, created_at, updated_at
+        with self._lock:
+            conn = self._connect()
+            with conn:
+                conn.execute(
+                    """
+                    INSERT INTO runs (
+                        id, status, input, output, output_json, state_json, created_at, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        run_id,
+                        "running",
+                        _serialize(input_payload),
+                        None,
+                        None,
+                        None,
+                        now,
+                        now,
+                    ),
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    run_id,
-                    "running",
-                    _serialize(input_payload),
-                    None,
-                    None,
-                    None,
-                    now,
-                    now,
-                ),
-            )
-            conn.commit()
 
     def update_run(
         self,
@@ -117,26 +125,28 @@ class SQLiteRunStore(RunStore):
         state: RunState | None,
     ) -> None:
         now = utc_now().isoformat()
-        with self._connect() as conn:
-            conn.execute(
-                """
-                UPDATE runs
-                SET status = ?, output = ?, output_json = ?, state_json = ?, updated_at = ?
-                WHERE id = ?
-                """,
-                (
-                    status,
-                    output,
-                    _serialize(output_json) if output_json is not None else None,
-                    _serialize_state(state),
-                    now,
-                    run_id,
-                ),
-            )
-            conn.commit()
+        with self._lock:
+            conn = self._connect()
+            with conn:
+                conn.execute(
+                    """
+                    UPDATE runs
+                    SET status = ?, output = ?, output_json = ?, state_json = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        status,
+                        output,
+                        _serialize(output_json) if output_json is not None else None,
+                        _serialize_state(state),
+                        now,
+                        run_id,
+                    ),
+                )
 
     def get_run(self, run_id: str) -> RunRecord | None:
-        with self._connect() as conn:
+        with self._lock:
+            conn = self._connect()
             cursor = conn.execute(
                 """
                 SELECT id, status, input, output, output_json, state_json, created_at, updated_at
@@ -164,24 +174,26 @@ class SQLiteRunStore(RunStore):
         )
 
     def add_event(self, event: Event) -> None:
-        with self._connect() as conn:
-            conn.execute(
-                """
-                INSERT INTO events (id, run_id, type, payload, timestamp)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (
-                    event.event_id,
-                    event.run_id,
-                    event.type,
-                    _serialize(event.model_dump(mode="json", warnings=False)),
-                    event.timestamp.isoformat(),
-                ),
-            )
-            conn.commit()
+        with self._lock:
+            conn = self._connect()
+            with conn:
+                conn.execute(
+                    """
+                    INSERT INTO events (id, run_id, type, payload, timestamp)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        event.event_id,
+                        event.run_id,
+                        event.type,
+                        _serialize(event.model_dump(mode="json", warnings=False)),
+                        event.timestamp.isoformat(),
+                    ),
+                )
 
     def get_events(self, run_id: str) -> list[Event]:
-        with self._connect() as conn:
+        with self._lock:
+            conn = self._connect()
             cursor = conn.execute(
                 """
                 SELECT payload FROM events WHERE run_id = ? ORDER BY timestamp ASC

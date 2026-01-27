@@ -43,6 +43,16 @@ def _parse_tool_calls(message: Any) -> list[ToolCall]:
     return parsed
 
 
+def _supports_parallel_function_calling(model: str) -> bool:
+    checker = getattr(litellm, "supports_parallel_function_calling", None)
+    if checker is None:
+        return False
+    try:
+        return bool(checker(model))
+    except TypeError:
+        return bool(checker(model=model))
+
+
 def _parse_response(response: Any) -> ModelResponse:
     choices = _get(response, "choices", [])
     message = _get(choices[0], "message") if choices else None
@@ -89,6 +99,8 @@ class LiteLLMAdapter(BaseModelAdapter):
             "stream_options": stream_options,
         }
 
+        if tools and _supports_parallel_function_calling(model):
+            litellm_params["parallel_tool_calls"] = True
         if thinking is not None:
             litellm_params["thinking"] = thinking
         if drop_params is not None:
@@ -130,6 +142,8 @@ class LiteLLMAdapter(BaseModelAdapter):
             "stream_options": stream_options,
         }
 
+        if tools and _supports_parallel_function_calling(model):
+            litellm_params["parallel_tool_calls"] = True
         if thinking is not None:
             litellm_params["thinking"] = thinking
         if drop_params is not None:

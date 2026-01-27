@@ -1,3 +1,5 @@
+import asyncio
+import concurrent.futures
 import json
 from collections.abc import Callable, Iterable
 from typing import Any, cast
@@ -157,6 +159,75 @@ def _tool_event_payload(call: ToolCall, result: ToolResult, limit: int = 200) ->
     if result.cancelled:
         payload["cancelled"] = True
     return payload
+
+
+def _execute_tool_calls_sync(
+    ordered_calls: list[ToolCall],
+    executable_calls: list[tuple[ToolCall, Tool]],
+    immediate_results: dict[str, ToolResult],
+    messages: list[Message],
+    tool_calls: list[ToolCall],
+    emit: EventEmitter,
+) -> None:
+    results: dict[str, ToolResult] = dict(immediate_results)
+    if executable_calls:
+        for call, tool in executable_calls:
+            emit("tool.started", tool.name, {"tool_call_id": call.id})
+        if len(executable_calls) == 1:
+            call, tool = executable_calls[0]
+            results[call.id] = execute_tool(tool, call)
+        else:
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=len(executable_calls)
+            ) as executor:
+                futures = [
+                    executor.submit(execute_tool, tool, call) for call, tool in executable_calls
+                ]
+                for (call, _), future in zip(executable_calls, futures):
+                    try:
+                        results[call.id] = future.result()
+                    except Exception as exc:
+                        results[call.id] = ToolResult(error=str(exc))
+    for call in ordered_calls:
+        result = results.get(call.id, ToolResult(error="Tool execution failed"))
+        if result.error:
+            emit("tool.failed", call.name, {"tool_call_id": call.id, "error": result.error})
+        else:
+            emit("tool.completed", call.name, _tool_event_payload(call, result))
+        tool_result_message = tool_message(result, call)
+        messages.append(tool_result_message)
+        replace_tool_call(tool_calls, tool_call_with_result(call, result))
+
+
+async def _execute_tool_calls_async(
+    ordered_calls: list[ToolCall],
+    executable_calls: list[tuple[ToolCall, Tool]],
+    immediate_results: dict[str, ToolResult],
+    messages: list[Message],
+    tool_calls: list[ToolCall],
+    emit: EventEmitter,
+) -> None:
+    results: dict[str, ToolResult] = dict(immediate_results)
+    if executable_calls:
+        for call, tool in executable_calls:
+            emit("tool.started", tool.name, {"tool_call_id": call.id})
+        if len(executable_calls) == 1:
+            call, tool = executable_calls[0]
+            results[call.id] = await aexecute_tool(tool, call)
+        else:
+            tasks = [aexecute_tool(tool, call) for call, tool in executable_calls]
+            tool_results = await asyncio.gather(*tasks)
+            for (call, _), result in zip(executable_calls, tool_results):
+                results[call.id] = result
+    for call in ordered_calls:
+        result = results.get(call.id, ToolResult(error="Tool execution failed"))
+        if result.error:
+            emit("tool.failed", call.name, {"tool_call_id": call.id, "error": result.error})
+        else:
+            emit("tool.completed", call.name, _tool_event_payload(call, result))
+        tool_result_message = tool_message(result, call)
+        messages.append(tool_result_message)
+        replace_tool_call(tool_calls, tool_call_with_result(call, result))
 
 
 class WorkerRunner:
@@ -747,46 +818,29 @@ class WorkerRunner:
                 )
                 messages.append(assistant_message)
                 emit_assistant_message(emit, self.name, assistant_message)
+                ordered_calls: list[ToolCall] = []
+                executable_calls: list[tuple[ToolCall, Tool]] = []
+                immediate_results: dict[str, ToolResult] = {}
+                pending: PendingAction | None = None
+                max_tool_calls_exceeded = False
+
                 for call in response.tool_calls:
                     tool_calls.append(call)
                     if len(tool_calls) >= max_tool_calls:
                         errors.append("Max tool calls exceeded")
-                        emit("worker.failed", self.name, {"error": errors[-1]})
-                        report = _build_report(
-                            run_id,
-                            "failed",
-                            None,
-                            None,
-                            None,
-                            messages,
-                            tool_calls,
-                            metrics,
-                            events,
-                            None,
-                            errors,
-                        )
-                        return report, None
+                        max_tool_calls_exceeded = True
+                        break
                     if call.error:
-                        result = ToolResult(error=call.error)
-                        emit(
-                            "tool.failed",
-                            call.name,
-                            {"tool_call_id": call.id, "error": result.error},
-                        )
-                        messages.append(tool_message(result, call))
-                        replace_tool_call(tool_calls, tool_call_with_result(call, result))
+                        ordered_calls.append(call)
+                        immediate_results[call.id] = ToolResult(error=call.error)
                         continue
 
                     tool = allowed_tools.get(call.name)
                     if tool is None:
-                        result = ToolResult(error=f"Tool not found: {call.name}")
-                        emit(
-                            "tool.failed",
-                            call.name,
-                            {"tool_call_id": call.id, "error": result.error},
+                        ordered_calls.append(call)
+                        immediate_results[call.id] = ToolResult(
+                            error=f"Tool not found: {call.name}"
                         )
-                        messages.append(tool_message(result, call))
-                        replace_tool_call(tool_calls, tool_call_with_result(call, result))
                         continue
                     action_type = tool_action_type(tool)
                     if action_type:
@@ -801,51 +855,68 @@ class WorkerRunner:
                             options=pending_options(action_type),
                             metadata=metadata,
                         )
-                        emit(
-                            f"tool.{action_type}_requested",
-                            tool.name,
-                            {"tool_call_id": call.id},
-                        )
-                        emit("worker.completed", self.name, {})
-                        report = _build_report(
-                            run_id,
-                            "paused",
-                            None,
-                            None,
-                            None,
-                            messages,
-                            tool_calls,
-                            metrics,
-                            events,
-                            pending,
-                            errors,
-                        )
-                        state = _build_state(
-                            run_id,
-                            "paused",
-                            self.name,
-                            job,
-                            messages,
-                            tool_calls,
-                            pending,
-                            metrics,
-                            iteration,
-                        )
-                        return report, state
+                        break
+                    ordered_calls.append(call)
+                    executable_calls.append((call, tool))
 
-                    emit("tool.started", tool.name, {"tool_call_id": call.id})
-                    result = execute_tool(tool, call)
-                    if result.error:
-                        emit(
-                            "tool.failed",
-                            tool.name,
-                            {"tool_call_id": call.id, "error": result.error},
-                        )
-                    else:
-                        emit("tool.completed", tool.name, _tool_event_payload(call, result))
-                    tool_result_message = tool_message(result, call)
-                    messages.append(tool_result_message)
-                    replace_tool_call(tool_calls, tool_call_with_result(call, result))
+                _execute_tool_calls_sync(
+                    ordered_calls,
+                    executable_calls,
+                    immediate_results,
+                    messages,
+                    tool_calls,
+                    emit,
+                )
+
+                if max_tool_calls_exceeded:
+                    emit("worker.failed", self.name, {"error": errors[-1]})
+                    report = _build_report(
+                        run_id,
+                        "failed",
+                        None,
+                        None,
+                        None,
+                        messages,
+                        tool_calls,
+                        metrics,
+                        events,
+                        None,
+                        errors,
+                    )
+                    return report, None
+
+                if pending is not None:
+                    emit(
+                        f"tool.{pending.type}_requested",
+                        pending.tool_call.name,
+                        {"tool_call_id": pending.tool_call.id},
+                    )
+                    emit("worker.completed", self.name, {})
+                    report = _build_report(
+                        run_id,
+                        "paused",
+                        None,
+                        None,
+                        None,
+                        messages,
+                        tool_calls,
+                        metrics,
+                        events,
+                        pending,
+                        errors,
+                    )
+                    state = _build_state(
+                        run_id,
+                        "paused",
+                        self.name,
+                        job,
+                        messages,
+                        tool_calls,
+                        pending,
+                        metrics,
+                        iteration,
+                    )
+                    return report, state
                 continue
 
             if response_schema is not None:
@@ -1238,46 +1309,29 @@ class WorkerRunner:
                 )
                 messages.append(assistant_message)
                 emit_assistant_message(emit, self.name, assistant_message)
+                ordered_calls: list[ToolCall] = []
+                executable_calls: list[tuple[ToolCall, Tool]] = []
+                immediate_results: dict[str, ToolResult] = {}
+                pending: PendingAction | None = None
+                max_tool_calls_exceeded = False
+
                 for call in response.tool_calls:
                     tool_calls.append(call)
                     if len(tool_calls) >= max_tool_calls:
                         errors.append("Max tool calls exceeded")
-                        emit("worker.failed", self.name, {"error": errors[-1]})
-                        report = _build_report(
-                            run_id,
-                            "failed",
-                            None,
-                            None,
-                            None,
-                            messages,
-                            tool_calls,
-                            metrics,
-                            events,
-                            None,
-                            errors,
-                        )
-                        return report, None
+                        max_tool_calls_exceeded = True
+                        break
                     if call.error:
-                        result = ToolResult(error=call.error)
-                        emit(
-                            "tool.failed",
-                            call.name,
-                            {"tool_call_id": call.id, "error": result.error},
-                        )
-                        messages.append(tool_message(result, call))
-                        replace_tool_call(tool_calls, tool_call_with_result(call, result))
+                        ordered_calls.append(call)
+                        immediate_results[call.id] = ToolResult(error=call.error)
                         continue
 
                     tool = allowed_tools.get(call.name)
                     if tool is None:
-                        result = ToolResult(error=f"Tool not found: {call.name}")
-                        emit(
-                            "tool.failed",
-                            call.name,
-                            {"tool_call_id": call.id, "error": result.error},
+                        ordered_calls.append(call)
+                        immediate_results[call.id] = ToolResult(
+                            error=f"Tool not found: {call.name}"
                         )
-                        messages.append(tool_message(result, call))
-                        replace_tool_call(tool_calls, tool_call_with_result(call, result))
                         continue
                     action_type = tool_action_type(tool)
                     if action_type:
@@ -1292,51 +1346,68 @@ class WorkerRunner:
                             options=pending_options(action_type),
                             metadata=metadata,
                         )
-                        emit(
-                            f"tool.{action_type}_requested",
-                            tool.name,
-                            {"tool_call_id": call.id},
-                        )
-                        emit("worker.completed", self.name, {})
-                        report = _build_report(
-                            run_id,
-                            "paused",
-                            None,
-                            None,
-                            None,
-                            messages,
-                            tool_calls,
-                            metrics,
-                            events,
-                            pending,
-                            errors,
-                        )
-                        state = _build_state(
-                            run_id,
-                            "paused",
-                            self.name,
-                            job,
-                            messages,
-                            tool_calls,
-                            pending,
-                            metrics,
-                            iteration,
-                        )
-                        return report, state
+                        break
+                    ordered_calls.append(call)
+                    executable_calls.append((call, tool))
 
-                    emit("tool.started", tool.name, {"tool_call_id": call.id})
-                    result = await aexecute_tool(tool, call)
-                    if result.error:
-                        emit(
-                            "tool.failed",
-                            tool.name,
-                            {"tool_call_id": call.id, "error": result.error},
-                        )
-                    else:
-                        emit("tool.completed", tool.name, _tool_event_payload(call, result))
-                    tool_result_message = tool_message(result, call)
-                    messages.append(tool_result_message)
-                    replace_tool_call(tool_calls, tool_call_with_result(call, result))
+                await _execute_tool_calls_async(
+                    ordered_calls,
+                    executable_calls,
+                    immediate_results,
+                    messages,
+                    tool_calls,
+                    emit,
+                )
+
+                if max_tool_calls_exceeded:
+                    emit("worker.failed", self.name, {"error": errors[-1]})
+                    report = _build_report(
+                        run_id,
+                        "failed",
+                        None,
+                        None,
+                        None,
+                        messages,
+                        tool_calls,
+                        metrics,
+                        events,
+                        None,
+                        errors,
+                    )
+                    return report, None
+
+                if pending is not None:
+                    emit(
+                        f"tool.{pending.type}_requested",
+                        pending.tool_call.name,
+                        {"tool_call_id": pending.tool_call.id},
+                    )
+                    emit("worker.completed", self.name, {})
+                    report = _build_report(
+                        run_id,
+                        "paused",
+                        None,
+                        None,
+                        None,
+                        messages,
+                        tool_calls,
+                        metrics,
+                        events,
+                        pending,
+                        errors,
+                    )
+                    state = _build_state(
+                        run_id,
+                        "paused",
+                        self.name,
+                        job,
+                        messages,
+                        tool_calls,
+                        pending,
+                        metrics,
+                        iteration,
+                    )
+                    return report, state
                 continue
 
             if response_schema is not None:

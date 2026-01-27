@@ -38,6 +38,10 @@ If the model returns tool calls, the worker will execute tools or pause for conf
 
 When a tool is paused, the worker returns a `Report` with `status="paused"` and a `PendingAction`.
 
+When a model response includes multiple tool calls in the same turn, the worker executes them in
+parallel and records tool results in the original call order. If a tool requires confirmation or
+user input, the worker executes prior tool calls and then pauses before that tool.
+
 ## Structured output
 
 Set `Job.response_schema` to a Pydantic model or TypeAdapter to enforce a structured response. Blackgeorge uses Instructor and returns the validated model in `Report.data`.

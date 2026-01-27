@@ -127,7 +127,7 @@ def replace_tool_call(tool_calls: list[ToolCall], updated: ToolCall) -> None:
         if call.id == updated.id:
             tool_calls[index] = updated
             return
-    tool_calls.append(updated)
+    raise ValueError(f"Tool call {updated.id} not found")
 
 
 def tool_call_summaries(tool_calls: list[ToolCall]) -> list[dict[str, Any]]:
