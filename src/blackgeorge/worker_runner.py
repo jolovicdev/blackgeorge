@@ -183,7 +183,7 @@ def _execute_tool_calls_sync(
                 futures = [
                     executor.submit(execute_tool, tool, call) for call, tool in executable_calls
                 ]
-                for (call, _), future in zip(executable_calls, futures):
+                for (call, _), future in zip(executable_calls, futures, strict=True):
                     try:
                         results[call.id] = future.result()
                     except Exception as exc:
@@ -217,7 +217,7 @@ async def _execute_tool_calls_async(
         else:
             tasks = [aexecute_tool(tool, call) for call, tool in executable_calls]
             tool_results = await asyncio.gather(*tasks)
-            for (call, _), result in zip(executable_calls, tool_results):
+            for (call, _), result in zip(executable_calls, tool_results, strict=True):
                 results[call.id] = result
     for call in ordered_calls:
         result = results.get(call.id, ToolResult(error="Tool execution failed"))
