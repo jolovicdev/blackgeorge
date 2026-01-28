@@ -5,6 +5,7 @@ from mcp import types as mcp_types
 from mcp.client.session import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.stdio import StdioServerParameters, stdio_client
+from mcp.client.streamable_http import streamable_http_client
 from pydantic import BaseModel, create_model
 
 from blackgeorge.async_utils import run_coroutine_in_thread, run_coroutine_sync
@@ -88,7 +89,7 @@ class MCPToolProvider:
         read_stream, write_stream = await self._context_manager.__aenter__()
         self._session_context = ClientSession(read_stream, write_stream)
         self._session = await self._session_context.__aenter__()
-        await self._session.initialize()
+        await self._session.initialize()  # type: ignore[misc]
         await self._discover_tools()
 
     async def connect_sse(self, url: str) -> None:
@@ -96,7 +97,19 @@ class MCPToolProvider:
         read_stream, write_stream = await self._context_manager.__aenter__()
         self._session_context = ClientSession(read_stream, write_stream)
         self._session = await self._session_context.__aenter__()
-        await self._session.initialize()
+        await self._session.initialize()  # type: ignore[misc]
+        await self._discover_tools()
+
+    async def connect_streamable_http(
+        self,
+        url: str,
+        http_client: Any | None = None,
+    ) -> None:
+        self._context_manager = streamable_http_client(url, http_client=http_client)
+        read_stream, write_stream, _ = await self._context_manager.__aenter__()
+        self._session_context = ClientSession(read_stream, write_stream)
+        self._session = await self._session_context.__aenter__()
+        await self._session.initialize()  # type: ignore[misc]
         await self._discover_tools()
 
     async def close(self) -> None:

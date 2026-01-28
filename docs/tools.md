@@ -133,8 +133,11 @@ belt = Toolbelt()
 
 ## MCP Tool Integration
 
-Connect to MCP (Model Context Protocol) servers and use their tools.
-Use `connect_sse` when pointing at an SSE endpoint.
+Connect to MCP (Model Context Protocol) servers and use their tools. MCP tools are automatically converted to the blackgeorge `Tool` format and can be passed to workers.
+
+### stdio transport
+
+For local MCP servers that run as subprocesses.
 
 ```python
 from blackgeorge.tools import MCPToolProvider
@@ -145,7 +148,42 @@ async with MCPToolProvider() as provider:
     result = await provider.acall_tool("fetch", {"url": "https://example.com"})
 ```
 
-MCP tools are automatically converted to the blackgeorge `Tool` format and can be passed to workers.
+### Streamable HTTP transport
+
+For remote MCP servers over HTTP.
+
+```python
+from blackgeorge.tools import MCPToolProvider
+
+async with MCPToolProvider() as provider:
+    await provider.connect_streamable_http("https://api.example.com/mcp")
+    tools = provider.list_tools()
+    result = await provider.acall_tool("search", {"query": "python"})
+```
+
+For servers requiring authentication, pass a custom `httpx.AsyncClient`:
+
+```python
+import httpx
+from blackgeorge.tools import MCPToolProvider
+
+async with MCPToolProvider() as provider:
+    client = httpx.AsyncClient(headers={"Authorization": "Bearer token"})
+    await provider.connect_streamable_http("https://api.example.com/mcp", http_client=client)
+    tools = provider.list_tools()
+```
+
+### SSE transport
+
+For MCP servers that use Server-Sent Events.
+
+```python
+from blackgeorge.tools import MCPToolProvider
+
+async with MCPToolProvider() as provider:
+    await provider.connect_sse("https://api.example.com/mcp/sse")
+    tools = provider.list_tools()
+```
 
 ## Execution path
 
