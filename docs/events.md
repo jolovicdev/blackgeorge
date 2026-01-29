@@ -98,7 +98,7 @@ Emitted during the lifecycle of a run.
 | `run.paused` | Run is paused pending action | `pending_action_type` |
 | `run.resumed` | Run has been resumed | `pending_action_type` |
 | `run.completed` | Run completed successfully | `status`, `metrics` |
-| `run.failed` | Run failed with error | `error`, `errors` |
+| `run.failed` | Run failed with error | `errors` |
 
 ### Worker events
 

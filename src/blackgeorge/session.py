@@ -161,10 +161,8 @@ class WorkerSession(BaseModel):
         messages: list[Message] = []
 
         for message in report.messages:
-            if (
-                message.role in ("user", "assistant")
-                or message.role == "tool"
-                and message.tool_call_id
+            if message.role in ("user", "assistant") or (
+                message.role == "tool" and message.tool_call_id
             ):
                 msg_dict = message.model_dump()
                 if message.role == "assistant":

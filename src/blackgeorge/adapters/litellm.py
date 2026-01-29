@@ -10,8 +10,6 @@ from blackgeorge.adapters.instructor_client import instructor_clients
 from blackgeorge.core.tool_call import ToolCall
 from blackgeorge.utils import new_id
 
-warnings.filterwarnings("ignore", message="Pydantic serializer warnings:.*", category=UserWarning)
-
 
 def _get(obj: Any, key: str, default: Any = None) -> Any:
     if isinstance(obj, dict):

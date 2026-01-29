@@ -19,7 +19,7 @@ from blackgeorge.tools.execution import aexecute_tool, execute_tool
 from blackgeorge.tools.registry import Toolbelt
 from blackgeorge.utils import new_id
 from blackgeorge.worker_context import (
-    CONTEXT_SUMMARY_MAX_ATTEMPTS,
+    SUMMARY_ATTEMPT_LIMIT,
     aapply_context_summary,
     apply_context_summary,
     context_error_message,
@@ -575,7 +575,7 @@ class WorkerRunner:
                             errors,
                         )
                         return report, None
-                    if context_summaries >= CONTEXT_SUMMARY_MAX_ATTEMPTS:
+                    if context_summaries >= SUMMARY_ATTEMPT_LIMIT:
                         errors.append(context_error_message(model_registered, True))
                         emit("worker.failed", self.name, {"error": errors[-1]})
                         report = _build_report(
@@ -648,7 +648,7 @@ class WorkerRunner:
                                 errors,
                             )
                             return report, None
-                        if context_summaries >= CONTEXT_SUMMARY_MAX_ATTEMPTS:
+                        if context_summaries >= SUMMARY_ATTEMPT_LIMIT:
                             errors.append(context_error_message(model_registered, True))
                             emit("worker.failed", self.name, {"error": errors[-1]})
                             report = _build_report(
@@ -762,7 +762,7 @@ class WorkerRunner:
                             errors,
                         )
                         return report, None
-                    if context_summaries >= CONTEXT_SUMMARY_MAX_ATTEMPTS:
+                    if context_summaries >= SUMMARY_ATTEMPT_LIMIT:
                         errors.append(context_error_message(model_registered, True))
                         emit("worker.failed", self.name, {"error": errors[-1]})
                         report = _build_report(
@@ -825,11 +825,11 @@ class WorkerRunner:
                 max_tool_calls_exceeded = False
 
                 for call in response.tool_calls:
-                    tool_calls.append(call)
                     if len(tool_calls) >= max_tool_calls:
                         errors.append("Max tool calls exceeded")
                         max_tool_calls_exceeded = True
                         break
+                    tool_calls.append(call)
                     if call.error:
                         ordered_calls.append(call)
                         immediate_results[call.id] = ToolResult(error=call.error)
@@ -1066,7 +1066,7 @@ class WorkerRunner:
                             errors,
                         )
                         return report, None
-                    if context_summaries >= CONTEXT_SUMMARY_MAX_ATTEMPTS:
+                    if context_summaries >= SUMMARY_ATTEMPT_LIMIT:
                         errors.append(context_error_message(model_registered, True))
                         emit("worker.failed", self.name, {"error": errors[-1]})
                         report = _build_report(
@@ -1139,7 +1139,7 @@ class WorkerRunner:
                                 errors,
                             )
                             return report, None
-                        if context_summaries >= CONTEXT_SUMMARY_MAX_ATTEMPTS:
+                        if context_summaries >= SUMMARY_ATTEMPT_LIMIT:
                             errors.append(context_error_message(model_registered, True))
                             emit("worker.failed", self.name, {"error": errors[-1]})
                             report = _build_report(
@@ -1253,7 +1253,7 @@ class WorkerRunner:
                             errors,
                         )
                         return report, None
-                    if context_summaries >= CONTEXT_SUMMARY_MAX_ATTEMPTS:
+                    if context_summaries >= SUMMARY_ATTEMPT_LIMIT:
                         errors.append(context_error_message(model_registered, True))
                         emit("worker.failed", self.name, {"error": errors[-1]})
                         report = _build_report(
@@ -1316,11 +1316,11 @@ class WorkerRunner:
                 max_tool_calls_exceeded = False
 
                 for call in response.tool_calls:
-                    tool_calls.append(call)
                     if len(tool_calls) >= max_tool_calls:
                         errors.append("Max tool calls exceeded")
                         max_tool_calls_exceeded = True
                         break
+                    tool_calls.append(call)
                     if call.error:
                         ordered_calls.append(call)
                         immediate_results[call.id] = ToolResult(error=call.error)
