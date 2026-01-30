@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any, cast
 
 from blackgeorge.adapters.base import BaseModelAdapter, ModelResponse
+from blackgeorge.adapters.litellm_callbacks import emit_llm_completed, emit_llm_failed
 from blackgeorge.core.event import Event
 from blackgeorge.core.job import Job
 from blackgeorge.core.message import Message
@@ -499,6 +500,7 @@ class WorkerRunner:
                 response_schema=response_schema,
                 retries=retries,
             )
+
     async def _acompletion(
         self,
         *,
@@ -606,28 +608,34 @@ class WorkerRunner:
             usage: dict[str, Any] = {}
             with warnings.catch_warnings():
                 warnings.filterwarnings("ignore", message="Pydantic serializer warnings")
-                if hasattr(stream, "__aiter__"):
-                    async for chunk in stream:
-                        token = chunk_content(chunk)
-                        if token:
-                            content_parts.append(token)
-                            on_token(token)
-                        usage_chunk = chunk_usage(chunk)
-                        if usage_chunk:
-                            usage = usage_chunk
-                else:
-                    for chunk in cast(Iterable[Any], stream):
-                        token = chunk_content(chunk)
-                        if token:
-                            content_parts.append(token)
-                            on_token(token)
-                        usage_chunk = chunk_usage(chunk)
-                        if usage_chunk:
-                            usage = usage_chunk
-                if hasattr(stream, "aclose"):
-                    await stream.aclose()
-                elif hasattr(stream, "close"):
-                    stream.close()
+                try:
+                    if hasattr(stream, "__aiter__"):
+                        async for chunk in stream:
+                            token = chunk_content(chunk)
+                            if token:
+                                content_parts.append(token)
+                                on_token(token)
+                            usage_chunk = chunk_usage(chunk)
+                            if usage_chunk:
+                                usage = usage_chunk
+                    else:
+                        for chunk in cast(Iterable[Any], stream):
+                            token = chunk_content(chunk)
+                            if token:
+                                content_parts.append(token)
+                                on_token(token)
+                            usage_chunk = chunk_usage(chunk)
+                            if usage_chunk:
+                                usage = usage_chunk
+                except Exception as exc:
+                    emit_llm_failed(model, exc)
+                    raise
+                finally:
+                    if hasattr(stream, "aclose"):
+                        await stream.aclose()
+                    elif hasattr(stream, "close"):
+                        stream.close()
+            emit_llm_completed(model, {"usage": usage})
             return ModelResponse(
                 content="".join(content_parts),
                 tool_calls=[],
