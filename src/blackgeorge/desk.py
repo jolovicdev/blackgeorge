@@ -120,7 +120,7 @@ class Desk:
 
     def _output_json(self, report: Report) -> Any | None:
         if isinstance(report.data, BaseModel):
-            return report.data.model_dump(mode="json")
+            return report.data.model_dump(mode="json", warnings=False)
         return report.data
 
     def _apply_memory(self, worker: Worker, job: Job) -> Job:
@@ -149,7 +149,7 @@ class Desk:
         if value is None:
             return
         if isinstance(value, BaseModel):
-            value = value.model_dump(mode="json")
+            value = value.model_dump(mode="json", warnings=False)
         self.memory_store.write("last_output", value, worker.memory_scope)
 
     def run(self, runner: Worker | Workforce, job: Job, *, stream: bool | None = None) -> Report:

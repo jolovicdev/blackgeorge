@@ -1,5 +1,6 @@
 import json
 import warnings
+from collections.abc import Callable
 from typing import Any, cast
 
 import litellm
@@ -7,6 +8,7 @@ from pydantic import BaseModel
 
 from blackgeorge.adapters.base import BaseModelAdapter, ModelResponse
 from blackgeorge.adapters.instructor_client import instructor_clients
+from blackgeorge.adapters.litellm_callbacks import _callback_context, get_global_callback_handler
 from blackgeorge.core.tool_call import ToolCall
 from blackgeorge.utils import new_id
 
@@ -70,6 +72,18 @@ def _parse_response(response: Any) -> ModelResponse:
 
 
 class LiteLLMAdapter(BaseModelAdapter):
+    def __init__(self) -> None:
+        warnings.filterwarnings("ignore", message="Pydantic serializer warnings")
+        get_global_callback_handler()
+
+    def set_callback_context(
+        self, run_id: str, emit: Callable[[str, str, dict[str, Any]], None]
+    ) -> None:
+        _callback_context.set({"run_id": run_id, "emit": emit})
+
+    def clear_callback_context(self) -> None:
+        _callback_context.set(None)
+
     def complete(
         self,
         *,
@@ -107,7 +121,7 @@ class LiteLLMAdapter(BaseModelAdapter):
             litellm_params["extra_body"] = extra_body
 
         with warnings.catch_warnings():
-            warnings.filterwarnings("ignore", message="Pydantic serializer warnings:.*")
+            warnings.filterwarnings("ignore", message="Pydantic serializer warnings")
             response = litellm.completion(**litellm_params)
         if stream:
             return cast(list[dict[str, Any]], response)
@@ -150,7 +164,7 @@ class LiteLLMAdapter(BaseModelAdapter):
             litellm_params["extra_body"] = extra_body
 
         with warnings.catch_warnings():
-            warnings.filterwarnings("ignore", message="Pydantic serializer warnings:.*")
+            warnings.filterwarnings("ignore", message="Pydantic serializer warnings")
             response = await litellm.acompletion(**litellm_params)
         if stream:
             return response

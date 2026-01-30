@@ -30,7 +30,7 @@ class Flow:
 
     def _output_json(self, report: Report) -> Any | None:
         if isinstance(report.data, BaseModel):
-            return report.data.model_dump(mode="json")
+            return report.data.model_dump(mode="json", warnings=False)
         return report.data
 
     async def _run_runner(

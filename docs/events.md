@@ -143,6 +143,16 @@ Emitted during tool execution.
 | `tool.confirmation_requested` | Tool requires confirmation | `tool_name`, `prompt` |
 | `tool.user_input_requested` | Tool requires user input | `tool_name`, `prompt` |
 
+### LLM adapter events
+
+Emitted by the LiteLLM adapter during model calls.
+
+| Event Type | Description | Payload Fields |
+|------------|-------------|----------------|
+| `llm.started` | LLM call started | `model`, `messages_count`, `tools_count` |
+| `llm.completed` | LLM call completed | `model`, `latency_ms`, `prompt_tokens`, `completion_tokens`, `total_tokens`, `cost` |
+| `llm.failed` | LLM call failed | `model`, `latency_ms`, `error_type`, `error_message` |
+
 ### Streaming and message events
 
 | Event Type | Description | Payload Fields |
