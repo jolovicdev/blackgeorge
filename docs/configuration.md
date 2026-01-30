@@ -91,7 +91,7 @@ desk = Desk(
 | `max_tokens` | int | None | Maximum tokens for completion requests |
 
 Model names follow LiteLLM provider prefixes:
-- `openai/gpt-4`
+- `openai/gpt-5-nano`
 - `anthropic/claude-3-opus`
 - `deepseek/deepseek-chat`
 
@@ -156,7 +156,7 @@ worker = Worker(
     name="Analyst",
 
     # Model
-    model="openai/gpt-4-turbo",
+    model="openai/gpt-5-nano",
     instructions="You are a data analyst.",
 
     # Tools
@@ -260,6 +260,27 @@ litellm.model_cost = {
     },
 }
 ```
+
+You can also register models programmatically:
+
+```python
+import litellm
+
+litellm.register_model(
+    {
+        "my-provider/my-model": {
+            "litellm_provider": "my-provider",
+            "input_cost_per_token": 0.00001,
+            "output_cost_per_token": 0.00002,
+            "max_tokens": 128000,
+            "mode": "chat",
+        },
+    }
+)
+```
+
+Model registration only adds pricing/context metadata. The provider prefix still has to be a
+LiteLLM-supported provider (or routed through LiteLLM proxy or a custom adapter) to make calls.
 
 ## Tool configuration
 

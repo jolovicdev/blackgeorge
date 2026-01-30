@@ -92,7 +92,7 @@ def chunk_usage(chunk: Any) -> dict[str, Any] | None:
 
 def structured_content(value: Any) -> str:
     if isinstance(value, BaseModel):
-        return value.model_dump_json()
+        return value.model_dump_json(warnings=False)
     return json.dumps(value, ensure_ascii=True)
 
 

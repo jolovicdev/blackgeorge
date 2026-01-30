@@ -18,7 +18,7 @@ Sessions are created through the `Desk`:
 ```python
 from blackgeorge import Desk, Worker
 
-desk = Desk(model="openai/gpt-4o")
+desk = Desk(model="openai/gpt-5-nano")
 worker = Worker(name="Assistant", instructions="You are helpful")
 
 session = desk.session(worker)
@@ -154,6 +154,7 @@ report = await session.arun("Hello")       # async
 ```
 
 Both use the same underlying storage and produce identical results.
+If you already have a running event loop, use `arun()` instead of `run()`.
 
 ## Streaming responses
 

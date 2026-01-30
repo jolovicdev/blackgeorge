@@ -1,4 +1,5 @@
 import json
+import logging
 from typing import Any
 
 import chromadb
@@ -6,6 +7,8 @@ from chromadb.config import DEFAULT_DATABASE, DEFAULT_TENANT
 
 from blackgeorge.memory.base import MemoryScope, MemoryStore
 from blackgeorge.utils import utc_now
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_CHUNK_SIZE = 8000
 DEFAULT_CHUNK_OVERLAP = 200
@@ -174,8 +177,8 @@ class VectorMemoryStore(MemoryStore):
             )
             if results["ids"]:
                 self._collection.delete(ids=results["ids"])
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Failed to reset memory scope %s: %s", scope, exc)
 
     def _delete_by_key(self, key: str, scope: MemoryScope) -> None:
         try:
@@ -185,5 +188,5 @@ class VectorMemoryStore(MemoryStore):
             )
             if results["ids"]:
                 self._collection.delete(ids=results["ids"])
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Failed to delete memory key %s in scope %s: %s", key, scope, exc)

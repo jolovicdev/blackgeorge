@@ -49,9 +49,10 @@ def _build_workforce_state(
 
 
 def _select_worker_name(report: Report, workers: list[Worker]) -> str:
+    worker_names = {w.name for w in workers}
     if isinstance(report.data, BaseModel) and hasattr(report.data, "worker"):
         candidate = report.data.worker
-        if isinstance(candidate, str):
+        if isinstance(candidate, str) and candidate in worker_names:
             return candidate
     if report.content:
         for worker in workers:

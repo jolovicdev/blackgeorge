@@ -200,6 +200,10 @@ class SQLiteRunStore(RunStore):
             rows = cursor.fetchall()
         return [_deserialize_event(row[0]) for row in rows]
 
+    def close(self) -> None:
+        with self._lock:
+            self._conn.close()
+
 
 def datetime_from_iso(value: str) -> datetime:
     return datetime.fromisoformat(value)

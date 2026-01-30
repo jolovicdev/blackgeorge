@@ -1,5 +1,6 @@
 import json
 import warnings
+from collections.abc import Callable
 from typing import Any, cast
 
 import litellm
@@ -7,10 +8,14 @@ from pydantic import BaseModel
 
 from blackgeorge.adapters.base import BaseModelAdapter, ModelResponse
 from blackgeorge.adapters.instructor_client import instructor_clients
+from blackgeorge.adapters.litellm_callbacks import (
+    _callback_context,
+    emit_llm_completed,
+    emit_llm_failed,
+    emit_llm_started,
+)
 from blackgeorge.core.tool_call import ToolCall
 from blackgeorge.utils import new_id
-
-warnings.filterwarnings("ignore", message="Pydantic serializer warnings:.*", category=UserWarning)
 
 
 def _get(obj: Any, key: str, default: Any = None) -> Any:
@@ -72,6 +77,19 @@ def _parse_response(response: Any) -> ModelResponse:
 
 
 class LiteLLMAdapter(BaseModelAdapter):
+    def __init__(self) -> None:
+        warnings.filterwarnings("ignore", message="Pydantic serializer warnings")
+        warnings.filterwarnings("ignore", message="coroutine.*was never awaited")
+        litellm.disable_streaming_logging = True
+
+    def set_callback_context(
+        self, run_id: str, emit: Callable[[str, str, dict[str, Any]], None]
+    ) -> None:
+        _callback_context.set({"run_id": run_id, "emit": emit})
+
+    def clear_callback_context(self) -> None:
+        _callback_context.set(None)
+
     def complete(
         self,
         *,
@@ -108,12 +126,18 @@ class LiteLLMAdapter(BaseModelAdapter):
         if extra_body is not None:
             litellm_params["extra_body"] = extra_body
 
-        with warnings.catch_warnings():
-            warnings.filterwarnings("ignore", message="Pydantic serializer warnings:.*")
-            response = litellm.completion(**litellm_params)
-        if stream:
-            return cast(list[dict[str, Any]], response)
-        return _parse_response(response)
+        emit_llm_started(model, len(messages), len(tools) if tools else 0)
+        try:
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", message="Pydantic serializer warnings")
+                response = litellm.completion(**litellm_params)
+            if stream:
+                return cast(list[dict[str, Any]], response)
+            emit_llm_completed(model, response)
+            return _parse_response(response)
+        except Exception as exc:
+            emit_llm_failed(model, exc)
+            raise
 
     async def acomplete(
         self,
@@ -151,12 +175,18 @@ class LiteLLMAdapter(BaseModelAdapter):
         if extra_body is not None:
             litellm_params["extra_body"] = extra_body
 
-        with warnings.catch_warnings():
-            warnings.filterwarnings("ignore", message="Pydantic serializer warnings:.*")
-            response = await litellm.acompletion(**litellm_params)
-        if stream:
-            return response
-        return _parse_response(response)
+        emit_llm_started(model, len(messages), len(tools) if tools else 0)
+        try:
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", message="Pydantic serializer warnings")
+                response = await litellm.acompletion(**litellm_params)
+            if stream:
+                return response
+            emit_llm_completed(model, response)
+            return _parse_response(response)
+        except Exception as exc:
+            emit_llm_failed(model, exc)
+            raise
 
     def structured_complete(
         self,

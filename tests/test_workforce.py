@@ -67,19 +67,72 @@ class FailingAdapter(BaseModelAdapter):
         )
 
 
-class BrokenCompletions:
-    def create(self, *args, **kwargs) -> object:
+class StructuredFailAdapter(BaseModelAdapter):
+    def complete(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        tool_choice: str | dict[str, Any] | None,
+        temperature: float | None,
+        max_tokens: int | None,
+        stream: bool,
+        stream_options: dict[str, Any] | None,
+        thinking: dict[str, Any] | None = None,
+        drop_params: bool | None = None,
+        extra_body: dict[str, Any] | None = None,
+    ) -> ModelResponse:
+        return ModelResponse(content="", tool_calls=[], usage={}, raw={})
+
+    async def acomplete(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        tool_choice: str | dict[str, Any] | None,
+        temperature: float | None,
+        max_tokens: int | None,
+        stream: bool,
+        stream_options: dict[str, Any] | None,
+        thinking: dict[str, Any] | None = None,
+        drop_params: bool | None = None,
+        extra_body: dict[str, Any] | None = None,
+    ) -> ModelResponse:
+        return self.complete(
+            model=model,
+            messages=messages,
+            tools=tools,
+            tool_choice=tool_choice,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            stream=stream,
+            stream_options=stream_options,
+            thinking=thinking,
+            drop_params=drop_params,
+            extra_body=extra_body,
+        )
+
+    def structured_complete(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, Any]],
+        response_schema: object,
+        retries: int,
+    ) -> object:
         raise RuntimeError("boom")
 
-
-class BrokenChat:
-    def __init__(self) -> None:
-        self.completions = BrokenCompletions()
-
-
-class BrokenClient:
-    def __init__(self) -> None:
-        self.chat = BrokenChat()
+    async def astructured_complete(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, Any]],
+        response_schema: object,
+        retries: int,
+    ) -> object:
+        raise RuntimeError("boom")
 
 
 def test_workforce_collaborate_default_reducer() -> None:
@@ -112,15 +165,8 @@ def test_workforce_collaborate_failure_propagates() -> None:
     assert "[A]" in report.content
 
 
-def test_workforce_managed_manager_failure(monkeypatch) -> None:
-    import blackgeorge.worker_runner as worker_runner_module
-
-    monkeypatch.setattr(
-        worker_runner_module.instructor_clients,
-        "get",
-        lambda model, async_client: BrokenClient(),
-    )
-    desk = Desk(model="fake", adapter=FakeAdapter([]), run_store=InMemoryRunStore())
+def test_workforce_managed_manager_failure() -> None:
+    desk = Desk(model="fake", adapter=StructuredFailAdapter(), run_store=InMemoryRunStore())
     manager = Worker(name="Manager", model="fake")
     worker = Worker(name="Worker", model="fake")
     workforce = Workforce([worker], mode="managed", name="team", manager=manager)

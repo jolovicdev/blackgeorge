@@ -134,7 +134,7 @@ def test_instructor_client_pool_thread_safe(monkeypatch) -> None:
 
     def worker() -> None:
         barrier.wait()
-        client = pool.get("gpt-4", async_client=False)
+        client = pool.get("openai/gpt-5-nano", async_client=False)
         results.append(client)
 
     threads = [threading.Thread(target=worker) for _ in range(5)]
@@ -165,7 +165,7 @@ def test_litellm_parallel_tool_calls_enabled(monkeypatch) -> None:
     monkeypatch.setattr(litellm, "completion", fake_completion)
 
     adapter.complete(
-        model="openai/gpt-4o",
+        model="openai/gpt-5-nano",
         messages=[{"role": "user", "content": "hi"}],
         tools=[
             {

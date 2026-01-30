@@ -207,3 +207,7 @@ class SQLiteSessionStore(SessionStore):
             )
             rows = cursor.fetchall()
         return [_deserialize_message(row[0]) for row in rows]
+
+    def close(self) -> None:
+        with self._lock:
+            self._conn.close()

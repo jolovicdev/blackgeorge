@@ -105,6 +105,8 @@ if report.status == "paused":
 
 Confirmation actions treat truthy values as acceptance. If you pass a falsy value for confirmation, the tool result will be an error with message "Tool execution declined".
 
+In async applications, use `desk.arun()` and `desk.aresume()`.
+
 User input actions insert the provided value into the tool call arguments under `user_input` unless the tool sets a different `input_key`.
 
 ## Limits and failure behavior

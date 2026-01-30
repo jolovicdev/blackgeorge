@@ -24,7 +24,6 @@ SUMMARY_INSTRUCTION = "Summarize the following conversation history:\n\n{content
 SUMMARY_CHUNK_TOKENS = 2000
 SUMMARY_TAIL_MESSAGES = 4
 SUMMARY_ATTEMPT_LIMIT = 2
-CONTEXT_SUMMARY_MAX_ATTEMPTS = 2
 SUMMARY_MAX_OUTPUT_TOKENS = 800
 MODEL_REGISTRATION_HINT = (
     "Register the model in LiteLLM with context window and token limits "

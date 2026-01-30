@@ -70,6 +70,9 @@ report = await desk.arun(worker, job)
 print(report.status)
 ```
 
+If you already have a running event loop, call `arun()`/`aresume()`. The sync `run()`/`resume()`
+raise in that case.
+
 Both `run()` and `arun()` accept a `stream` parameter:
 
 ```python
@@ -113,6 +116,8 @@ report = desk.run(worker, job)
 if report.status == "paused" and report.pending_action is not None:
     report = desk.resume(report, True)
 ```
+
+For async applications, use `arun()` and `aresume()`.
 
 ## Creating sessions
 
