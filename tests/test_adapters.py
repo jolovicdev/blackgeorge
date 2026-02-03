@@ -100,7 +100,7 @@ def test_parse_tool_calls_with_dict_arguments() -> None:
     calls = _parse_tool_calls(message)
 
     assert len(calls) == 1
-    assert calls[0].arguments == {}
+    assert calls[0].arguments == {"param1": "value1"}
     assert calls[0].error is None
 
 

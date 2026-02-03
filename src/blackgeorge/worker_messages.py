@@ -1,5 +1,6 @@
 import json
 from collections.abc import Callable
+from dataclasses import asdict, is_dataclass
 from typing import Any
 
 from pydantic import BaseModel
@@ -10,10 +11,24 @@ from blackgeorge.core.tool_call import ToolCall
 from blackgeorge.tools.base import Tool, ToolResult
 
 
+def _json_payload(value: Any) -> Any:
+    if isinstance(value, BaseModel):
+        return value.model_dump(mode="json", warnings=False)
+    if is_dataclass(value) and not isinstance(value, type):
+        return asdict(value)
+    if isinstance(value, dict):
+        return {key: _json_payload(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_payload(item) for item in value]
+    if isinstance(value, tuple):
+        return [_json_payload(item) for item in value]
+    return value
+
+
 def render_input(value: Any) -> str:
     if isinstance(value, str):
         return value
-    return json.dumps(value, ensure_ascii=True)
+    return json.dumps(_json_payload(value), ensure_ascii=True, default=str)
 
 
 def tool_call_payload(tool_call: ToolCall) -> dict[str, Any]:
@@ -22,7 +37,11 @@ def tool_call_payload(tool_call: ToolCall) -> dict[str, Any]:
         "type": "function",
         "function": {
             "name": tool_call.name,
-            "arguments": json.dumps(tool_call.arguments, ensure_ascii=True),
+            "arguments": json.dumps(
+                _json_payload(tool_call.arguments),
+                ensure_ascii=True,
+                default=str,
+            ),
         },
     }
 
@@ -62,7 +81,10 @@ def system_message(instructions: str | None, job: Job) -> str | None:
     if job.expected_output:
         parts.append(f"Expected output: {job.expected_output}")
     if job.constraints:
-        parts.append(f"Constraints: {json.dumps(job.constraints, ensure_ascii=True)}")
+        parts.append(
+            "Constraints: "
+            f"{json.dumps(_json_payload(job.constraints), ensure_ascii=True, default=str)}"
+        )
     if not parts:
         return None
     return "\n\n".join(parts)
@@ -90,22 +112,10 @@ def chunk_usage(chunk: Any) -> dict[str, Any] | None:
     return getattr(chunk, "usage", None)
 
 
-def _structured_payload(value: Any) -> Any:
-    if isinstance(value, BaseModel):
-        return value.model_dump(mode="json", warnings=False)
-    if isinstance(value, dict):
-        return {key: _structured_payload(item) for key, item in value.items()}
-    if isinstance(value, list):
-        return [_structured_payload(item) for item in value]
-    if isinstance(value, tuple):
-        return [_structured_payload(item) for item in value]
-    return value
-
-
 def structured_content(value: Any) -> str:
     if isinstance(value, BaseModel):
         return value.model_dump_json(warnings=False)
-    return json.dumps(_structured_payload(value), ensure_ascii=True)
+    return json.dumps(_json_payload(value), ensure_ascii=True, default=str)
 
 
 def tool_message(result: ToolResult | dict[str, Any], tool_call: ToolCall) -> Message:

@@ -24,6 +24,13 @@ def test_sqlite_memory_store(tmp_path) -> None:
     assert results
 
 
+def test_sqlite_memory_store_serializes_base_model(tmp_path) -> None:
+    path = tmp_path / "mem_model.db"
+    store = SQLiteMemoryStore(str(path))
+    store.write("key", ExampleModel(value=3), "desk")
+    assert store.read("key", "desk") == {"value": 3}
+
+
 def test_sqlite_run_store(tmp_path) -> None:
     path = tmp_path / "run.db"
     store = SQLiteRunStore(str(path))

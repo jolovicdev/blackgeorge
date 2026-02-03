@@ -155,7 +155,9 @@ def _parse_tool_calls(message: Any) -> list[ToolCall]:
         arguments: dict[str, Any] = {}
         error: str | None = None
 
-        if isinstance(arguments_raw, str) and arguments_raw:
+        if isinstance(arguments_raw, dict):
+            arguments = arguments_raw
+        elif isinstance(arguments_raw, str) and arguments_raw:
             try:
                 arguments = json.loads(arguments_raw)
             except json.JSONDecodeError as e:
