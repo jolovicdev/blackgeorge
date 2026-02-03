@@ -414,6 +414,27 @@ def test_streaming_with_content_only() -> None:
     assert report.content == "Hello world"
 
 
+def test_streaming_with_reasoning_content() -> None:
+    from tests.utils import StreamingAdapter
+
+    streams = [
+        [
+            {"choices": [{"delta": {"reasoning_content": "Thinking..."}}]},
+            {"choices": [{"delta": {"reasoning_content": " done", "content": "Hello"}}]},
+            {"choices": [{"delta": {"content": " world"}}]},
+            {"choices": [{"delta": {}}], "usage": {"total_tokens": 10}},
+        ]
+    ]
+    desk = Desk(
+        model="fake", adapter=StreamingAdapter(streams), run_store=InMemoryRunStore(), stream=True
+    )
+    worker = Worker(name="Worker", model="fake")
+    report = desk.run(worker, Job(input="run"))
+    assert report.status == "completed"
+    assert report.content == "Hello world"
+    assert report.reasoning_content == "Thinking... done"
+
+
 def test_structured_output_uses_adapter() -> None:
     adapter = StructuredAdapter()
     desk = Desk(model="fake", adapter=adapter, run_store=InMemoryRunStore())

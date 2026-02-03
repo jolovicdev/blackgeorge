@@ -28,6 +28,7 @@ from blackgeorge.worker_context import (
 )
 from blackgeorge.worker_messages import (
     chunk_content,
+    chunk_reasoning_content,
     chunk_usage,
     emit_assistant_message,
     ensure_content,
@@ -609,6 +610,7 @@ class WorkerRunner:
                     extra_body=extra_body,
                 )
             content_parts: list[str] = []
+            reasoning_parts: list[str] = []
             usage: dict[str, Any] = {}
             with warnings.catch_warnings():
                 warnings.filterwarnings("ignore", message="Pydantic serializer warnings")
@@ -619,6 +621,9 @@ class WorkerRunner:
                             if token:
                                 content_parts.append(token)
                                 on_token(token)
+                            reasoning = chunk_reasoning_content(chunk)
+                            if reasoning:
+                                reasoning_parts.append(reasoning)
                             usage_chunk = chunk_usage(chunk)
                             if usage_chunk:
                                 usage = usage_chunk
@@ -628,6 +633,9 @@ class WorkerRunner:
                             if token:
                                 content_parts.append(token)
                                 on_token(token)
+                            reasoning = chunk_reasoning_content(chunk)
+                            if reasoning:
+                                reasoning_parts.append(reasoning)
                             usage_chunk = chunk_usage(chunk)
                             if usage_chunk:
                                 usage = usage_chunk
@@ -642,6 +650,7 @@ class WorkerRunner:
             emit_llm_completed(model, {"usage": usage})
             return ModelResponse(
                 content="".join(content_parts),
+                reasoning_content="".join(reasoning_parts) or None,
                 tool_calls=[],
                 usage=usage,
                 raw=stream,

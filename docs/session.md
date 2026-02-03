@@ -184,6 +184,7 @@ for event in report.events:
 ```
 
 Events are only collected when `stream=True`. Without streaming, `report.events` contains lifecycle events only (started, completed, etc.).
+If the provider emits `reasoning_content` deltas during streaming, they are collected into `report.reasoning_content`.
 
 ## Thinking models
 

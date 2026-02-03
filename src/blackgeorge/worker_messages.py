@@ -115,6 +115,22 @@ def chunk_usage(chunk: Any) -> dict[str, Any] | None:
     return getattr(chunk, "usage", None)
 
 
+def chunk_reasoning_content(chunk: Any) -> str | None:
+    if isinstance(chunk, dict):
+        choices = chunk.get("choices") or []
+        if not choices:
+            return None
+        delta = choices[0].get("delta") or {}
+        return delta.get("reasoning_content")
+    choices = getattr(chunk, "choices", [])
+    if not choices:
+        return None
+    delta = getattr(choices[0], "delta", None)
+    if delta is None:
+        return None
+    return getattr(delta, "reasoning_content", None)
+
+
 def structured_content(value: Any) -> str:
     if isinstance(value, BaseModel):
         return value.model_dump_json(warnings=False)
