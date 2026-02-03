@@ -8,6 +8,7 @@ from blackgeorge.core.tool_call import ToolCall
 class ModelResponse:
     content: str | None
     reasoning_content: str | None = None
+    thinking_blocks: list[dict[str, Any]] | None = None
     tool_calls: list[ToolCall] = field(default_factory=list)
     usage: dict[str, Any] = field(default_factory=dict)
     raw: Any = None

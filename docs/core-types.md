@@ -51,6 +51,7 @@ Fields:
 - role: system, user, assistant, tool
 - content
 - reasoning_content: separate reasoning content from thinking models
+- thinking_blocks: optional structured reasoning blocks from providers like Anthropic
 - tool_calls: tool calls emitted by the assistant
 - tool_call_id: set for tool results
 - metadata

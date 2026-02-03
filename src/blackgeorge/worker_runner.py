@@ -29,6 +29,7 @@ from blackgeorge.worker_context import (
 from blackgeorge.worker_messages import (
     chunk_content,
     chunk_reasoning_content,
+    chunk_thinking_blocks,
     chunk_usage,
     emit_assistant_message,
     ensure_content,
@@ -337,6 +338,7 @@ def _finalize_plain_response(
         role="assistant",
         content=response.content or "",
         reasoning_content=response.reasoning_content,
+        thinking_blocks=response.thinking_blocks,
     )
     messages.append(assistant_message)
     emit_assistant_message(emit, worker_name, assistant_message)
@@ -611,6 +613,7 @@ class WorkerRunner:
                 )
             content_parts: list[str] = []
             reasoning_parts: list[str] = []
+            thinking_blocks: list[dict[str, Any]] = []
             usage: dict[str, Any] = {}
             with warnings.catch_warnings():
                 warnings.filterwarnings("ignore", message="Pydantic serializer warnings")
@@ -624,6 +627,9 @@ class WorkerRunner:
                             reasoning = chunk_reasoning_content(chunk)
                             if reasoning:
                                 reasoning_parts.append(reasoning)
+                            blocks = chunk_thinking_blocks(chunk)
+                            if blocks:
+                                thinking_blocks.extend(blocks)
                             usage_chunk = chunk_usage(chunk)
                             if usage_chunk:
                                 usage = usage_chunk
@@ -636,6 +642,9 @@ class WorkerRunner:
                             reasoning = chunk_reasoning_content(chunk)
                             if reasoning:
                                 reasoning_parts.append(reasoning)
+                            blocks = chunk_thinking_blocks(chunk)
+                            if blocks:
+                                thinking_blocks.extend(blocks)
                             usage_chunk = chunk_usage(chunk)
                             if usage_chunk:
                                 usage = usage_chunk
@@ -651,6 +660,7 @@ class WorkerRunner:
             return ModelResponse(
                 content="".join(content_parts),
                 reasoning_content="".join(reasoning_parts) or None,
+                thinking_blocks=thinking_blocks or None,
                 tool_calls=[],
                 usage=usage,
                 raw=stream,
@@ -856,6 +866,7 @@ class WorkerRunner:
                     role="assistant",
                     content=ensure_content(response.content),
                     reasoning_content=response.reasoning_content,
+                    thinking_blocks=response.thinking_blocks,
                     tool_calls=response.tool_calls,
                 )
                 messages.append(assistant_message)

@@ -185,6 +185,7 @@ def _parse_response(response: Any) -> ModelResponse:
     message = _get(choices[0], "message") if choices else None
     content = _get(message, "content") if message else None
     reasoning_content = _get(message, "reasoning_content") if message else None
+    thinking_blocks = _get(message, "thinking_blocks") if message else None
     tool_calls = _parse_tool_calls(message) if message else []
     usage = _get(response, "usage", {}) or {}
     if isinstance(usage, BaseModel):
@@ -192,6 +193,7 @@ def _parse_response(response: Any) -> ModelResponse:
     return ModelResponse(
         content=content,
         reasoning_content=reasoning_content,
+        thinking_blocks=thinking_blocks,
         tool_calls=tool_calls,
         usage=usage,
         raw=response,

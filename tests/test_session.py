@@ -142,6 +142,7 @@ def test_session_preserves_reasoning_content_for_tool_calls() -> None:
         ModelResponse(
             content=None,
             reasoning_content="tool reasoning",
+            thinking_blocks=[{"type": "thinking", "thinking": "step", "signature": "sig"}],
             tool_calls=[ToolCall(id="1", name="echo", arguments={"text": "test"})],
             usage={},
             raw={},
@@ -160,10 +161,14 @@ def test_session_preserves_reasoning_content_for_tool_calls() -> None:
     tool_call_messages = [msg for msg in history if msg.role == "assistant" and msg.tool_calls]
     assert tool_call_messages
     assert tool_call_messages[0].reasoning_content == "tool reasoning"
+    assert tool_call_messages[0].thinking_blocks == [
+        {"type": "thinking", "thinking": "step", "signature": "sig"}
+    ]
 
     plain_messages = [msg for msg in history if msg.role == "assistant" and not msg.tool_calls]
     assert plain_messages
     assert all(msg.reasoning_content is None for msg in plain_messages)
+    assert all(msg.thinking_blocks is None for msg in plain_messages)
 
 
 def test_session_close() -> None:

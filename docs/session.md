@@ -184,7 +184,7 @@ for event in report.events:
 ```
 
 Events are only collected when `stream=True`. Without streaming, `report.events` contains lifecycle events only (started, completed, etc.).
-If the provider emits `reasoning_content` deltas during streaming, they are collected into `report.reasoning_content`.
+If the provider emits `reasoning_content` or `thinking_blocks` deltas during streaming, they are collected into `report.reasoning_content` and the assistant message history.
 
 ## Thinking models
 
@@ -238,8 +238,8 @@ report = session.run(
 ### Multi-turn behavior
 
 Sessions automatically handle `reasoning_content` correctly across turns:
-- **Within a turn**: Reasoning content is preserved during tool-call loops
-- **Between turns**: Reasoning content is cleared for assistant messages without tool calls. Assistant tool-call messages keep reasoning content when required by provider rules.
+- **Within a turn**: Reasoning content and thinking blocks are preserved during tool-call loops
+- **Between turns**: Reasoning content and thinking blocks are cleared for assistant messages without tool calls. Assistant tool-call messages keep reasoning content and thinking blocks when required by provider rules.
 
 ```python
 # First turn generates reasoning_content
@@ -250,10 +250,11 @@ print(report1.reasoning_content)  # Has reasoning
 report2 = session.run("How many Rs in strawberry?")
 print(report2.reasoning_content)  # New reasoning generated
 
-# History clears reasoning_content for assistant messages without tool calls
+# History clears reasoning_content/thinking_blocks for assistant messages without tool calls
 for msg in session.history():
     if msg.role == "assistant" and not msg.tool_calls:
         assert msg.reasoning_content is None
+        assert msg.thinking_blocks is None
 ```
 
 ## Worker binding

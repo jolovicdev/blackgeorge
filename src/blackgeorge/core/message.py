@@ -10,6 +10,7 @@ class Message(BaseModel):
     role: MessageRole
     content: str
     reasoning_content: str | None = None
+    thinking_blocks: list[dict[str, Any]] | None = None
     tool_calls: list[ToolCall] = Field(default_factory=list)
     tool_call_id: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)

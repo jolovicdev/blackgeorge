@@ -53,6 +53,8 @@ def messages_to_payload(messages: list[Message]) -> list[dict[str, Any]]:
         if message.role == "assistant":
             if message.reasoning_content is not None:
                 item["reasoning_content"] = message.reasoning_content
+            if message.thinking_blocks is not None:
+                item["thinking_blocks"] = message.thinking_blocks
             if message.tool_calls:
                 item["tool_calls"] = [tool_call_payload(call) for call in message.tool_calls]
         if message.role == "tool" and message.tool_call_id:
@@ -129,6 +131,29 @@ def chunk_reasoning_content(chunk: Any) -> str | None:
     if delta is None:
         return None
     return getattr(delta, "reasoning_content", None)
+
+
+def chunk_thinking_blocks(chunk: Any) -> list[dict[str, Any]] | None:
+    if isinstance(chunk, dict):
+        choices = chunk.get("choices") or []
+        if not choices:
+            return None
+        delta = choices[0].get("delta") or {}
+        blocks = delta.get("thinking_blocks")
+    else:
+        choices = getattr(chunk, "choices", [])
+        if not choices:
+            return None
+        delta = getattr(choices[0], "delta", None)
+        if delta is None:
+            return None
+        blocks = getattr(delta, "thinking_blocks", None)
+    if isinstance(blocks, dict):
+        return [dict(blocks)]
+    if isinstance(blocks, list):
+        items = [dict(item) for item in blocks if isinstance(item, dict)]
+        return items or None
+    return None
 
 
 def structured_content(value: Any) -> str:
