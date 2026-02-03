@@ -62,7 +62,7 @@ desk = Desk(
     stream=False,
 
     # Structured output
-    structured_output_retries=1,
+    structured_output_retries=3,
 
     # Limits
     max_iterations=10,
@@ -110,7 +110,7 @@ Streaming occurs when:
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `structured_output_retries` | int | 1 | Retries for structured output validation failures |
+| `structured_output_retries` | int | 3 | Retries for structured output validation failures |
 
 ### Execution limits
 

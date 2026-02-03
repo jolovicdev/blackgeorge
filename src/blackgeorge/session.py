@@ -165,8 +165,9 @@ class WorkerSession(BaseModel):
                 message.role == "tool" and message.tool_call_id
             ):
                 msg_dict = message.model_dump()
-                if message.role == "assistant":
+                if message.role == "assistant" and not message.tool_calls:
                     msg_dict.pop("reasoning_content", None)
+                    msg_dict.pop("thinking_blocks", None)
                 messages.append(Message(**msg_dict))
 
         return messages

@@ -91,7 +91,7 @@ print(report.content)
 
 ## Structured output
 
-Set a response schema to get validated output. Blackgeorge uses Instructor with Pydantic models.
+Set a response schema to get validated output. Blackgeorge first attempts LiteLLM structured output with JSON schema, then falls back to Instructor with Pydantic models.
 
 ```python
 from pydantic import BaseModel

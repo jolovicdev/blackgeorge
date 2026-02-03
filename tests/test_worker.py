@@ -1,3 +1,4 @@
+import json
 import threading
 from typing import Any
 
@@ -12,7 +13,7 @@ from blackgeorge.memory.base import MemoryScope, MemoryStore
 from blackgeorge.store.in_memory import InMemoryRunStore
 from blackgeorge.tools import tool
 from blackgeorge.worker import Worker
-from blackgeorge.worker_messages import replace_tool_call
+from blackgeorge.worker_messages import replace_tool_call, structured_content
 from tests.utils import FakeAdapter
 
 
@@ -184,6 +185,16 @@ class RecordingMemoryStore(MemoryStore):
 
     def reset(self, scope: MemoryScope) -> None:
         return None
+
+
+def test_structured_content_serializes_model_list() -> None:
+    class Item(BaseModel):
+        value: int
+
+    payload = [Item(value=1), Item(value=2)]
+    content = structured_content(payload)
+
+    assert json.loads(content) == [{"value": 1}, {"value": 2}]
 
 
 def test_worker_tool_loop() -> None:
@@ -401,6 +412,72 @@ def test_streaming_with_content_only() -> None:
     report = desk.run(worker, Job(input="run"))
     assert report.status == "completed"
     assert report.content == "Hello world"
+
+
+def test_streaming_with_reasoning_content() -> None:
+    from tests.utils import StreamingAdapter
+
+    streams = [
+        [
+            {"choices": [{"delta": {"reasoning_content": "Thinking..."}}]},
+            {"choices": [{"delta": {"reasoning_content": " done", "content": "Hello"}}]},
+            {"choices": [{"delta": {"content": " world"}}]},
+            {"choices": [{"delta": {}}], "usage": {"total_tokens": 10}},
+        ]
+    ]
+    desk = Desk(
+        model="fake", adapter=StreamingAdapter(streams), run_store=InMemoryRunStore(), stream=True
+    )
+    worker = Worker(name="Worker", model="fake")
+    report = desk.run(worker, Job(input="run"))
+    assert report.status == "completed"
+    assert report.content == "Hello world"
+    assert report.reasoning_content == "Thinking... done"
+
+
+def test_streaming_with_thinking_blocks() -> None:
+    from tests.utils import StreamingAdapter
+
+    streams = [
+        [
+            {
+                "choices": [
+                    {
+                        "delta": {
+                            "thinking_blocks": [
+                                {"type": "thinking", "thinking": "first", "signature": "sig1"}
+                            ]
+                        }
+                    }
+                ]
+            },
+            {
+                "choices": [
+                    {
+                        "delta": {
+                            "thinking_blocks": [
+                                {"type": "thinking", "thinking": "second", "signature": "sig2"}
+                            ],
+                            "content": "Hello",
+                        }
+                    }
+                ]
+            },
+            {"choices": [{"delta": {"content": " world"}}]},
+            {"choices": [{"delta": {}}], "usage": {"total_tokens": 10}},
+        ]
+    ]
+    desk = Desk(
+        model="fake", adapter=StreamingAdapter(streams), run_store=InMemoryRunStore(), stream=True
+    )
+    worker = Worker(name="Worker", model="fake")
+    report = desk.run(worker, Job(input="run"))
+    assert report.status == "completed"
+    assert report.content == "Hello world"
+    assert report.messages[-1].thinking_blocks == [
+        {"type": "thinking", "thinking": "first", "signature": "sig1"},
+        {"type": "thinking", "thinking": "second", "signature": "sig2"},
+    ]
 
 
 def test_structured_output_uses_adapter() -> None:
