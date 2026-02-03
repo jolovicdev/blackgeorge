@@ -31,7 +31,7 @@ class Desk:
         temperature: float | None = None,
         max_tokens: int | None = None,
         stream: bool = False,
-        structured_output_retries: int = 1,
+        structured_output_retries: int = 3,
         max_iterations: int = 10,
         max_tool_calls: int = 20,
         respect_context_window: bool = True,

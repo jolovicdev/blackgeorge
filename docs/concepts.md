@@ -28,7 +28,7 @@ When a tool requires confirmation or user input, the worker pauses the run and r
 
 ## Structured output
 
-If you set `Job.response_schema`, Blackgeorge requests structured output and validates it with Instructor and Pydantic. The validated object is returned as `Report.data`.
+If you set `Job.response_schema`, Blackgeorge first attempts structured output via LiteLLM `response_format` JSON schema. If that fails, it falls back to Instructor and Pydantic validation. The validated object is returned as `Report.data`.
 
 ## Tools
 

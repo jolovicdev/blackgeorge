@@ -29,14 +29,14 @@ Key behaviors:
 
 Tool calls are parsed from the response and mapped into `ToolCall` objects.
 
-## Instructor integration
+## Structured output pipeline
 
-Structured output uses Instructor with LiteLLM. Blackgeorge initializes Instructor clients with:
+Structured output uses LiteLLM JSON schema response formats when possible and falls back to Instructor with LiteLLM. Blackgeorge initializes Instructor clients with:
 
 - `instructor.from_provider("litellm/<model>")`
 - `instructor.from_provider("litellm/<model>", async_client=True)`
 
-The worker calls `chat.completions.create(..., response_model=YourModel)` and returns the validated Pydantic object as `Report.data`.
+If the LiteLLM structured response fails or is unavailable, the worker calls `chat.completions.create(..., response_model=YourModel)` and returns the validated Pydantic object as `Report.data`.
 
 ## Adapter hooks for structured output
 

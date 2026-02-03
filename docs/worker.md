@@ -44,7 +44,7 @@ user input, the worker executes prior tool calls and then pauses before that too
 
 ## Structured output
 
-Set `Job.response_schema` to a Pydantic model or TypeAdapter to enforce a structured response. Blackgeorge uses Instructor and returns the validated model in `Report.data`.
+Set `Job.response_schema` to a Pydantic model or TypeAdapter to enforce a structured response. Blackgeorge first attempts LiteLLM structured output using a JSON schema response format, then falls back to Instructor and Pydantic validation. The validated object is returned in `Report.data`.
 
 ```python
 from pydantic import BaseModel
@@ -64,7 +64,7 @@ Structured output is used when:
 - a response schema is set
 - tools are not required for the current step
 
-If tools are present, the worker may call tools first and then request structured output once the model stops emitting tool calls. Structured output uses the adapter's `structured_complete`/`astructured_complete` hooks when implemented, and falls back to the default LiteLLM + Instructor path otherwise.
+If tools are present, the worker may call tools first and then request structured output once the model stops emitting tool calls. Structured output uses the adapter's `structured_complete`/`astructured_complete` hooks when implemented, and falls back to the default LiteLLM JSON schema and Instructor pipeline otherwise.
 
 ## Streaming
 
