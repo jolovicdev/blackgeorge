@@ -90,10 +90,22 @@ def chunk_usage(chunk: Any) -> dict[str, Any] | None:
     return getattr(chunk, "usage", None)
 
 
+def _structured_payload(value: Any) -> Any:
+    if isinstance(value, BaseModel):
+        return value.model_dump(mode="json", warnings=False)
+    if isinstance(value, dict):
+        return {key: _structured_payload(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_structured_payload(item) for item in value]
+    if isinstance(value, tuple):
+        return [_structured_payload(item) for item in value]
+    return value
+
+
 def structured_content(value: Any) -> str:
     if isinstance(value, BaseModel):
         return value.model_dump_json(warnings=False)
-    return json.dumps(value, ensure_ascii=True)
+    return json.dumps(_structured_payload(value), ensure_ascii=True)
 
 
 def tool_message(result: ToolResult | dict[str, Any], tool_call: ToolCall) -> Message:

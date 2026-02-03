@@ -1,3 +1,4 @@
+import json
 import threading
 from typing import Any
 
@@ -12,7 +13,7 @@ from blackgeorge.memory.base import MemoryScope, MemoryStore
 from blackgeorge.store.in_memory import InMemoryRunStore
 from blackgeorge.tools import tool
 from blackgeorge.worker import Worker
-from blackgeorge.worker_messages import replace_tool_call
+from blackgeorge.worker_messages import replace_tool_call, structured_content
 from tests.utils import FakeAdapter
 
 
@@ -184,6 +185,16 @@ class RecordingMemoryStore(MemoryStore):
 
     def reset(self, scope: MemoryScope) -> None:
         return None
+
+
+def test_structured_content_serializes_model_list() -> None:
+    class Item(BaseModel):
+        value: int
+
+    payload = [Item(value=1), Item(value=2)]
+    content = structured_content(payload)
+
+    assert json.loads(content) == [{"value": 1}, {"value": 2}]
 
 
 def test_worker_tool_loop() -> None:

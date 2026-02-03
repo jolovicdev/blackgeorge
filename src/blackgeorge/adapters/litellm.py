@@ -80,6 +80,70 @@ def _structured_retry_prompt(error: Exception) -> str:
     )
 
 
+def _is_base_model_schema(response_schema: Any) -> bool:
+    return isinstance(response_schema, type) and issubclass(response_schema, BaseModel)
+
+
+def _structured_json_retry(
+    *,
+    model: str,
+    payload: list[dict[str, Any]],
+    response_schema: Any,
+    retries: int,
+    response_format: dict[str, Any] | None,
+) -> Any:
+    attempts = 0
+    while True:
+        try:
+            if response_format is None:
+                response = litellm.completion(model=model, messages=payload)
+            else:
+                response = litellm.completion(
+                    model=model,
+                    messages=payload,
+                    response_format=response_format,
+                )
+            content = _response_content(response)
+            if not content:
+                raise ValueError("Empty response content")
+            return _parse_structured_json(response_schema, content)
+        except Exception as exc:
+            if attempts >= retries:
+                raise
+            payload.append({"role": "user", "content": _structured_retry_prompt(exc)})
+            attempts += 1
+
+
+async def _astructured_json_retry(
+    *,
+    model: str,
+    payload: list[dict[str, Any]],
+    response_schema: Any,
+    retries: int,
+    response_format: dict[str, Any] | None,
+) -> Any:
+    attempts = 0
+    while True:
+        try:
+            if response_format is None:
+                response = await litellm.acompletion(model=model, messages=payload)
+            else:
+                response = await litellm.acompletion(
+                    model=model,
+                    messages=payload,
+                    response_format=response_format,
+                )
+            content = _response_content(response)
+            if not content:
+                raise ValueError("Empty response content")
+            return _parse_structured_json(response_schema, content)
+        except Exception as exc:
+            if attempts >= retries:
+                raise
+            payload.append({"role": "user", "content": _structured_retry_prompt(exc)})
+            attempts += 1
+
+
 def _parse_tool_calls(message: Any) -> list[ToolCall]:
     tool_calls = _get(message, "tool_calls", []) or []
     parsed: list[ToolCall] = []
@@ -254,6 +318,7 @@ class LiteLLMAdapter(BaseModelAdapter):
     ) -> Any:
         payload = list(messages)
         response_format = _response_format(response_schema)
+        response_format_accepted = False
         if response_format is not None:
             try:
                 response = litellm.completion(
@@ -261,13 +326,23 @@ class LiteLLMAdapter(BaseModelAdapter):
                     messages=payload,
                     response_format=response_format,
                 )
+                response_format_accepted = True
                 content = _response_content(response)
                 if content:
                     return _parse_structured_json(response_schema, content)
             except Exception:
-                pass
-        client = instructor_clients.get(model, async_client=False)
+                response_format_accepted = False
         retries = max(retries, 3)
+        if not _is_base_model_schema(response_schema):
+            manual_response_format = response_format if response_format_accepted else None
+            return _structured_json_retry(
+                model=model,
+                payload=payload,
+                response_schema=response_schema,
+                retries=retries,
+                response_format=manual_response_format,
+            )
+        client = instructor_clients.get(model, async_client=False)
         attempts = 0
         while True:
             try:
@@ -297,6 +372,7 @@ class LiteLLMAdapter(BaseModelAdapter):
     ) -> Any:
         payload = list(messages)
         response_format = _response_format(response_schema)
+        response_format_accepted = False
         if response_format is not None:
             try:
                 response = await litellm.acompletion(
@@ -304,13 +380,23 @@ class LiteLLMAdapter(BaseModelAdapter):
                     messages=payload,
                     response_format=response_format,
                 )
+                response_format_accepted = True
                 content = _response_content(response)
                 if content:
                     return _parse_structured_json(response_schema, content)
             except Exception:
-                pass
-        client = instructor_clients.get(model, async_client=True)
+                response_format_accepted = False
         retries = max(retries, 3)
+        if not _is_base_model_schema(response_schema):
+            manual_response_format = response_format if response_format_accepted else None
+            return await _astructured_json_retry(
+                model=model,
+                payload=payload,
+                response_schema=response_schema,
+                retries=retries,
+                response_format=manual_response_format,
+            )
+        client = instructor_clients.get(model, async_client=True)
         attempts = 0
         while True:
             try:

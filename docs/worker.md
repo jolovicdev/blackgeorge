@@ -44,7 +44,7 @@ user input, the worker executes prior tool calls and then pauses before that too
 
 ## Structured output
 
-Set `Job.response_schema` to a Pydantic model or TypeAdapter to enforce a structured response. Blackgeorge first attempts LiteLLM structured output using a JSON schema response format, then falls back to Instructor and Pydantic validation. The validated object is returned in `Report.data`.
+Set `Job.response_schema` to a Pydantic model or TypeAdapter to enforce a structured response. Blackgeorge first attempts LiteLLM structured output using a JSON schema response format, then falls back to Instructor and Pydantic validation. The validated object is returned in `Report.data`. TypeAdapter outputs, including lists of models, are serialized into JSON arrays in `Report.content`.
 
 ```python
 from pydantic import BaseModel

@@ -257,6 +257,83 @@ def test_structured_complete_uses_response_format_type_adapter(monkeypatch) -> N
     assert [item.value for item in result] == [1, 2]
 
 
+def test_structured_complete_type_adapter_manual_fallback(monkeypatch) -> None:
+    adapter = LiteLLMAdapter()
+    response_schema = TypeAdapter(list[ItemModel])
+    calls: list[dict[str, object]] = []
+
+    def fake_completion(**kwargs: object) -> dict[str, object]:
+        calls.append(kwargs)
+        if len(calls) == 1:
+            raise RuntimeError("response_format unsupported")
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": '[{"value": 3}]',
+                    }
+                }
+            ],
+            "usage": {},
+        }
+
+    def fake_get(model: str, async_client: bool) -> object:
+        raise AssertionError("Instructor should not be used")
+
+    monkeypatch.setattr(litellm, "completion", fake_completion)
+    monkeypatch.setattr(instructor_clients, "get", fake_get)
+
+    result = adapter.structured_complete(
+        model="openai/gpt-5-nano",
+        messages=[{"role": "user", "content": "hi"}],
+        response_schema=response_schema,
+        retries=0,
+    )
+
+    assert [item.value for item in result] == [3]
+    assert len(calls) == 2
+    assert "response_format" not in calls[1]
+
+
+@pytest.mark.asyncio
+async def test_astructured_complete_type_adapter_manual_fallback(monkeypatch) -> None:
+    adapter = LiteLLMAdapter()
+    response_schema = TypeAdapter(list[ItemModel])
+    calls: list[dict[str, object]] = []
+
+    async def fake_acompletion(**kwargs: object) -> dict[str, object]:
+        calls.append(kwargs)
+        if len(calls) == 1:
+            raise RuntimeError("response_format unsupported")
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": '[{"value": 4}]',
+                    }
+                }
+            ],
+            "usage": {},
+        }
+
+    def fake_get(model: str, async_client: bool) -> object:
+        raise AssertionError("Instructor should not be used")
+
+    monkeypatch.setattr(litellm, "acompletion", fake_acompletion)
+    monkeypatch.setattr(instructor_clients, "get", fake_get)
+
+    result = await adapter.astructured_complete(
+        model="openai/gpt-5-nano",
+        messages=[{"role": "user", "content": "hi"}],
+        response_schema=response_schema,
+        retries=0,
+    )
+
+    assert [item.value for item in result] == [4]
+    assert len(calls) == 2
+    assert "response_format" not in calls[1]
+
+
 def test_structured_complete_retry_floor(monkeypatch) -> None:
     adapter = LiteLLMAdapter()
 
