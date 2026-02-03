@@ -332,7 +332,11 @@ def _finalize_plain_response(
     emit: EventEmitter,
     worker_name: str,
 ) -> Report:
-    assistant_message = Message(role="assistant", content=response.content or "")
+    assistant_message = Message(
+        role="assistant",
+        content=response.content or "",
+        reasoning_content=response.reasoning_content,
+    )
     messages.append(assistant_message)
     emit_assistant_message(emit, worker_name, assistant_message)
     emit("worker.completed", worker_name, {})
@@ -842,6 +846,7 @@ class WorkerRunner:
                 assistant_message = Message(
                     role="assistant",
                     content=ensure_content(response.content),
+                    reasoning_content=response.reasoning_content,
                     tool_calls=response.tool_calls,
                 )
                 messages.append(assistant_message)

@@ -133,6 +133,39 @@ def test_session_with_tools() -> None:
     assert len(report.tool_calls) == 1
 
 
+def test_session_preserves_reasoning_content_for_tool_calls() -> None:
+    @tool()
+    def echo(text: str) -> str:
+        return f"echoed: {text}"
+
+    responses = [
+        ModelResponse(
+            content=None,
+            reasoning_content="tool reasoning",
+            tool_calls=[ToolCall(id="1", name="echo", arguments={"text": "test"})],
+            usage={},
+            raw={},
+        ),
+        ModelResponse(content="Done", tool_calls=[], usage={}, raw={}),
+    ]
+
+    worker = Worker(name="Assistant", model="fake", tools=[echo])
+    desk = Desk(model="fake", adapter=FakeAdapter(responses), run_store=InMemoryRunStore())
+    session = desk.session(worker)
+
+    report = session.run("use echo")
+    assert report.status == "completed"
+
+    history = session.history()
+    tool_call_messages = [msg for msg in history if msg.role == "assistant" and msg.tool_calls]
+    assert tool_call_messages
+    assert tool_call_messages[0].reasoning_content == "tool reasoning"
+
+    plain_messages = [msg for msg in history if msg.role == "assistant" and not msg.tool_calls]
+    assert plain_messages
+    assert all(msg.reasoning_content is None for msg in plain_messages)
+
+
 def test_session_close() -> None:
     worker = Worker(name="Assistant", model="fake")
     desk = Desk(

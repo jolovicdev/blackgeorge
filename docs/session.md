@@ -238,7 +238,7 @@ report = session.run(
 
 Sessions automatically handle `reasoning_content` correctly across turns:
 - **Within a turn**: Reasoning content is preserved during tool-call loops
-- **Between turns**: Reasoning content is cleared from stored messages (it will be regenerated if needed)
+- **Between turns**: Reasoning content is cleared for assistant messages without tool calls. Assistant tool-call messages keep reasoning content when required by provider rules.
 
 ```python
 # First turn generates reasoning_content
@@ -249,10 +249,10 @@ print(report1.reasoning_content)  # Has reasoning
 report2 = session.run("How many Rs in strawberry?")
 print(report2.reasoning_content)  # New reasoning generated
 
-# History never contains stale reasoning_content
+# History clears reasoning_content for assistant messages without tool calls
 for msg in session.history():
-    if msg.role == "assistant":
-        assert msg.reasoning_content is None  # Always None in storage
+    if msg.role == "assistant" and not msg.tool_calls:
+        assert msg.reasoning_content is None
 ```
 
 ## Worker binding

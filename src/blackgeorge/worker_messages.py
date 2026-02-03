@@ -50,8 +50,11 @@ def messages_to_payload(messages: list[Message]) -> list[dict[str, Any]]:
     payload: list[dict[str, Any]] = []
     for message in messages:
         item: dict[str, Any] = {"role": message.role, "content": message.content}
-        if message.role == "assistant" and message.tool_calls:
-            item["tool_calls"] = [tool_call_payload(call) for call in message.tool_calls]
+        if message.role == "assistant":
+            if message.reasoning_content is not None:
+                item["reasoning_content"] = message.reasoning_content
+            if message.tool_calls:
+                item["tool_calls"] = [tool_call_payload(call) for call in message.tool_calls]
         if message.role == "tool" and message.tool_call_id:
             item["tool_call_id"] = message.tool_call_id
         payload.append(item)
