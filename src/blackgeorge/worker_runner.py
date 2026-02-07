@@ -1,28 +1,20 @@
 import asyncio
-import json
 import warnings
-from collections.abc import Awaitable, Callable, Iterable
-from dataclasses import dataclass
+from collections.abc import Callable, Iterable
 from typing import Any, cast
 
 from blackgeorge.adapters.base import BaseModelAdapter, ModelResponse
-from blackgeorge.adapters.litellm_callbacks import emit_llm_completed, emit_llm_failed
 from blackgeorge.core.event import Event
 from blackgeorge.core.job import Job
 from blackgeorge.core.message import Message
-from blackgeorge.core.pending_action import PendingAction
 from blackgeorge.core.report import Report
 from blackgeorge.core.tool_call import ToolCall
-from blackgeorge.core.types import RunStatus
 from blackgeorge.store.state import RunState
 from blackgeorge.tools.base import Tool, ToolResult
 from blackgeorge.tools.execution import aexecute_tool
 from blackgeorge.tools.registry import Toolbelt
-from blackgeorge.utils import new_id
 from blackgeorge.worker_context import (
-    SUMMARY_ATTEMPT_LIMIT,
     aapply_context_summary,
-    context_error_message,
     is_context_limit_error,
     litellm_model_registered,
 )
@@ -36,411 +28,28 @@ from blackgeorge.worker_messages import (
     messages_to_payload,
     render_input,
     replace_tool_call,
-    structured_content,
     system_message,
     tool_call_with_result,
     tool_message,
     tool_schemas,
 )
-from blackgeorge.worker_tools import (
-    pending_options,
-    resume_argument_key,
-    tool_action_type,
-    tool_prompt,
-    update_arguments,
+from blackgeorge.worker_runner_helpers import (
+    EventEmitter,
+    _acontext_retry,
+    _build_report,
+    _build_state,
+    _ensure_not_running_loop,
+    _execute_tool_calls_async,
+    _fail_report,
+    _finalize_plain_response,
+    _finalize_structured_response,
+    _plan_tool_calls,
+    _record_usage,
+    _report_error,
+    _should_stream,
+    _tool_event_payload,
 )
-
-EventEmitter = Callable[[str, str, dict[str, Any]], None]
-
-
-@dataclass(frozen=True)
-class ToolPlan:
-    ordered_calls: list[ToolCall]
-    executable_calls: list[tuple[ToolCall, Tool]]
-    immediate_results: dict[str, ToolResult]
-    pending: PendingAction | None
-    max_tool_calls_exceeded: bool
-
-
-@dataclass(frozen=True)
-class ContextDecision:
-    retry: bool
-    report: Report | None
-
-
-def _build_report(
-    run_id: str,
-    status: RunStatus,
-    content: str | None = None,
-    reasoning_content: str | None = None,
-    data: Any | None = None,
-    messages: list[Message] | None = None,
-    tool_calls: list[ToolCall] | None = None,
-    metrics: dict[str, Any] | None = None,
-    events: list[Event] | None = None,
-    pending_action: PendingAction | None = None,
-    errors: list[str] | None = None,
-) -> Report:
-    return Report(
-        run_id=run_id,
-        status=status,
-        content=content,
-        reasoning_content=reasoning_content,
-        data=data,
-        messages=list(messages) if messages else [],
-        tool_calls=list(tool_calls) if tool_calls else [],
-        metrics=metrics or {},
-        events=list(events) if events else [],
-        pending_action=pending_action,
-        errors=list(errors) if errors else [],
-    )
-
-
-def _build_state(
-    run_id: str,
-    status: RunStatus,
-    runner_name: str,
-    job: Job,
-    messages: list[Message],
-    tool_calls: list[ToolCall],
-    pending_action: PendingAction | None,
-    metrics: dict[str, Any],
-    iteration: int,
-    payload: dict[str, Any] | None = None,
-) -> RunState:
-    return RunState(
-        run_id=run_id,
-        status=status,
-        runner_type="worker",
-        runner_name=runner_name,
-        job=job,
-        messages=messages,
-        tool_calls=tool_calls,
-        pending_action=pending_action,
-        metrics=metrics,
-        iteration=iteration,
-        payload=payload or {},
-    )
-
-
-def _report_error(
-    run_id: str,
-    messages: list[Message],
-    errors: list[str],
-    events: list[Event],
-) -> Report:
-    return Report(
-        run_id=run_id,
-        status="failed",
-        content=None,
-        reasoning_content=None,
-        data=None,
-        messages=messages,
-        tool_calls=[],
-        metrics={},
-        events=events,
-        pending_action=None,
-        errors=errors,
-    )
-
-
-def _ensure_not_running_loop(action: str, async_action: str) -> None:
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return
-    raise RuntimeError(
-        f"{action} cannot be called from a running event loop. Use {async_action} instead."
-    )
-
-
-def _fail_report(
-    *,
-    run_id: str,
-    worker_name: str,
-    message: str,
-    messages: list[Message],
-    tool_calls: list[ToolCall],
-    metrics: dict[str, Any],
-    events: list[Event],
-    errors: list[str],
-    emit: EventEmitter,
-) -> Report:
-    errors.append(message)
-    emit("worker.failed", worker_name, {"error": message})
-    return _build_report(
-        run_id,
-        "failed",
-        None,
-        None,
-        None,
-        messages,
-        tool_calls,
-        metrics,
-        events,
-        None,
-        errors,
-    )
-
-
-async def _acontext_retry(
-    *,
-    run_id: str,
-    worker_name: str,
-    messages: list[Message],
-    tool_calls: list[ToolCall],
-    metrics: dict[str, Any],
-    events: list[Event],
-    errors: list[str],
-    emit: EventEmitter,
-    model_registered: bool,
-    respect_context_window: bool,
-    context_summaries: int,
-    apply_summary: Callable[[], Awaitable[bool]],
-) -> ContextDecision:
-    if not respect_context_window:
-        message = context_error_message(model_registered, False)
-        return ContextDecision(
-            False,
-            _fail_report(
-                run_id=run_id,
-                worker_name=worker_name,
-                message=message,
-                messages=messages,
-                tool_calls=tool_calls,
-                metrics=metrics,
-                events=events,
-                errors=errors,
-                emit=emit,
-            ),
-        )
-    if context_summaries >= SUMMARY_ATTEMPT_LIMIT:
-        message = context_error_message(model_registered, True)
-        return ContextDecision(
-            False,
-            _fail_report(
-                run_id=run_id,
-                worker_name=worker_name,
-                message=message,
-                messages=messages,
-                tool_calls=tool_calls,
-                metrics=metrics,
-                events=events,
-                errors=errors,
-                emit=emit,
-            ),
-        )
-    if not await apply_summary():
-        message = context_error_message(model_registered, True)
-        return ContextDecision(
-            False,
-            _fail_report(
-                run_id=run_id,
-                worker_name=worker_name,
-                message=message,
-                messages=messages,
-                tool_calls=tool_calls,
-                metrics=metrics,
-                events=events,
-                errors=errors,
-                emit=emit,
-            ),
-        )
-    return ContextDecision(True, None)
-
-
-def _should_stream(stream: bool, tools: list[Tool], response_schema: Any | None) -> bool:
-    return stream and not tools and response_schema is None
-
-
-def _tool_result_preview(result: ToolResult, limit: int) -> tuple[str | None, bool]:
-    if result.content is not None:
-        text = result.content
-    elif result.data is not None:
-        try:
-            text = json.dumps(result.data, ensure_ascii=True)
-        except (TypeError, ValueError):
-            text = str(result.data)
-    elif result.error is not None:
-        text = result.error
-    else:
-        return None, False
-    if len(text) > limit:
-        return f"{text[:limit]}...", True
-    return text, False
-
-
-def _tool_event_payload(call: ToolCall, result: ToolResult, limit: int = 200) -> dict[str, Any]:
-    payload: dict[str, Any] = {"tool_call_id": call.id}
-    preview, truncated = _tool_result_preview(result, limit)
-    if preview is not None:
-        payload["result_preview"] = preview
-        payload["result_truncated"] = truncated
-    if result.timed_out:
-        payload["timed_out"] = True
-    if result.cancelled:
-        payload["cancelled"] = True
-    return payload
-
-
-def _record_usage(metrics: dict[str, Any], response: object) -> None:
-    if isinstance(response, ModelResponse):
-        metrics["usage"] = response.usage
-    else:
-        metrics["usage"] = {}
-
-
-def _finalize_structured_response(
-    *,
-    run_id: str,
-    data: Any,
-    messages: list[Message],
-    tool_calls: list[ToolCall],
-    metrics: dict[str, Any],
-    events: list[Event],
-    errors: list[str],
-    emit: EventEmitter,
-    worker_name: str,
-) -> Report:
-    content = structured_content(data)
-    assistant_message = Message(role="assistant", content=content)
-    messages.append(assistant_message)
-    emit_assistant_message(emit, worker_name, assistant_message)
-    emit("worker.completed", worker_name, {})
-    return _build_report(
-        run_id,
-        "completed",
-        content,
-        None,
-        data,
-        messages,
-        tool_calls,
-        metrics,
-        events,
-        None,
-        errors,
-    )
-
-
-def _finalize_plain_response(
-    *,
-    run_id: str,
-    response: ModelResponse,
-    messages: list[Message],
-    tool_calls: list[ToolCall],
-    metrics: dict[str, Any],
-    events: list[Event],
-    errors: list[str],
-    emit: EventEmitter,
-    worker_name: str,
-) -> Report:
-    assistant_message = Message(
-        role="assistant",
-        content=response.content or "",
-        reasoning_content=response.reasoning_content,
-        thinking_blocks=response.thinking_blocks,
-    )
-    messages.append(assistant_message)
-    emit_assistant_message(emit, worker_name, assistant_message)
-    emit("worker.completed", worker_name, {})
-    return _build_report(
-        run_id,
-        "completed",
-        response.content,
-        response.reasoning_content,
-        None,
-        messages,
-        tool_calls,
-        metrics,
-        events,
-        None,
-        errors,
-    )
-
-
-def _plan_tool_calls(
-    *,
-    response: ModelResponse,
-    allowed_tools: dict[str, Tool],
-    tool_calls: list[ToolCall],
-    max_tool_calls: int,
-) -> ToolPlan:
-    ordered_calls: list[ToolCall] = []
-    executable_calls: list[tuple[ToolCall, Tool]] = []
-    immediate_results: dict[str, ToolResult] = {}
-    pending: PendingAction | None = None
-    max_tool_calls_exceeded = False
-
-    for call in response.tool_calls:
-        if len(tool_calls) >= max_tool_calls:
-            max_tool_calls_exceeded = True
-            break
-        tool_calls.append(call)
-        if call.error:
-            ordered_calls.append(call)
-            immediate_results[call.id] = ToolResult(error=call.error)
-            continue
-
-        tool = allowed_tools.get(call.name)
-        if tool is None:
-            ordered_calls.append(call)
-            immediate_results[call.id] = ToolResult(error=f"Tool not found: {call.name}")
-            continue
-        action_type = tool_action_type(tool)
-        if action_type:
-            metadata = {"tool": tool.name}
-            if tool.input_key:
-                metadata["input_key"] = tool.input_key
-            pending = PendingAction(
-                action_id=new_id(),
-                type=action_type,
-                tool_call=call,
-                prompt=tool_prompt(tool, action_type, call),
-                options=pending_options(action_type),
-                metadata=metadata,
-            )
-            break
-        ordered_calls.append(call)
-        executable_calls.append((call, tool))
-
-    return ToolPlan(
-        ordered_calls=ordered_calls,
-        executable_calls=executable_calls,
-        immediate_results=immediate_results,
-        pending=pending,
-        max_tool_calls_exceeded=max_tool_calls_exceeded,
-    )
-
-
-async def _execute_tool_calls_async(
-    ordered_calls: list[ToolCall],
-    executable_calls: list[tuple[ToolCall, Tool]],
-    immediate_results: dict[str, ToolResult],
-    messages: list[Message],
-    tool_calls: list[ToolCall],
-    emit: EventEmitter,
-) -> None:
-    results: dict[str, ToolResult] = dict(immediate_results)
-    if executable_calls:
-        for call, tool in executable_calls:
-            emit("tool.started", tool.name, {"tool_call_id": call.id})
-        if len(executable_calls) == 1:
-            call, tool = executable_calls[0]
-            results[call.id] = await aexecute_tool(tool, call)
-        else:
-            tasks = [aexecute_tool(tool, call) for call, tool in executable_calls]
-            tool_results = await asyncio.gather(*tasks)
-            for (call, _), result in zip(executable_calls, tool_results, strict=True):
-                results[call.id] = result
-    for call in ordered_calls:
-        result = results.get(call.id, ToolResult(error="Tool execution failed"))
-        if result.error:
-            emit("tool.failed", call.name, {"tool_call_id": call.id, "error": result.error})
-        else:
-            emit("tool.completed", call.name, _tool_event_payload(call, result))
-        tool_result_message = tool_message(result, call)
-        messages.append(tool_result_message)
-        replace_tool_call(tool_calls, tool_call_with_result(call, result))
+from blackgeorge.worker_tools import resume_argument_key, update_arguments
 
 
 class WorkerRunner:
@@ -648,15 +257,11 @@ class WorkerRunner:
                             usage_chunk = chunk_usage(chunk)
                             if usage_chunk:
                                 usage = usage_chunk
-                except Exception as exc:
-                    emit_llm_failed(model, exc)
-                    raise
                 finally:
                     if hasattr(stream, "aclose"):
                         await stream.aclose()
                     elif hasattr(stream, "close"):
                         stream.close()
-            emit_llm_completed(model, {"usage": usage})
             return ModelResponse(
                 content="".join(content_parts),
                 reasoning_content="".join(reasoning_parts) or None,
@@ -909,7 +514,11 @@ class WorkerRunner:
                         plan.pending.tool_call.name,
                         {"tool_call_id": plan.pending.tool_call.id},
                     )
-                    emit("worker.completed", self.name, {})
+                    emit(
+                        "worker.paused",
+                        self.name,
+                        {"pending_action_type": plan.pending.type},
+                    )
                     report = _build_report(
                         run_id,
                         "paused",
@@ -947,6 +556,34 @@ class WorkerRunner:
                         retries=structured_output_retries,
                     )
                 except Exception as exc:
+                    if is_context_limit_error(exc):
+                        decision = await _acontext_retry(
+                            run_id=run_id,
+                            worker_name=self.name,
+                            messages=messages,
+                            tool_calls=tool_calls,
+                            metrics=metrics,
+                            events=events,
+                            errors=errors,
+                            emit=emit,
+                            model_registered=model_registered,
+                            respect_context_window=respect_context_window,
+                            context_summaries=context_summaries,
+                            apply_summary=lambda: aapply_context_summary(
+                                adapter=adapter,
+                                model_name=model_name,
+                                messages=messages,
+                                temperature=temperature,
+                                metrics=metrics,
+                                emit=emit,
+                                worker_name=self.name,
+                                model_registered=model_registered,
+                            ),
+                        )
+                        if decision.report is not None:
+                            return decision.report, None
+                        context_summaries += 1
+                        continue
                     return (
                         _fail_report(
                             run_id=run_id,
@@ -1186,6 +823,11 @@ class WorkerRunner:
         else:
             if pending.type == "confirmation" and not decision_or_input:
                 result = ToolResult(error="Tool execution declined")
+                emit(
+                    "tool.failed",
+                    pending.tool_call.name,
+                    {"tool_call_id": pending.tool_call.id, "error": result.error},
+                )
                 tool_result_message = tool_message(result, pending.tool_call)
                 messages.append(tool_result_message)
                 replace_tool_call(tool_calls, tool_call_with_result(pending.tool_call, result))
