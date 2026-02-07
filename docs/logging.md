@@ -88,7 +88,7 @@ request_logger = base_logger.with_context(
     user_id="user-789"
 )
 
-logger.info("Handling request")
+request_logger.info("Handling request")
 ```
 
 ## Using with Blackgeorge components
@@ -123,8 +123,7 @@ from blackgeorge.logging import get_logger
 logger = get_logger("events").with_context(component="event_monitor")
 
 def on_tool_completed(event):
-    tool_name = event.payload.get("tool_name")
-    logger.info("Tool completed", tool=tool_name, run_id=event.run_id)
+    logger.info("Tool completed", tool=event.source, run_id=event.run_id)
 
 desk = Desk(model="openai/gpt-5-nano")
 desk.event_bus.subscribe("tool.completed", on_tool_completed)
@@ -133,13 +132,15 @@ desk.event_bus.subscribe("tool.completed", on_tool_completed)
 ### Logging in custom stores
 
 ```python
+from typing import Any
+
 from blackgeorge.store import RunStore
 from blackgeorge.logging import get_logger
 
 logger = get_logger("stores").with_context(component="custom_store")
 
 class CustomRunStore(RunStore):
-    def create_run(self, run_id: str, input_payload: dict) -> None:
+    def create_run(self, run_id: str, input_payload: Any) -> None:
         logger.debug("Creating run", run_id=run_id)
         # Implementation
         logger.info("Run created", run_id=run_id)

@@ -26,13 +26,17 @@ uv pip install -e .[dev]
 ## Run tests
 
 ```
-pytest
+uv run pytest
 ```
 
 ## Lint
 
 ```
-ruff check .
+uv run ruff check .
+```
+
+```
+uv run ruff format .
 ```
 
 ## Docs site
@@ -48,5 +52,5 @@ uv run mkdocs build
 ## Type check
 
 ```
-mypy src
+uv run mypy src
 ```

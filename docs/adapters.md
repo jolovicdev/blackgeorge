@@ -23,11 +23,26 @@ Key behaviors:
 
 - calls `litellm.completion(...)` for synchronous requests
 - calls `litellm.acompletion(...)` for async requests
-- passes messages, tools, tool_choice, temperature, max_tokens
+- passes messages and optional model parameters (`temperature`, `max_tokens`, `thinking`, `extra_body`)
+- only sends `tools` and `tool_choice` when tools are present
 - supports streaming when requested
-- enables `parallel_tool_calls` when LiteLLM reports the model supports parallel function calling
+- enables `parallel_tool_calls` when model metadata indicates `supports_parallel_function_calling`
+- for streaming calls, emits `llm.completed` on stream exhaustion/close and `llm.failed` if stream iteration raises
 
-Tool calls are parsed from the response and mapped into `ToolCall` objects.
+### Runtime lifecycle hardening
+
+Blackgeorge configures LiteLLM runtime lifecycle once when `LiteLLMAdapter` is initialized:
+
+- it applies deterministic shutdown cleanup for async LiteLLM clients
+- it patches LiteLLM logging-worker enqueue behavior to close dropped coroutines safely
+- it avoids registering LiteLLM lazy async cleanup in a way that can emit shutdown warnings
+
+This hardening was added to prevent process-exit warnings observed in real integrations, including DeepSeek (`deepseek/deepseek-chat`):
+
+- `RuntimeWarning: coroutine 'close_litellm_async_clients' was never awaited`
+- `RuntimeWarning: coroutine 'Logging.async_success_handler' was never awaited`
+
+Tool calls are parsed from the response and mapped into `ToolCall` objects. Malformed tool payloads are preserved with `ToolCall.error` metadata instead of crashing adapter parsing.
 
 ## Structured output pipeline
 
@@ -37,6 +52,7 @@ Structured output uses LiteLLM JSON schema response formats when possible and fa
 - `instructor.from_provider("litellm/<model>", async_client=True)`
 
 If the LiteLLM structured response fails or is unavailable, the worker calls `chat.completions.create(..., response_model=YourModel)` and returns the validated Pydantic object as `Report.data`.
+Structured output retries are clamped to a minimum of 3 attempts for resilience (`retries=0` still performs 3 retries after the first failed attempt).
 
 ## Adapter hooks for structured output
 

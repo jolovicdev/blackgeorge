@@ -42,6 +42,26 @@ def test_tool_serializes_non_json_output() -> None:
     assert message.content
 
 
+def test_tool_decorator_accepts_hooks() -> None:
+    executed: list[str] = []
+
+    def pre_hook(call: ToolCall) -> None:
+        executed.append(f"pre:{call.id}")
+
+    def post_hook(call: ToolCall, _result) -> None:
+        executed.append(f"post:{call.id}")
+
+    @tool(pre=(pre_hook,), post=(post_hook,))
+    def add(a: int, b: int) -> int:
+        return a + b
+
+    call = ToolCall(id="hook-call", name="add", arguments={"a": 1, "b": 2})
+    result = execute_tool(add, call)
+    assert result.error is None
+    assert result.content == "3"
+    assert executed == ["pre:hook-call", "post:hook-call"]
+
+
 @pytest.mark.asyncio
 async def test_async_tool_execution() -> None:
     @tool()
@@ -65,6 +85,28 @@ async def test_async_tool_execution_with_sync_tool() -> None:
     result = await aexecute_tool(sync_add, call)
     assert result.error is None
     assert result.content == "3"
+
+
+@pytest.mark.asyncio
+async def test_async_hooks_with_decorator() -> None:
+    executed: list[str] = []
+
+    async def pre_hook(call: ToolCall) -> None:
+        executed.append(f"pre:{call.id}")
+
+    async def post_hook(call: ToolCall, _result) -> None:
+        executed.append(f"post:{call.id}")
+
+    @tool(pre=(pre_hook,), post=(post_hook,))
+    async def async_add(a: int, b: int) -> int:
+        await asyncio.sleep(0)
+        return a + b
+
+    call = ToolCall(id="ahook-call", name="async_add", arguments={"a": 1, "b": 2})
+    result = await aexecute_tool(async_add, call)
+    assert result.error is None
+    assert result.content == "3"
+    assert executed == ["pre:ahook-call", "post:ahook-call"]
 
 
 @pytest.mark.asyncio

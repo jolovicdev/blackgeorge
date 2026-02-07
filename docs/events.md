@@ -1,10 +1,8 @@
 # Events and streaming
 
-Blackgeorge emits events for all major lifecycle steps. Subscribe to the event bus to react to changes in real time.
+Blackgeorge emits events for run lifecycle, workers, tools, workflows, and adapter calls.
 
 ## EventBus API
-
-The `EventBus` manages event subscriptions and emission.
 
 ### Creating an event bus
 
@@ -20,191 +18,152 @@ bus = EventBus()
 def handle_event(event) -> None:
     print(f"{event.type}: {event.payload}")
 
-# Subscribe to a specific event type
 bus.subscribe("run.started", handle_event)
-
-# Subscribe to multiple event types
 bus.subscribe("run.completed", handle_event)
 bus.subscribe("run.failed", handle_event)
 ```
 
-The handler function receives an `Event` object with the following fields:
+Event handlers receive an `Event` with these fields:
 
-- `event_id` (str): Unique event identifier
-- `type` (str): Event type (e.g., "run.started")
-- `timestamp` (datetime): When the event occurred
-- `run_id` (str): Associated run identifier
-- `source` (str): Event source (e.g., worker name)
-- `payload` (dict): Event-specific data
+- `event_id`: unique event id
+- `type`: event name, for example `run.started`
+- `timestamp`: UTC timestamp
+- `run_id`: run identifier
+- `source`: emitter name (for example worker/tool/workforce name)
+- `payload`: event-specific data
 
-### Synchronous event emission
+`EventBus.subscribe` matches exact event types only. Wildcard subscriptions like `*` are not supported.
+
+### Emitting events
 
 ```python
 from blackgeorge.core.event import Event
+from blackgeorge.utils import new_id, utc_now
 
 event = Event(
+    event_id=new_id(),
     type="custom.event",
-    source="my_component",
+    timestamp=utc_now(),
     run_id="run-123",
-    payload={"data": "value"}
+    source="my_component",
+    payload={"data": "value"},
 )
 bus.emit(event)
 ```
 
-`emit` supports async handlers as well. If a handler is a coroutine function or returns an awaitable (including a Task or Future), it is scheduled on the current event loop when available, or run to completion with a temporary loop when called from a sync context.
-
-### Asynchronous event emission
+`emit` runs handlers in-process. If a handler is async (or returns an awaitable), it is scheduled on the current loop when available, or run with a temporary loop from sync contexts.
 
 ```python
-# For async handlers, use aemit
 await bus.aemit(event)
 ```
 
-`aemit` automatically handles both sync and async handlers:
-- Sync handlers are called directly
-- Async handlers are awaited
-- Sync handlers that return awaitables are also awaited
+`aemit` awaits async handlers and awaitable returns from sync handlers.
 
 ### Unsubscribing
 
-The EventBus does not provide a built-in unsubscribe method. To stop receiving events, maintain a reference to your handler and wrap it with conditional logic:
-
-```python
-class EventHandler:
-    def __init__(self):
-        self.enabled = True
-
-    def handle(self, event):
-        if not self.enabled:
-            return
-        print(event)
-
-handler = EventHandler()
-bus.subscribe("run.started", handler.handle)
-
-# Later, to stop handling events
-handler.enabled = False
-```
+EventBus has no built-in unsubscribe API. Use a wrapper with an internal enabled flag when you need dynamic opt-out.
 
 ## Event types
 
 ### Run events
 
-Emitted during the lifecycle of a run.
-
 | Event Type | Description | Payload Fields |
 |------------|-------------|----------------|
-| `run.started` | Run has started | `runner_type`, `runner_name` |
-| `run.paused` | Run is paused pending action | `pending_action_type` |
-| `run.resumed` | Run has been resumed | `pending_action_type` |
-| `run.completed` | Run completed successfully | `status`, `metrics` |
-| `run.failed` | Run failed with error | `errors` |
+| `run.started` | Run started | `job_id` |
+| `run.paused` | Run paused | none |
+| `run.resumed` | Run resumed | none |
+| `run.completed` | Run completed | none |
+| `run.failed` | Run failed | `errors` when emitted by `Desk`; may be empty for flow-level failures |
 
 ### Worker events
 
-Emitted during worker execution.
-
 | Event Type | Description | Payload Fields |
 |------------|-------------|----------------|
-| `worker.started` | Worker started processing | `worker_name` |
-| `worker.completed` | Worker completed successfully | `worker_name`, `iterations` |
-| `worker.failed` | Worker failed | `worker_name`, `error` |
-| `worker.context_summarized` | Conversation context was summarized | `model`, `summarized_messages`, `kept_messages` |
+| `worker.started` | Worker iteration started/resumed | none |
+| `worker.paused` | Worker paused for pending action | `pending_action_type` |
+| `worker.completed` | Worker completed successfully | none |
+| `worker.failed` | Worker failed | `error` |
+| `worker.context_summarized` | Context summary applied | `model`, `summarized_messages`, `kept_messages`, optional `unregistered_model`, optional `registration_hint` |
 
 ### Workforce events
 
-Emitted during workforce execution.
+| Event Type | Description | Payload Fields |
+|------------|-------------|----------------|
+| `workforce.started` | Workforce run started | none |
+| `workforce.completed` | Workforce run finished | none |
+
+### Workflow step events
 
 | Event Type | Description | Payload Fields |
 |------------|-------------|----------------|
-| `workforce.started` | Workforce started | `workforce_name`, `mode` |
-| `workforce.completed` | Workforce completed | `workforce_name`, `worker_count` |
-
-### Step events
-
-Emitted during workflow step execution.
-
-| Event Type | Description | Payload Fields |
-|------------|-------------|----------------|
-| `step.started` | Step started | `step_index`, `step_type` |
-| `step.completed` | Step completed | `step_index`, `step_type` |
-| `step.paused` | Step paused | `step_index`, `pending_action` |
-| `step.failed` | Step failed | `step_index`, `error` |
+| `step.started` | Step execution started | none |
+| `step.completed` | Step execution finished | `status` |
+| `step.paused` | Step paused | `status` |
 
 ### Tool events
 
-Emitted during tool execution.
-
 | Event Type | Description | Payload Fields |
 |------------|-------------|----------------|
-| `tool.started` | Tool execution started | `tool_name`, `tool_call_id` |
-| `tool.completed` | Tool completed successfully | `tool_name`, `tool_call_id`, `result_preview`, `timed_out`, `cancelled` |
-| `tool.failed` | Tool execution failed | `tool_name`, `tool_call_id`, `error` |
-| `tool.confirmation_requested` | Tool requires confirmation | `tool_name`, `prompt` |
-| `tool.user_input_requested` | Tool requires user input | `tool_name`, `prompt` |
+| `tool.started` | Tool execution started | `tool_call_id` |
+| `tool.completed` | Tool execution completed | `tool_call_id`, optional `result_preview`, optional `result_truncated`, optional `timed_out`, optional `cancelled` |
+| `tool.failed` | Tool execution failed | `tool_call_id`, `error` |
+| `tool.confirmation_requested` | Tool needs confirmation | `tool_call_id` |
+| `tool.user_input_requested` | Tool needs user input | `tool_call_id` |
+
+Tool/workforce/worker names are exposed via `event.source`.
 
 ### LLM adapter events
-
-Emitted by the LiteLLM adapter during model calls.
 
 | Event Type | Description | Payload Fields |
 |------------|-------------|----------------|
 | `llm.started` | LLM call started | `model`, `messages_count`, `tools_count` |
-| `llm.completed` | LLM call completed | `model`, `latency_ms`, `prompt_tokens`, `completion_tokens`, `total_tokens`, `cost` |
+| `llm.completed` | LLM call completed or stream closed | `model`, `latency_ms`, optional `prompt_tokens`, optional `completion_tokens`, optional `total_tokens`, optional `cost` |
 | `llm.failed` | LLM call failed | `model`, `latency_ms`, `error_type`, `error_message` |
 
-### Streaming and message events
+### Streaming/message events
 
 | Event Type | Description | Payload Fields |
 |------------|-------------|----------------|
-| `stream.token` | Token emitted during streaming | `token` |
-| `assistant.message` | Full assistant message | `content` |
+| `stream.token` | Stream token delta | `token` |
+| `assistant.message` | Assistant message appended | `content`, optional `tool_calls` |
 
-## Subscribing from the desk
-
-The most common way to subscribe to events is through the desk:
+## Subscribing from a desk
 
 ```python
 from blackgeorge import Desk
 
-def on_run_started(event):
-    print(f"Run {event.run_id} started")
-
-def on_tool_completed(event):
-    tool_name = event.payload.get("tool_name")
-    print(f"Tool {tool_name} completed")
+def on_tool_completed(event) -> None:
+    preview = event.payload.get("result_preview")
+    print(f"{event.source} completed: {preview}")
 
 desk = Desk(model="openai/gpt-5-nano")
-desk.event_bus.subscribe("run.started", on_run_started)
 desk.event_bus.subscribe("tool.completed", on_tool_completed)
 ```
 
-## Event filtering patterns
+## Filtering patterns
 
-### Filter by event type
-
-```python
-def handle_all_events(event):
-    if event.type.startswith("tool."):
-        print(f"Tool event: {event.type}")
-        # Process tool events
-
-bus.subscribe("*", handle_all_events)
-```
-
-### Filter by payload content
+### Filter by prefixes
 
 ```python
-def handle_worker_events(event):
-    if "worker_name" in event.payload:
-        worker = event.payload["worker_name"]
-        if worker == "analyst":
-            print(f"Analyst event: {event.type}")
+def handle_tool_events(event) -> None:
+    print(f"{event.type} from {event.source}")
 
-bus.subscribe("worker.started", handle_worker_events)
+for event_type in ("tool.started", "tool.completed", "tool.failed"):
+    bus.subscribe(event_type, handle_tool_events)
 ```
 
-### Filter with a wrapper
+### Filter by source
+
+```python
+def handle_analyst_events(event) -> None:
+    if event.source == "analyst":
+        print(event.type, event.payload)
+
+bus.subscribe("worker.started", handle_analyst_events)
+bus.subscribe("worker.failed", handle_analyst_events)
+```
+
+### Filter with wrappers
 
 ```python
 def create_filter(handler, event_types):
@@ -213,131 +172,102 @@ def create_filter(handler, event_types):
             handler(event)
     return filtered
 
-def my_handler(event):
-    print(event)
-
-filtered_handler = create_filter(my_handler, {"run.started", "run.completed"})
-bus.subscribe("run.started", filtered_handler)
-bus.subscribe("run.completed", filtered_handler)
+filtered = create_filter(print, {"run.started", "run.completed"})
+bus.subscribe("run.started", filtered)
+bus.subscribe("run.completed", filtered)
 ```
 
-## Async event handlers
-
-You can use async handlers with the event bus:
+## Async handlers
 
 ```python
 async def async_handler(event):
     await some_async_operation(event)
-    print(f"Processed {event.type}")
 
-# Use aemit for async handlers
 await bus.aemit(event)
 ```
 
 ## Streaming events
 
-Streaming emits `stream.token` for each token during response generation. Streaming only occurs when:
+`stream.token` emits only when all are true:
 
-- The worker has no tools for the job
-- No response schema is set
-- `Desk.stream` is enabled or `desk.run(..., stream=True)` is used
+- streaming enabled on desk/run
+- no tools for that turn
+- no response schema for that turn
 
 ```python
 def on_token(event):
-    token = event.payload.get("token")
-    print(token, end="", flush=True)
+    print(event.payload.get("token", ""), end="", flush=True)
 
-desk = Desk(model="openai/gpt-5-nano", stream=True)
 desk.event_bus.subscribe("stream.token", on_token)
-
-report = desk.run(worker, job)
 ```
 
 ## Tool result previews
 
-Tool completion events include a `result_preview` field that contains a truncated version of the tool result. This is useful for logging without dumping full payloads.
+`tool.completed` may include `result_preview` and `result_truncated` for lightweight logging.
 
 ```python
 def on_tool_completed(event):
-    tool_name = event.payload.get("tool_name")
-    preview = event.payload.get("result_preview", "")
-    truncated = event.payload.get("result_truncated", False)
-
-    print(f"{tool_name} completed")
-    print(f"Preview: {preview}")
-    if truncated:
-        print("(Result truncated)")
+    print(event.source, event.payload.get("result_preview"))
 ```
 
 ## Context summary events
 
-When the worker summarizes conversation history due to context limits, it emits a `worker.context_summarized` event:
-
 ```python
 def on_context_summarized(event):
     payload = event.payload
-    print(f"Summarized {payload['summarized_messages']} messages")
-    print(f"Kept {payload['kept_messages']} recent messages")
-
+    print(payload["summarized_messages"], payload["kept_messages"])
     if payload.get("unregistered_model"):
-        print("Warning: Model not registered in LiteLLM")
         print(payload.get("registration_hint"))
 ```
 
 ## Event storage
 
-Events emitted through the desk are automatically stored in the run store:
+Events emitted through a desk are persisted in the run store.
 
 ```python
-# Retrieve events for a run
 events = desk.run_store.get_events(run_id)
-
 for event in events:
-    print(f"{event.type}: {event.payload}")
+    print(event.type, event.payload)
 ```
 
 ## Custom events
 
-You can emit custom events from your tools or handlers:
-
 ```python
+from blackgeorge import Desk, Job, Worker
 from blackgeorge.core.event import Event
-from blackgeorge import Desk
+from blackgeorge.utils import new_id, utc_now
 
 desk = Desk(model="openai/gpt-5-nano")
+worker = Worker(name="assistant")
+report = desk.run(worker, Job(input="hello"))
 
-# Emit a custom event
 custom_event = Event(
+    event_id=new_id(),
     type="custom.progress",
+    timestamp=utc_now(),
+    run_id=report.run_id,
     source="my_tool",
-    run_id=desk.run_store.get_runs()[-1].run_id,
-    payload={"percent": 50, "status": "processing"}
+    payload={"percent": 50},
 )
 desk.event_bus.emit(custom_event)
 ```
 
-## Performance considerations
+## Performance notes
 
-- Event handlers are called synchronously on the emitting thread. Keep handlers fast to avoid blocking the run.
-- For expensive operations, offload work to a separate thread or queue:
-  ```python
-  import queue
+- Handlers run on the emitting path, so keep them fast.
+- Offload heavy work to queues/threads/processes.
+- Register subscriptions before starting concurrent run execution.
 
-  event_queue = queue.Queue()
+```python
+import queue
 
-  def queue_handler(event):
-      event_queue.put(event)
+event_queue = queue.Queue()
 
-  bus.subscribe("run.completed", queue_handler)
+def queue_handler(event):
+    event_queue.put(event)
 
-  # Process events in a separate thread
-  def process_events():
-      while True:
-          event = event_queue.get()
-          # Expensive processing here
-  ```
-- The EventBus is thread-safe for concurrent subscription and emission.
-- Avoid blocking operations in async handlers used with `aemit`.
+bus.subscribe("run.completed", queue_handler)
+```
 
 ## Event-driven patterns
 
@@ -349,28 +279,13 @@ class ProgressTracker:
         self.total_steps = total_steps
         self.completed_steps = 0
 
-    def on_step_complete(self, event):
+    def on_step_complete(self, _event):
         self.completed_steps += 1
         percent = (self.completed_steps / self.total_steps) * 100
-        print(f"Progress: {percent:.1f}%")
+        print(f"{percent:.1f}%")
 
 tracker = ProgressTracker(total_steps=5)
 desk.event_bus.subscribe("step.completed", tracker.on_step_complete)
-```
-
-### Metrics collection
-
-```python
-class MetricsCollector:
-    def __init__(self):
-        self.metrics = {}
-
-    def on_run_complete(self, event):
-        run_id = event.run_id
-        self.metrics[run_id] = event.payload.get("metrics", {})
-
-collector = MetricsCollector()
-desk.event_bus.subscribe("run.completed", collector.on_run_complete)
 ```
 
 ### Error aggregation
@@ -382,13 +297,11 @@ class ErrorLogger:
 
     def on_error(self, event):
         error = event.payload.get("error")
-        source = event.source
-        self.errors.append({
-            "event": event.type,
-            "source": source,
-            "error": error,
-            "timestamp": event.timestamp
-        })
+        if error is None:
+            errors = event.payload.get("errors")
+            if isinstance(errors, list) and errors:
+                error = "; ".join(errors)
+        self.errors.append((event.type, event.source, error))
 
 logger = ErrorLogger()
 desk.event_bus.subscribe("run.failed", logger.on_error)
