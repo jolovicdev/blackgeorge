@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from blackgeorge.memory.vector import VectorMemoryStore, _chunk_text
+from blackgeorge.memory.vector import DeterministicEmbeddingFunction, VectorMemoryStore, _chunk_text
 
 
 def test_chunk_text_small() -> None:
@@ -111,3 +111,46 @@ def test_vector_memory_store_custom_chunking(tmp_path: Path) -> None:
     store_alt = VectorMemoryStore(str(path), chunk_size=10, chunk_overlap=0)
     result_alt = store_alt.read("doc", "scope1")
     assert result_alt == text
+
+
+def test_vector_memory_store_overwrite_many_chunks(tmp_path: Path) -> None:
+    path = tmp_path / "chroma_db"
+    store = VectorMemoryStore(str(path), chunk_size=24, chunk_overlap=6)
+    original = "abcdefghij " * 500
+    updated = "replacement"
+    store.write("key1", original, "scope1")
+    store.write("key1", updated, "scope1")
+    result = store.read("key1", "scope1")
+    assert result == updated
+
+
+def test_vector_memory_store_reset_large_scope(tmp_path: Path) -> None:
+    path = tmp_path / "chroma_db"
+    store = VectorMemoryStore(str(path), chunk_size=20, chunk_overlap=0)
+    for index in range(150):
+        store.write(f"key{index}", f"value-{index}", "scope1")
+    store.reset("scope1")
+    for index in range(150):
+        assert store.read(f"key{index}", "scope1") is None
+
+
+def test_deterministic_embedding_function_dimensions() -> None:
+    function = DeterministicEmbeddingFunction(dimensions=12)
+    embeddings = function(["hello world", "another document"])
+    assert len(embeddings) == 2
+    assert all(len(embedding) == 12 for embedding in embeddings)
+
+
+def test_vector_memory_store_preserves_existing_collection_dimensions(tmp_path: Path) -> None:
+    path = tmp_path / "chroma_db"
+    legacy_store = VectorMemoryStore(
+        str(path),
+        embedding_function=DeterministicEmbeddingFunction(dimensions=384),
+    )
+    legacy_store.write("legacy", "legacy text", "scope1")
+
+    upgraded_store = VectorMemoryStore(str(path))
+    upgraded_store.write("new", "new text", "scope1")
+
+    assert upgraded_store.read("legacy", "scope1") == "legacy text"
+    assert upgraded_store.read("new", "scope1") == "new text"

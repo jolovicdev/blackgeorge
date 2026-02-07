@@ -1,9 +1,15 @@
+import hashlib
 import json
 import logging
-from typing import Any
+import re
+from typing import Any, cast
 
 import chromadb
+import numpy as np
+from chromadb.api.types import Documents, Embeddable, EmbeddingFunction, Embeddings, Metadatas
 from chromadb.config import DEFAULT_DATABASE, DEFAULT_TENANT
+from chromadb.errors import NotFoundError
+from numpy.typing import NDArray
 
 from blackgeorge.memory.base import MemoryScope, MemoryStore
 from blackgeorge.utils import utc_now
@@ -12,6 +18,8 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_CHUNK_SIZE = 8000
 DEFAULT_CHUNK_OVERLAP = 200
+DEFAULT_EMBEDDING_DIMENSIONS = 256
+TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
 
 
 def _chunk_text(
@@ -48,6 +56,79 @@ def _deserialize_value(text: str) -> Any:
         return text
 
 
+class DeterministicEmbeddingFunction(EmbeddingFunction[Embeddable]):
+    def __init__(self, dimensions: int = DEFAULT_EMBEDDING_DIMENSIONS) -> None:
+        self._dimensions = max(int(dimensions), 1)
+
+    def __call__(self, input: Embeddable) -> Embeddings:
+        if not input:
+            return []
+        first_item = input[0]
+        if isinstance(first_item, str):
+            documents = cast(Documents, input)
+            return [self._embed_document(document) for document in documents]
+        raise TypeError("DeterministicEmbeddingFunction only supports text documents")
+
+    @staticmethod
+    def name() -> str:
+        return "blackgeorge_deterministic_embedding"
+
+    @staticmethod
+    def build_from_config(config: dict[str, Any]) -> "DeterministicEmbeddingFunction":
+        dimensions_raw = config.get("dimensions", DEFAULT_EMBEDDING_DIMENSIONS)
+        try:
+            dimensions = int(dimensions_raw)
+        except (TypeError, ValueError):
+            dimensions = DEFAULT_EMBEDDING_DIMENSIONS
+        return DeterministicEmbeddingFunction(dimensions=dimensions)
+
+    def get_config(self) -> dict[str, Any]:
+        return {"dimensions": self._dimensions}
+
+    def _embed_document(self, document: str) -> NDArray[np.float32]:
+        vector = np.zeros(self._dimensions, dtype=np.float32)
+        tokens = TOKEN_PATTERN.findall(document.lower())
+        if not tokens:
+            tokens = [document.lower()] if document else [""]
+        for token in tokens:
+            digest = hashlib.blake2b(token.encode("utf-8"), digest_size=8).digest()
+            hashed = int.from_bytes(digest, byteorder="big", signed=False)
+            index = hashed % self._dimensions
+            direction = 1.0 if ((hashed >> 1) & 1) == 0 else -1.0
+            vector[index] += direction
+        magnitude = float(np.linalg.norm(vector))
+        if magnitude == 0.0:
+            vector[0] = 1.0
+            return vector
+        return vector / magnitude
+
+
+def _deterministic_embedding_from_collection(
+    collection: Any,
+) -> DeterministicEmbeddingFunction | None:
+    model = getattr(collection, "_model", None)
+    if model is None:
+        return None
+    configuration_json = getattr(model, "configuration_json", None)
+    if not isinstance(configuration_json, dict):
+        return None
+    embedding_function_config = configuration_json.get("embedding_function")
+    if not isinstance(embedding_function_config, dict):
+        return None
+    name = embedding_function_config.get("name")
+    if name != DeterministicEmbeddingFunction.name():
+        return None
+    config = embedding_function_config.get("config", {})
+    if not isinstance(config, dict):
+        config = {}
+    dimensions_raw = config.get("dimensions", DEFAULT_EMBEDDING_DIMENSIONS)
+    try:
+        dimensions = int(dimensions_raw)
+    except (TypeError, ValueError):
+        dimensions = DEFAULT_EMBEDDING_DIMENSIONS
+    return DeterministicEmbeddingFunction(dimensions=dimensions)
+
+
 class VectorMemoryStore(MemoryStore):
     def __init__(
         self,
@@ -57,8 +138,10 @@ class VectorMemoryStore(MemoryStore):
         database: str = DEFAULT_DATABASE,
         chunk_size: int = DEFAULT_CHUNK_SIZE,
         chunk_overlap: int = DEFAULT_CHUNK_OVERLAP,
+        embedding_function: EmbeddingFunction[Embeddable] | None = None,
     ) -> None:
         self._path = path
+        self._embedding_function = embedding_function
         self._client = chromadb.PersistentClient(
             path=path,
             tenant=tenant,
@@ -67,10 +150,27 @@ class VectorMemoryStore(MemoryStore):
         self._collection_name = collection_name
         self._chunk_size = max(chunk_size, 1)
         self._chunk_overlap = max(chunk_overlap, 0)
-        self._collection = self._client.get_or_create_collection(
-            name=collection_name,
-            metadata={"hnsw:space": "cosine"},
-        )
+        try:
+            existing_collection = self._client.get_collection(name=collection_name)
+            if self._embedding_function is None:
+                self._embedding_function = _deterministic_embedding_from_collection(
+                    existing_collection
+                )
+            if self._embedding_function is None:
+                self._collection = existing_collection
+            else:
+                self._collection = self._client.get_collection(
+                    name=collection_name,
+                    embedding_function=self._embedding_function,
+                )
+        except NotFoundError:
+            if self._embedding_function is None:
+                self._embedding_function = DeterministicEmbeddingFunction()
+            self._collection = self._client.get_or_create_collection(
+                name=collection_name,
+                metadata={"hnsw:space": "cosine"},
+                embedding_function=self._embedding_function,
+            )
 
     def _resolve_chunk_config(self, metadata: dict[str, Any]) -> tuple[int, int]:
         chunk_size_raw = metadata.get("chunk_size", self._chunk_size)
@@ -94,23 +194,26 @@ class VectorMemoryStore(MemoryStore):
         chunks = _chunk_text(text, chunk_size=self._chunk_size, overlap=self._chunk_overlap)
         now = utc_now().isoformat()
         self._delete_by_key(key, scope)
-        for i, chunk in enumerate(chunks):
-            doc_id = f"{scope}:{key}:{i}"
-            self._collection.add(
-                ids=[doc_id],
-                documents=[chunk],
-                metadatas=[
-                    {
-                        "scope": scope,
-                        "key": key,
-                        "chunk_index": i,
-                        "total_chunks": len(chunks),
-                        "chunk_size": self._chunk_size,
-                        "chunk_overlap": self._chunk_overlap,
-                        "created_at": now,
-                    }
-                ],
+        ids: list[str] = []
+        metadatas: Metadatas = []
+        for i, _ in enumerate(chunks):
+            ids.append(f"{scope}:{key}:{i}")
+            metadatas.append(
+                {
+                    "scope": scope,
+                    "key": key,
+                    "chunk_index": i,
+                    "total_chunks": len(chunks),
+                    "chunk_size": self._chunk_size,
+                    "chunk_overlap": self._chunk_overlap,
+                    "created_at": now,
+                }
             )
+        self._collection.add(
+            ids=ids,
+            documents=chunks,
+            metadatas=metadatas,
+        )
 
     def read(self, key: str, scope: MemoryScope) -> Any | None:
         results = self._collection.get(
@@ -171,22 +274,16 @@ class VectorMemoryStore(MemoryStore):
 
     def reset(self, scope: MemoryScope) -> None:
         try:
-            results = self._collection.get(
+            self._collection.delete(
                 where={"scope": {"$eq": scope}},  # type: ignore[dict-item]
-                include=[],
             )
-            if results["ids"]:
-                self._collection.delete(ids=results["ids"])
         except Exception as exc:
             logger.debug("Failed to reset memory scope %s: %s", scope, exc)
 
     def _delete_by_key(self, key: str, scope: MemoryScope) -> None:
         try:
-            results = self._collection.get(
+            self._collection.delete(
                 where={"$and": [{"scope": {"$eq": scope}}, {"key": {"$eq": key}}]},  # type: ignore[dict-item]
-                include=[],
             )
-            if results["ids"]:
-                self._collection.delete(ids=results["ids"])
         except Exception as exc:
             logger.debug("Failed to delete memory key %s in scope %s: %s", key, scope, exc)
