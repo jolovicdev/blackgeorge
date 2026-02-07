@@ -1,4 +1,4 @@
-from blackgeorge.tools.base import Tool, ToolResult
+from blackgeorge.tools.base import Tool, ToolPostHook, ToolPreHook, ToolResult
 from blackgeorge.tools.decorators import tool
 from blackgeorge.tools.execution import execute_tool
 from blackgeorge.tools.mcp import MCPToolProvider
@@ -9,6 +9,8 @@ Toolkit = Toolbelt
 __all__ = [
     "MCPToolProvider",
     "Tool",
+    "ToolPostHook",
+    "ToolPreHook",
     "ToolResult",
     "Toolbelt",
     "Toolkit",

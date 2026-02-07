@@ -24,18 +24,6 @@ export AZURE_API_BASE="https://your-resource.openai.azure.com"
 export AZURE_API_VERSION="2023-07-01-preview"
 ```
 
-### Streaming control
-
-Control whether streaming is enabled by default:
-
-```bash
-# Enable streaming (default: enabled by desk if allowed)
-export BLACKGEORGE_STREAM="1"
-
-# Disable streaming
-export BLACKGEORGE_STREAM="0"
-```
-
 ### Example changes preservation
 
 For the coding agent example, control whether file changes are preserved:
@@ -211,17 +199,27 @@ workforce = Workforce(
 
 ### Managed mode
 
-In managed mode, the manager worker selects which worker handles each job. The default reducer concatenates content and collects data per worker.
+In managed mode, a manager worker selects one worker, and the selected worker's report is returned.
+The `reducer` is not used in managed mode.
 
 ### Collaborate mode
 
 In collaborate mode, all workers run sequentially. Provide a custom reducer to control how reports are combined:
 
 ```python
-def custom_reducer(reports):
-    combined_content = "\n\n".join(r.content for r in reports)
-    # Custom logic here
-    return combined_content
+from blackgeorge import Report
+
+def custom_reducer(reports: list[Report]) -> Report:
+    combined_content = "\n\n".join(r.content or "" for r in reports)
+    merged_errors = [error for report in reports for error in report.errors]
+    return reports[0].model_copy(
+        update={
+            "status": "failed" if merged_errors else "completed",
+            "content": combined_content,
+            "errors": merged_errors,
+            "pending_action": None,
+        }
+    )
 
 workforce = Workforce(
     workers=[w1, w2],
@@ -239,7 +237,6 @@ Module-level constants control context summarization behavior in `src/blackgeorg
 | `SUMMARY_CHUNK_TOKENS` | 2000 | Target token count for summarization chunks |
 | `SUMMARY_TAIL_MESSAGES` | 4 | Number of recent messages to keep unsummarized |
 | `SUMMARY_ATTEMPT_LIMIT` | 2 | Maximum summarization attempts before failing |
-| `CONTEXT_SUMMARY_MAX_ATTEMPTS` | 2 | Maximum context summary retries |
 | `SUMMARY_MAX_OUTPUT_TOKENS` | 800 | Maximum tokens in summary output |
 
 These constants affect how workers handle context length errors when `respect_context_window=True`.
@@ -289,12 +286,20 @@ Tools accept several configuration options:
 ```python
 from blackgeorge.tools import tool
 
+def pre_hook(call):
+    print(f"calling {call.name}")
+
+def post_hook(call, result):
+    print(f"{call.name} done: {result.error is None}")
+
 @tool(
     name="my_tool",
     description="Does something useful",
     requires_confirmation=False,
     requires_user_input=False,
     external_execution=False,
+    pre=(pre_hook,),
+    post=(post_hook,),
     confirmation_prompt="Proceed?",
     user_input_prompt="Enter value:",
     timeout=30.0,
@@ -314,8 +319,11 @@ def my_function(param: str) -> str:
 | `requires_confirmation` | bool | False | Requires user confirmation before execution |
 | `requires_user_input` | bool | False | Requires user input before execution |
 | `external_execution` | bool | False | Mark as external tool |
+| `pre` | tuple[ToolPreHook, ...] | () | Pre-execution hooks |
+| `post` | tuple[ToolPostHook, ...] | () | Post-execution hooks |
 | `confirmation_prompt` | str | Auto-generated | Custom confirmation prompt |
 | `user_input_prompt` | str | Auto-generated | Custom input prompt |
+| `input_key` | str | None | Field name to receive resume user input (default key: `user_input`) |
 | `timeout` | float | None | Execution timeout in seconds |
 | `retries` | int | 0 | Number of retry attempts |
 | `retry_delay` | float | 1.0 | Delay between retries (exponential backoff) |
@@ -329,7 +337,7 @@ from blackgeorge.memory import VectorMemoryStore
 
 store = VectorMemoryStore(
     path="/path/to/db",
-    chunk_size=4000,
+    chunk_size=8000,
     chunk_overlap=200,
 )
 ```
@@ -337,7 +345,7 @@ store = VectorMemoryStore(
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `path` | str | Required | Storage path for ChromaDB |
-| `chunk_size` | int | 4000 | Chunk size for long documents |
+| `chunk_size` | int | 8000 | Chunk size for long documents |
 | `chunk_overlap` | int | 200 | Overlap between chunks |
 
 ## Run store configuration
@@ -347,20 +355,24 @@ store = VectorMemoryStore(
 Implement the `RunStore` interface:
 
 ```python
-from blackgeorge.store import RunStore
+from typing import Any
+
+from blackgeorge.core.event import Event
+from blackgeorge.core.types import RunStatus
+from blackgeorge.store import RunRecord, RunState, RunStore
 
 class CustomRunStore(RunStore):
-    def create_run(self, run_id: str, input_payload: dict) -> None:
+    def create_run(self, run_id: str, input_payload: Any) -> None:
         # Implementation
         pass
 
     def update_run(
         self,
         run_id: str,
-        status: str,
+        status: RunStatus,
         output: str | None,
-        output_json: dict | None,
-        state: dict,
+        output_json: Any | None,
+        state: RunState | None,
     ) -> None:
         # Implementation
         pass
@@ -391,10 +403,11 @@ from blackgeorge import Desk
 bus = EventBus()
 
 # Subscribe to events before passing to desk
-def log_all_events(event):
+def log_events(event):
     print(f"{event.type}: {event.payload}")
 
-bus.subscribe("*", log_all_events)
+for event_type in ("run.started", "run.completed", "run.failed"):
+    bus.subscribe(event_type, log_events)
 
 desk = Desk(event_bus=bus)
 ```
@@ -406,33 +419,43 @@ desk = Desk(event_bus=bus)
 Implement the `BaseModelAdapter` interface:
 
 ```python
-from blackgeorge.adapters.base import BaseModelAdapter
+from typing import Any
+
+from blackgeorge.adapters.base import BaseModelAdapter, ModelResponse
 
 class CustomAdapter(BaseModelAdapter):
     def complete(
         self,
+        *,
         model: str,
-        messages: list[dict],
-        tools: list[dict] | None,
-        tool_choice: str | None,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        tool_choice: str | dict[str, Any] | None,
         temperature: float | None,
         max_tokens: int | None,
         stream: bool,
-        stream_options: dict | None,
+        stream_options: dict[str, Any] | None,
+        thinking: dict[str, Any] | None = None,
+        drop_params: bool | None = None,
+        extra_body: dict[str, Any] | None = None,
     ) -> ModelResponse:
         # Implementation
         pass
 
     async def acomplete(
         self,
+        *,
         model: str,
-        messages: list[dict],
-        tools: list[dict] | None,
-        tool_choice: str | None,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        tool_choice: str | dict[str, Any] | None,
         temperature: float | None,
         max_tokens: int | None,
         stream: bool,
-        stream_options: dict | None,
+        stream_options: dict[str, Any] | None,
+        thinking: dict[str, Any] | None = None,
+        drop_params: bool | None = None,
+        extra_body: dict[str, Any] | None = None,
     ) -> ModelResponse:
         # Implementation
         pass
@@ -445,6 +468,8 @@ desk = Desk(adapter=CustomAdapter())
 Blackgeorge uses the `StructuredLogger` for JSON-formatted logs:
 
 ```python
+import logging
+
 from blackgeorge.logging import get_logger
 
 logger = get_logger("my_app", level=logging.INFO)
@@ -465,8 +490,7 @@ See [Logging](logging.md) for more details.
 | `AZURE_API_KEY` | Azure OpenAI API key |
 | `AZURE_API_BASE` | Azure OpenAI endpoint |
 | `AZURE_API_VERSION` | Azure API version |
-| `BLACKGEORGE_STREAM` | Enable/disable streaming ("1" or "0") |
-| `PRESERVE_EXAMPLE_CHANGES` | Preserve example file changes ("1") |
+| `PRESERVE_EXAMPLE_CHANGES` | Preserve coding-agent example file changes ("1") |
 
 ## Configuration best practices
 

@@ -158,7 +158,8 @@ If you already have a running event loop, use `arun()` instead of `run()`.
 
 ## Streaming responses
 
-The `stream_run()` and `astream_run()` methods yield events during execution, useful for real-time token display or progress tracking:
+The `stream_run()` and `astream_run()` methods run with streaming enabled and then yield the
+collected events from the completed report:
 
 ```python
 # Sync streaming
@@ -183,7 +184,7 @@ for event in report.events:
         print(event.payload["token"], end="")
 ```
 
-Events are only collected when `stream=True`. Without streaming, `report.events` contains lifecycle events only (started, completed, etc.).
+`report.events` includes all events emitted during the run. `stream.token` events are present only when streaming is enabled and the run is stream-eligible.
 If the provider emits `reasoning_content` or `thinking_blocks` deltas during streaming, they are collected into `report.reasoning_content` and the assistant message history.
 
 ## Thinking models

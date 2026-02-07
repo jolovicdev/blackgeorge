@@ -37,9 +37,9 @@ desk = Desk(
 
 ## Memory integration
 
-If you pass a `memory_store`, the desk applies simple read/write behavior for workers:
+The desk applies simple read/write memory behavior for workers:
 
-- Before a worker run, it reads `context` from the store using `worker.memory_scope` and prepends it as a system message.
+- Before a worker run, it reads `context` from the store using `worker.memory_scope` and inserts it as a system message after any existing leading system messages.
 - After a completed run, it writes `last_output` (structured data or content) using the same scope.
 
 This is intentionally minimal so you can build your own memory workflows on top.

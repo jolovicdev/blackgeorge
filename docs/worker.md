@@ -37,6 +37,7 @@ If the model returns tool calls, the worker will execute tools or pause for conf
 - requires_user_input: the run pauses and waits for a string input
 
 When a tool is paused, the worker returns a `Report` with `status="paused"` and a `PendingAction`.
+Paused turns emit `worker.paused` events instead of `worker.completed`.
 
 When a model response includes multiple tool calls in the same turn, the worker executes them in
 parallel and records tool results in the original call order. If a tool requires confirmation or
@@ -104,6 +105,7 @@ if report.status == "paused":
 ```
 
 Confirmation actions treat truthy values as acceptance. If you pass a falsy value for confirmation, the tool result will be an error with message "Tool execution declined".
+Declined confirmations emit a `tool.failed` event with that error.
 
 In async applications, use `desk.arun()` and `desk.aresume()`.
 

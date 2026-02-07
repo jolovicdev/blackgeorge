@@ -5,7 +5,7 @@ from contextlib import suppress
 from datetime import datetime
 from typing import Any
 
-import litellm
+from litellm.cost_calculator import completion_cost
 
 
 def _compute_latency_ms(
@@ -90,7 +90,7 @@ def emit_llm_completed(model: str, response: Any) -> None:
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", message="Pydantic serializer warnings")
         with suppress(Exception):
-            cost = litellm.completion_cost(completion_response=response)
+            cost = completion_cost(completion_response=response)
 
     payload: dict[str, Any] = {
         "model": model,

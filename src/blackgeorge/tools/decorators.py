@@ -1,7 +1,7 @@
 from collections.abc import Callable
 from typing import Any
 
-from blackgeorge.tools.base import Tool
+from blackgeorge.tools.base import Tool, ToolPostHook, ToolPreHook
 from blackgeorge.tools.schema import build_input_model, build_schema
 
 
@@ -11,6 +11,8 @@ def tool(
     requires_confirmation: bool = False,
     requires_user_input: bool = False,
     external_execution: bool = False,
+    pre: tuple[ToolPreHook, ...] = (),
+    post: tuple[ToolPostHook, ...] = (),
     confirmation_prompt: str | None = None,
     user_input_prompt: str | None = None,
     input_key: str | None = None,
@@ -32,6 +34,8 @@ def tool(
             requires_confirmation=requires_confirmation,
             requires_user_input=requires_user_input,
             external_execution=external_execution,
+            pre=pre,
+            post=post,
             confirmation_prompt=confirmation_prompt,
             user_input_prompt=user_input_prompt,
             input_key=input_key,

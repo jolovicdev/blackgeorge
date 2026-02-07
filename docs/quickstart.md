@@ -8,10 +8,6 @@ This guide gets you from zero to a running worker quickly.
 uv add blackgeorge
 ```
 
-```
-pip install blackgeorge
-```
-
 For development setup, see `development.md`.
 
 ## Provider setup

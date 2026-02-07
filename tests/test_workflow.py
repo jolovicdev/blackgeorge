@@ -96,6 +96,36 @@ def test_flow_pause_resume_multi_step() -> None:
     assert "step-two" in resumed.content
 
 
+def test_unregistered_flow_resume_updates_failed_state() -> None:
+    @tool(requires_confirmation=True)
+    def risky(action: str) -> str:
+        return f"ok:{action}"
+
+    responses = [
+        ModelResponse(
+            content=None,
+            tool_calls=[ToolCall(id="1", name="risky", arguments={"action": "go"})],
+            usage={},
+            raw={},
+        )
+    ]
+    desk = Desk(model="fake", adapter=FakeAdapter(responses), run_store=InMemoryRunStore())
+    worker = Worker(name="Worker", tools=[risky], model="fake")
+    flow = desk.flow([Step(worker)])
+
+    report = flow.run(Job(input="run"))
+    assert report.status == "paused"
+    desk.unregister_flow_run(report.run_id)
+
+    resumed = desk.resume(report, True)
+    assert resumed.status == "failed"
+    assert "Flow not registered" in resumed.errors
+    record = desk.run_store.get_run(report.run_id)
+    assert record is not None
+    assert record.status == "failed"
+    assert any(event.type == "run.failed" for event in desk.run_store.get_events(report.run_id))
+
+
 def test_flow_arun_uses_async_adapter() -> None:
     responses = [ModelResponse(content="async", tool_calls=[], usage={}, raw={})]
     desk = Desk(model="fake", adapter=AsyncOnlyAdapter(responses), run_store=InMemoryRunStore())

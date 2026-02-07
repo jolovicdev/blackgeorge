@@ -1,6 +1,6 @@
 # Tool Hooks
 
-Tool hooks allow you to execute custom logic before and after tool execution. Use hooks for logging, validation, caching, monitoring, or modifying tool behavior.
+Tool hooks allow you to execute custom logic before and after tool execution. Use hooks for logging, validation, policy checks, and monitoring.
 
 ## Hook types
 
@@ -36,7 +36,6 @@ A pre-hook can:
 - Inspect the tool call
 - Log metadata
 - Validate arguments
-- Return a modified result (advanced)
 
 ### Pre-hook examples
 
@@ -79,13 +78,12 @@ from blackgeorge.tools import tool
 ALLOWED_USERS = {"admin", "supervisor"}
 
 def check_permission(call):
-    # Assume user context is passed via metadata
-    user = call.metadata.get("user", "anonymous")
+    user = call.arguments.get("requested_by", "anonymous")
     if user not in ALLOWED_USERS:
         raise PermissionError(f"User {user} not allowed to call {call.name}")
 
 @tool(pre=(check_permission,), requires_confirmation=True)
-def delete_file(file_path: str) -> str:
+def delete_file(file_path: str, requested_by: str) -> str:
     import os
     os.remove(file_path)
     return f"Deleted {file_path}"
@@ -120,7 +118,6 @@ ToolPostHook = Callable[[ToolCall, ToolResult], Any]
 
 A post-hook can:
 - Log results
-- Modify the result content
 - Add metrics
 - Trigger side effects
 - Inspect error conditions
@@ -151,19 +148,23 @@ def fetch_data(url: str) -> str:
     return requests.get(url).text
 ```
 
-#### Result modification
+#### Result enrichment (side effects)
 
 ```python
-from blackgeorge.tools import tool, ToolResult
+from datetime import datetime
 
-def add_timestamp(call, result):
+from blackgeorge.tools import tool
+
+result_audit = {}
+
+def record_timestamp(call, result):
     if result.content:
-        from datetime import datetime
-        timestamped = f"[{datetime.now().isoformat()}] {result.content}"
-        # Note: This doesn't modify the original result since ToolResult is frozen
-        # To actually modify, you'd need to handle this differently
+        result_audit[call.id] = {
+            "recorded_at": datetime.now().isoformat(),
+            "content_preview": result.content[:80],
+        }
 
-@tool(post=(add_timestamp,))
+@tool(post=(record_timestamp,))
 def get_status() -> str:
     return "OK"
 ```
@@ -207,14 +208,14 @@ def multiply(a: int, b: int) -> int:
 
 ## Async hooks
 
-Hooks work with both sync and async tools:
+Async hooks are supported in async tool execution paths:
 
 ```python
 import asyncio
 from blackgeorge.tools import tool
 
 async def async_pre_hook(call):
-    await asyncio.sleep(0.1)  # Simulate async work
+    await asyncio.sleep(0.1)
     print(f"Async pre-hook for {call.name}")
 
 async def async_post_hook(call, result):
@@ -292,9 +293,9 @@ def risky_operation(value: int) -> int:
 from blackgeorge.tools import tool
 
 def conditional_pre(call):
-    # Only log for specific tools
+    actor = call.arguments.get("requested_by", "unknown")
     if call.name.startswith("admin_"):
-        print(f"Admin tool {call.name} called by {call.metadata.get('user')}")
+        print(f"Admin tool {call.name} called by {actor}")
 
 @tool(pre=(conditional_pre,))
 def admin_delete_user(user_id: str) -> str:
@@ -320,23 +321,25 @@ def flaky_operation(value: str) -> str:
     return value
 ```
 
-#### Caching with hooks
+#### Cache telemetry with hooks
 
 ```python
-from functools import lru_cache
 from blackgeorge.tools import tool
 
-cache = {}
+cache_stats = {"hits": 0, "misses": 0}
+cache = set()
 
 def cache_pre(call):
-    key = (call.name, frozenset(call.arguments.items()))
+    key = f"{call.name}:{frozenset(call.arguments.items())}"
     if key in cache:
-        # Return cached result
-        return cache[key]
+        cache_stats["hits"] += 1
+    else:
+        cache_stats["misses"] += 1
 
 def cache_post(call, result):
-    key = (call.name, frozenset(call.arguments.items()))
-    cache[key] = result
+    if result.error is None:
+        key = f"{call.name}:{frozenset(call.arguments.items())}"
+        cache.add(key)
 
 @tool(pre=(cache_pre,), post=(cache_post,))
 def expensive_computation(n: int) -> int:
@@ -383,23 +386,23 @@ def process(value: int) -> int:
 # This will fail with ValueError if value < 0
 ```
 
-Exceptions in post-hooks are logged but don't affect the tool result:
+Exceptions in post-hooks propagate and fail tool execution:
 
 ```python
 def failing_post_hook(call, result):
-    raise Exception("This error is logged but doesn't affect the result")
+    raise Exception("Post-hook failure")
 
 @tool(post=(failing_post_hook,))
 def my_tool(value: str) -> str:
-    return value  # This still succeeds
+    return value
 ```
 
 ## Best practices
 
 1. **Keep hooks fast**: Hooks run synchronously, so avoid blocking operations
 2. **Use hooks for cross-cutting concerns**: Logging, metrics, validation
-3. **Don't modify tool results**: ToolResult is frozen (immutable)
-4. **Handle exceptions in post-hooks**: Errors in post-hooks are logged but don't fail the tool
+3. **Don't rely on hook return values**: Pre-hook returns are ignored
+4. **Handle exceptions in post-hooks**: Unhandled post-hook errors fail tool execution
 5. **Use closures for state**: Maintain hook-specific state with function closures or classes
 6. **Chain hooks carefully**: Order matters when using multiple hooks
 7. **Consider async for I/O**: Use async hooks for network or database operations

@@ -1,11 +1,12 @@
 from typing import Any
 
 import litellm
+from litellm.cost_calculator import completion_cost
 
 
 def calculate_cost(response: Any) -> float | None:
     try:
-        return litellm.completion_cost(completion_response=response)
+        return completion_cost(completion_response=response)
     except Exception:
         return None
 
