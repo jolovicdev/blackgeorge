@@ -7,10 +7,13 @@ from pydantic import BaseModel
 
 from blackgeorge.adapters.base import BaseModelAdapter, ModelResponse
 from blackgeorge.core.job import Job
+from blackgeorge.core.message import Message
+from blackgeorge.core.report import Report
 from blackgeorge.core.tool_call import ToolCall
 from blackgeorge.desk import Desk
 from blackgeorge.memory.base import MemoryScope, MemoryStore
 from blackgeorge.store.in_memory import InMemoryRunStore
+from blackgeorge.store.state import RunState
 from blackgeorge.tools import tool
 from blackgeorge.worker import Worker
 from blackgeorge.worker_messages import replace_tool_call, structured_content
@@ -165,6 +168,71 @@ class StructuredAdapter(BaseModelAdapter):
         return response_schema(answer="ok")
 
 
+class ToolThenStructuredContextAdapter(BaseModelAdapter):
+    def __init__(self) -> None:
+        self.acomplete_calls = 0
+        self.structured_calls = 0
+
+    def complete(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        tool_choice: str | dict[str, Any] | None,
+        temperature: float | None,
+        max_tokens: int | None,
+        stream: bool,
+        stream_options: dict[str, Any] | None,
+        thinking: dict[str, Any] | None = None,
+        drop_params: bool | None = None,
+        extra_body: dict[str, Any] | None = None,
+    ) -> ModelResponse:
+        raise RuntimeError("sync path not used")
+
+    async def acomplete(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        tool_choice: str | dict[str, Any] | None,
+        temperature: float | None,
+        max_tokens: int | None,
+        stream: bool,
+        stream_options: dict[str, Any] | None,
+        thinking: dict[str, Any] | None = None,
+        drop_params: bool | None = None,
+        extra_body: dict[str, Any] | None = None,
+    ) -> ModelResponse:
+        self.acomplete_calls += 1
+        if self.acomplete_calls == 1:
+            return ModelResponse(
+                content=None,
+                tool_calls=[ToolCall(id="tool-1", name="echo", arguments={"text": "hello"})],
+                usage={},
+                raw={},
+            )
+        if self.acomplete_calls == 2:
+            return ModelResponse(content="after-tool", tool_calls=[], usage={}, raw={})
+        if self.acomplete_calls == 3:
+            return ModelResponse(content="summary", tool_calls=[], usage={}, raw={})
+        return ModelResponse(content="after-summary", tool_calls=[], usage={}, raw={})
+
+    async def astructured_complete(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, Any]],
+        response_schema: Any,
+        retries: int,
+    ) -> Any:
+        self.structured_calls += 1
+        if self.structured_calls == 1:
+            raise RuntimeError("context length exceeded")
+        return response_schema(answer="ok")
+
+
 class AnswerModel(BaseModel):
     answer: str
 
@@ -280,6 +348,65 @@ def test_pause_and_resume_confirmation() -> None:
     assert resumed.content == "finished"
 
 
+def test_pause_emits_worker_paused_not_completed() -> None:
+    @tool(requires_confirmation=True)
+    def risky(action: str) -> str:
+        return f"ok:{action}"
+
+    responses = [
+        ModelResponse(
+            content=None,
+            tool_calls=[ToolCall(id="1", name="risky", arguments={"action": "go"})],
+            usage={},
+            raw={},
+        )
+    ]
+    desk = Desk(model="fake", adapter=FakeAdapter(responses), run_store=InMemoryRunStore())
+    worker = Worker(name="Worker", tools=[risky], model="fake")
+    event_types: list[str] = []
+
+    def capture(event: Any) -> None:
+        event_types.append(event.type)
+
+    desk.event_bus.subscribe("worker.paused", capture)
+    desk.event_bus.subscribe("worker.completed", capture)
+    report = desk.run(worker, Job(input="run"))
+    assert report.status == "paused"
+    assert "worker.paused" in event_types
+    assert "worker.completed" not in event_types
+
+
+def test_confirmation_decline_emits_tool_failed() -> None:
+    @tool(requires_confirmation=True)
+    def risky(action: str) -> str:
+        return f"ok:{action}"
+
+    responses = [
+        ModelResponse(
+            content=None,
+            tool_calls=[ToolCall(id="1", name="risky", arguments={"action": "go"})],
+            usage={},
+            raw={},
+        ),
+        ModelResponse(content="done", tool_calls=[], usage={}, raw={}),
+    ]
+    desk = Desk(model="fake", adapter=FakeAdapter(responses), run_store=InMemoryRunStore())
+    worker = Worker(name="Worker", tools=[risky], model="fake")
+    tool_failed_payloads: list[dict[str, Any]] = []
+
+    def on_tool_failed(event: Any) -> None:
+        tool_failed_payloads.append(event.payload)
+
+    desk.event_bus.subscribe("tool.failed", on_tool_failed)
+    report = desk.run(worker, Job(input="run"))
+    assert report.status == "paused"
+    resumed = desk.resume(report, False)
+    assert resumed.status == "completed"
+    assert any(
+        payload.get("error") == "Tool execution declined" for payload in tool_failed_payloads
+    )
+
+
 def test_unregister_worker_blocks_resume() -> None:
     @tool(requires_confirmation=True)
     def risky(action: str) -> str:
@@ -301,6 +428,10 @@ def test_unregister_worker_blocks_resume() -> None:
     resumed = desk.resume(report, True)
     assert resumed.status == "failed"
     assert "Worker not registered" in resumed.errors
+    record = desk.run_store.get_run(report.run_id)
+    assert record is not None
+    assert record.status == "failed"
+    assert any(event.type == "run.failed" for event in desk.run_store.get_events(report.run_id))
 
 
 def test_tools_override_resolves_by_name() -> None:
@@ -350,6 +481,22 @@ def test_context_window_summarization() -> None:
     assert report.status == "completed"
     assert report.content == "done"
     assert adapter.calls == 3
+    assert any(message.metadata.get("summary") for message in report.messages)
+
+
+def test_context_window_retry_after_tool_before_structured() -> None:
+    @tool()
+    def echo(text: str) -> str:
+        return text
+
+    adapter = ToolThenStructuredContextAdapter()
+    desk = Desk(model="fake", adapter=adapter, run_store=InMemoryRunStore())
+    worker = Worker(name="Worker", model="fake", tools=[echo])
+    report = desk.run(worker, Job(input="run", response_schema=AnswerModel))
+    assert report.status == "completed"
+    assert report.data.answer == "ok"
+    assert adapter.structured_calls == 2
+    assert adapter.acomplete_calls >= 4
     assert any(message.metadata.get("summary") for message in report.messages)
 
 
@@ -525,6 +672,100 @@ def test_memory_store_used_in_run() -> None:
     assert report.status == "completed"
     assert ("read", "context") in store.calls
     assert ("write", "last_output") in store.calls
+
+
+def test_memory_message_keeps_primary_system_message_first() -> None:
+    store = RecordingMemoryStore()
+    desk = Desk(
+        model="fake",
+        adapter=FakeAdapter([ModelResponse(content="done", tool_calls=[], usage={}, raw={})]),
+        run_store=InMemoryRunStore(),
+        memory_store=store,
+    )
+    worker = Worker(name="Worker", model="fake", instructions="Keep strict format")
+    job = Job(
+        input="run",
+        initial_messages=[
+            Message(role="system", content="Primary system"),
+            Message(role="user", content="history"),
+        ],
+    )
+    report = desk.run(worker, job)
+    assert report.status == "completed"
+    assert report.messages[0].role == "system"
+    assert "Primary system" in report.messages[0].content
+    assert "Keep strict format" in report.messages[0].content
+    assert report.messages[1].role == "system"
+    assert report.messages[1].content.startswith("Memory:\n")
+
+
+def test_resume_preserves_stream_flag_when_paused_again() -> None:
+    @tool(requires_confirmation=True)
+    def risky(action: str) -> str:
+        return f"ok:{action}"
+
+    responses = [
+        ModelResponse(
+            content=None,
+            tool_calls=[ToolCall(id="first", name="risky", arguments={"action": "one"})],
+            usage={},
+            raw={},
+        ),
+        ModelResponse(
+            content=None,
+            tool_calls=[ToolCall(id="second", name="risky", arguments={"action": "two"})],
+            usage={},
+            raw={},
+        ),
+    ]
+    desk = Desk(model="fake", adapter=FakeAdapter(responses), run_store=InMemoryRunStore())
+    worker = Worker(name="Worker", tools=[risky], model="fake")
+    first = desk.run(worker, Job(input="run"))
+    assert first.status == "paused"
+    second = desk.resume(first, True, stream=True)
+    assert second.status == "paused"
+    record = desk.run_store.get_run(first.run_id)
+    assert record is not None
+    assert record.state is not None
+    assert record.state.payload.get("stream") is True
+
+
+def test_resume_unknown_runner_type_updates_store() -> None:
+    desk = Desk(
+        model="fake",
+        adapter=FakeAdapter([ModelResponse(content="done", tool_calls=[], usage={}, raw={})]),
+        run_store=InMemoryRunStore(),
+    )
+    run_id = "run-unknown"
+    job = Job(input="run")
+    desk.run_store.create_run(run_id, job.model_dump(mode="json"))
+    state = RunState(
+        run_id=run_id,
+        status="paused",
+        runner_type="mystery",
+        runner_name="mystery",
+        job=job,
+    )
+    desk.run_store.update_run(run_id, "paused", None, None, state)
+    paused_report = Report(
+        run_id=run_id,
+        status="paused",
+        content=None,
+        data=None,
+        messages=[],
+        tool_calls=[],
+        metrics={},
+        events=[],
+        pending_action=None,
+        errors=[],
+    )
+    resumed = desk.resume(paused_report, True)
+    assert resumed.status == "failed"
+    assert "Unknown runner type" in resumed.errors
+    record = desk.run_store.get_run(run_id)
+    assert record is not None
+    assert record.status == "failed"
+    assert any(event.type == "run.failed" for event in desk.run_store.get_events(run_id))
 
 
 def test_replace_tool_call_missing_id_raises() -> None:

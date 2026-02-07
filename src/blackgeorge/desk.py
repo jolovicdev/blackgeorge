@@ -135,7 +135,11 @@ class Desk:
             content = json.dumps(memory_value, ensure_ascii=True, default=str)
         memory_message = Message(role="system", content=f"Memory:\n{content}")
         if job.initial_messages:
-            messages = [memory_message, *job.initial_messages]
+            messages = list(job.initial_messages)
+            insert_index = 0
+            while insert_index < len(messages) and messages[insert_index].role == "system":
+                insert_index += 1
+            messages.insert(insert_index, memory_message)
         else:
             messages = [memory_message]
         return job.model_copy(update={"initial_messages": messages})
@@ -324,7 +328,7 @@ class Desk:
         stream: bool | None = None,
     ) -> Report:
         record = self.run_store.get_run(report.run_id)
-        if record is None or record.state is None:
+        if record is None:
             failed = Report(
                 run_id=report.run_id,
                 status="failed",
@@ -339,29 +343,48 @@ class Desk:
                 errors=["No stored state"],
             )
             return failed
+        events = self.run_store.get_events(report.run_id)
+
+        def resume_failed(message: str) -> Report:
+            failed = Report(
+                run_id=report.run_id,
+                status="failed",
+                content=None,
+                data=None,
+                messages=report.messages,
+                tool_calls=report.tool_calls,
+                metrics=report.metrics,
+                events=events,
+                pending_action=None,
+                errors=[message],
+            )
+            self._emit(
+                events,
+                report.run_id,
+                "run.failed",
+                "desk",
+                {"errors": failed.errors},
+            )
+            self.run_store.update_run(
+                report.run_id,
+                "failed",
+                failed.content,
+                self._output_json(failed),
+                None,
+            )
+            return failed
+
+        if record.state is None:
+            return resume_failed("No stored state")
 
         state = record.state
         if state.runner_type == "flow":
             flow = self._flow_runs.get(report.run_id)
             if flow is None:
-                failed = Report(
-                    run_id=report.run_id,
-                    status="failed",
-                    content=None,
-                    reasoning_content=None,
-                    data=None,
-                    messages=report.messages,
-                    tool_calls=report.tool_calls,
-                    metrics=report.metrics,
-                    events=report.events,
-                    pending_action=None,
-                    errors=["Flow not registered"],
-                )
-                return failed
+                return resume_failed("Flow not registered")
             return flow.resume(report, decision_or_input, stream=stream)
         stream_enabled = stream if stream is not None else state.payload.get("stream", self.stream)
         stream_options = {"include_usage": True} if stream_enabled else None
-        events = self.run_store.get_events(report.run_id)
 
         def emit(event_type: str, source: str, payload: dict[str, Any]) -> None:
             self._emit(events, report.run_id, event_type, source, payload)
@@ -372,19 +395,7 @@ class Desk:
         if state.runner_type == "worker":
             worker = self._workers.get(state.runner_name)
             if worker is None:
-                failed = Report(
-                    run_id=report.run_id,
-                    status="failed",
-                    content=None,
-                    data=None,
-                    messages=report.messages,
-                    tool_calls=report.tool_calls,
-                    metrics=report.metrics,
-                    events=events,
-                    pending_action=None,
-                    errors=["Worker not registered"],
-                )
-                return failed
+                return resume_failed("Worker not registered")
             updated_report, updated_state = worker.resume(
                 adapter=self.adapter,
                 state=state,
@@ -404,19 +415,7 @@ class Desk:
         elif state.runner_type == "workforce":
             workforce = self._workforces.get(state.runner_name)
             if workforce is None:
-                failed = Report(
-                    run_id=report.run_id,
-                    status="failed",
-                    content=None,
-                    data=None,
-                    messages=report.messages,
-                    tool_calls=report.tool_calls,
-                    metrics=report.metrics,
-                    events=events,
-                    pending_action=None,
-                    errors=["Workforce not registered"],
-                )
-                return failed
+                return resume_failed("Workforce not registered")
             updated_report, updated_state = workforce.resume(
                 adapter=self.adapter,
                 state=state,
@@ -434,21 +433,10 @@ class Desk:
                 respect_context_window=self.respect_context_window,
             )
         else:
-            failed = Report(
-                run_id=report.run_id,
-                status="failed",
-                content=None,
-                data=None,
-                messages=report.messages,
-                tool_calls=report.tool_calls,
-                metrics=report.metrics,
-                events=events,
-                pending_action=None,
-                errors=["Unknown runner type"],
-            )
-            return failed
+            return resume_failed("Unknown runner type")
 
         if updated_state is not None and updated_report.status == "paused":
+            updated_state.payload["stream"] = stream_enabled
             self._emit(events, report.run_id, "run.paused", "desk", {})
             self.run_store.update_run(
                 report.run_id,

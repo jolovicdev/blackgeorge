@@ -196,6 +196,10 @@ def test_unregister_workforce_blocks_resume() -> None:
     resumed = desk.resume(report, True)
     assert resumed.status == "failed"
     assert "Workforce not registered" in resumed.errors
+    record = desk.run_store.get_run(report.run_id)
+    assert record is not None
+    assert record.status == "failed"
+    assert any(event.type == "run.failed" for event in desk.run_store.get_events(report.run_id))
 
 
 def test_managed_workforce_disables_manager_tools() -> None:
