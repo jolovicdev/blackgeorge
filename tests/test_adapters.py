@@ -1,5 +1,6 @@
 import threading
 import time
+from types import SimpleNamespace
 
 import instructor
 import litellm
@@ -104,6 +105,28 @@ def test_parse_tool_calls_with_dict_arguments() -> None:
     assert calls[0].error is None
 
 
+def test_parse_tool_calls_with_attribute_objects() -> None:
+    message = SimpleNamespace(
+        tool_calls=[
+            SimpleNamespace(
+                id="call_attr",
+                function=SimpleNamespace(
+                    name="test_tool",
+                    arguments='{"param1":"value1","param2":42}',
+                ),
+            )
+        ]
+    )
+
+    calls = _parse_tool_calls(message)
+
+    assert len(calls) == 1
+    assert calls[0].id == "call_attr"
+    assert calls[0].name == "test_tool"
+    assert calls[0].arguments == {"param1": "value1", "param2": 42}
+    assert calls[0].error is None
+
+
 def test_parse_tool_calls_generates_id_if_missing() -> None:
     message = {
         "tool_calls": [
@@ -121,6 +144,54 @@ def test_parse_tool_calls_generates_id_if_missing() -> None:
     assert len(calls) == 1
     assert calls[0].id is not None
     assert len(calls[0].id) > 0
+
+
+def test_parse_tool_calls_missing_name_sets_error() -> None:
+    message = {
+        "tool_calls": [
+            {
+                "id": "call_001",
+                "function": {
+                    "arguments": "{}",
+                },
+            }
+        ]
+    }
+
+    calls = _parse_tool_calls(message)
+
+    assert len(calls) == 1
+    assert calls[0].name == ""
+    assert calls[0].error is not None
+    assert "Missing tool name" in calls[0].error
+
+
+def test_parse_tool_calls_non_list_returns_empty() -> None:
+    message = {"tool_calls": {"id": "call_001"}}
+    calls = _parse_tool_calls(message)
+    assert calls == []
+
+
+def test_parse_tool_calls_unsupported_arguments_type_sets_error() -> None:
+    message = {
+        "tool_calls": [
+            {
+                "id": "call_001",
+                "function": {
+                    "name": "test_tool",
+                    "arguments": 123,
+                },
+            }
+        ]
+    }
+
+    calls = _parse_tool_calls(message)
+
+    assert len(calls) == 1
+    assert calls[0].name == "test_tool"
+    assert calls[0].arguments == {}
+    assert calls[0].error is not None
+    assert "Unsupported tool arguments type" in calls[0].error
 
 
 def test_instructor_client_pool_thread_safe(monkeypatch) -> None:
@@ -164,14 +235,15 @@ def test_litellm_parallel_tool_calls_enabled(monkeypatch) -> None:
     adapter = LiteLLMAdapter()
     captured: dict[str, object] = {}
 
-    def fake_supports(model: str) -> bool:
-        return True
-
     def fake_completion(**kwargs: object) -> dict[str, object]:
         captured.update(kwargs)
         return {"choices": [{"message": {"content": "ok", "tool_calls": []}}], "usage": {}}
 
-    monkeypatch.setattr(litellm, "supports_parallel_function_calling", fake_supports)
+    monkeypatch.setattr(
+        litellm,
+        "model_cost",
+        {"openai/gpt-5-nano": {"supports_parallel_function_calling": True}},
+    )
     monkeypatch.setattr(litellm, "completion", fake_completion)
 
     adapter.complete(
@@ -191,6 +263,136 @@ def test_litellm_parallel_tool_calls_enabled(monkeypatch) -> None:
     )
 
     assert captured.get("parallel_tool_calls") is True
+
+
+def test_litellm_marks_async_cleanup_as_configured(monkeypatch) -> None:
+    adapter = LiteLLMAdapter()
+    events: list[str] = []
+
+    def emit(event_type: str, source: str, payload: dict[str, object]) -> None:
+        events.append(event_type)
+
+    def fake_completion(**kwargs: object) -> dict[str, object]:
+        return {"choices": [{"message": {"content": "ok", "tool_calls": []}}], "usage": {}}
+
+    monkeypatch.setattr(litellm, "completion", fake_completion)
+
+    adapter.set_callback_context("run-cleanup-check", emit)
+    adapter.complete(
+        model="openai/gpt-5-nano",
+        messages=[{"role": "user", "content": "hi"}],
+        tools=None,
+        tool_choice=None,
+        temperature=None,
+        max_tokens=None,
+        stream=False,
+        stream_options=None,
+    )
+    adapter.clear_callback_context()
+
+    assert litellm.__dict__.get("_async_client_cleanup_registered") is True
+    assert "llm.completed" in events
+
+
+def test_litellm_omits_tool_params_when_tools_absent(monkeypatch) -> None:
+    adapter = LiteLLMAdapter()
+    captured: dict[str, object] = {}
+
+    def fake_completion(**kwargs: object) -> dict[str, object]:
+        captured.update(kwargs)
+        return {"choices": [{"message": {"content": "ok", "tool_calls": []}}], "usage": {}}
+
+    monkeypatch.setattr(litellm, "completion", fake_completion)
+
+    adapter.complete(
+        model="openai/gpt-5-nano",
+        messages=[{"role": "user", "content": "hi"}],
+        tools=None,
+        tool_choice="auto",
+        temperature=None,
+        max_tokens=None,
+        stream=False,
+        stream_options={"include_usage": True},
+    )
+
+    assert "tools" not in captured
+    assert "tool_choice" not in captured
+    assert "stream_options" not in captured
+
+
+def test_litellm_stream_emits_completed_after_consumption(monkeypatch) -> None:
+    adapter = LiteLLMAdapter()
+    events: list[str] = []
+    payloads: list[dict[str, object]] = []
+
+    def emit(event_type: str, source: str, payload: dict[str, object]) -> None:
+        events.append(event_type)
+        payloads.append(payload)
+
+    def fake_completion(**kwargs: object) -> object:
+        return iter(
+            [
+                {"choices": [{"delta": {"content": "hello"}}]},
+                {"choices": [{"delta": {}}], "usage": {"total_tokens": 7}},
+            ]
+        )
+
+    monkeypatch.setattr(litellm, "completion", fake_completion)
+    adapter.set_callback_context("run-1", emit)
+    stream = adapter.complete(
+        model="openai/gpt-5-nano",
+        messages=[{"role": "user", "content": "hi"}],
+        tools=None,
+        tool_choice=None,
+        temperature=None,
+        max_tokens=None,
+        stream=True,
+        stream_options={"include_usage": True},
+    )
+    list(stream)
+    adapter.clear_callback_context()
+
+    assert "llm.started" in events
+    assert "llm.completed" in events
+    completed_payload = payloads[events.index("llm.completed")]
+    assert completed_payload.get("total_tokens") == 7
+
+
+def test_litellm_stream_emits_failed_on_iteration_error(monkeypatch) -> None:
+    adapter = LiteLLMAdapter()
+    events: list[str] = []
+
+    def emit(event_type: str, source: str, payload: dict[str, object]) -> None:
+        events.append(event_type)
+
+    def failing_stream() -> object:
+        def iterator() -> object:
+            yield {"choices": [{"delta": {"content": "hello"}}]}
+            raise RuntimeError("stream exploded")
+
+        return iterator()
+
+    def fake_completion(**kwargs: object) -> object:
+        return failing_stream()
+
+    monkeypatch.setattr(litellm, "completion", fake_completion)
+    adapter.set_callback_context("run-2", emit)
+    stream = adapter.complete(
+        model="openai/gpt-5-nano",
+        messages=[{"role": "user", "content": "hi"}],
+        tools=None,
+        tool_choice=None,
+        temperature=None,
+        max_tokens=None,
+        stream=True,
+        stream_options={"include_usage": True},
+    )
+    with pytest.raises(RuntimeError, match="stream exploded"):
+        list(stream)
+    adapter.clear_callback_context()
+
+    assert "llm.started" in events
+    assert "llm.failed" in events
 
 
 def test_structured_complete_uses_response_format_base_model(monkeypatch) -> None:
@@ -377,3 +579,69 @@ def test_structured_complete_retry_floor(monkeypatch) -> None:
         )
 
     assert counter.calls == 4
+
+
+@pytest.mark.asyncio
+async def test_litellm_async_omits_tool_params_when_tools_absent(monkeypatch) -> None:
+    adapter = LiteLLMAdapter()
+    captured: dict[str, object] = {}
+
+    async def fake_acompletion(**kwargs: object) -> dict[str, object]:
+        captured.update(kwargs)
+        return {"choices": [{"message": {"content": "ok", "tool_calls": []}}], "usage": {}}
+
+    monkeypatch.setattr(litellm, "acompletion", fake_acompletion)
+
+    await adapter.acomplete(
+        model="openai/gpt-5-nano",
+        messages=[{"role": "user", "content": "hi"}],
+        tools=[],
+        tool_choice="required",
+        temperature=None,
+        max_tokens=None,
+        stream=False,
+        stream_options={"include_usage": True},
+    )
+
+    assert "tools" not in captured
+    assert "tool_choice" not in captured
+    assert "stream_options" not in captured
+
+
+@pytest.mark.asyncio
+async def test_litellm_async_stream_emits_completed_after_consumption(monkeypatch) -> None:
+    adapter = LiteLLMAdapter()
+    events: list[str] = []
+    payloads: list[dict[str, object]] = []
+
+    def emit(event_type: str, source: str, payload: dict[str, object]) -> None:
+        events.append(event_type)
+        payloads.append(payload)
+
+    async def stream_generator() -> object:
+        yield {"choices": [{"delta": {"content": "hello"}}]}
+        yield {"choices": [{"delta": {}}], "usage": {"total_tokens": 9}}
+
+    async def fake_acompletion(**kwargs: object) -> object:
+        return stream_generator()
+
+    monkeypatch.setattr(litellm, "acompletion", fake_acompletion)
+    adapter.set_callback_context("run-3", emit)
+    stream = await adapter.acomplete(
+        model="openai/gpt-5-nano",
+        messages=[{"role": "user", "content": "hi"}],
+        tools=None,
+        tool_choice=None,
+        temperature=None,
+        max_tokens=None,
+        stream=True,
+        stream_options={"include_usage": True},
+    )
+    async for _ in stream:
+        pass
+    adapter.clear_callback_context()
+
+    assert "llm.started" in events
+    assert "llm.completed" in events
+    completed_payload = payloads[events.index("llm.completed")]
+    assert completed_payload.get("total_tokens") == 9
