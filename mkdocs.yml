@@ -43,6 +43,7 @@ plugins:
           - collaboration.md
           - events.md
           - core-types.md
+          - multimodal.md
         Advanced Features:
           - storage.md
           - memory.md
@@ -82,6 +83,7 @@ nav:
   - Tool hooks: tool-hooks.md
   - Collaboration: collaboration.md
   - Events and streaming: events.md
+  - Multimodal: multimodal.md
   - Storage: storage.md
   - Memory: memory.md
   - Adapters: adapters.md

@@ -1,7 +1,7 @@
 import json
 from collections.abc import Callable
 from dataclasses import asdict, is_dataclass
-from typing import Any
+from typing import Any, cast
 
 from pydantic import BaseModel
 
@@ -25,9 +25,21 @@ def _json_payload(value: Any) -> Any:
     return value
 
 
-def render_input(value: Any) -> str:
+def _is_multimodal_content_blocks(value: Any) -> bool:
+    if not isinstance(value, list):
+        return False
+    if len(value) == 0:
+        return False
+    return all(isinstance(item, dict) and "type" in item for item in value)
+
+
+def render_input(value: Any) -> str | list[dict[str, Any]]:
     if isinstance(value, str):
         return value
+    if _is_multimodal_content_blocks(value):
+        payload = _json_payload(value)
+        if isinstance(payload, list):
+            return cast(list[dict[str, Any]], payload)
     return json.dumps(_json_payload(value), ensure_ascii=True, default=str)
 
 

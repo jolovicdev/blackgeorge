@@ -494,6 +494,7 @@ def test_context_window_retry_after_tool_before_structured() -> None:
     worker = Worker(name="Worker", model="fake", tools=[echo])
     report = desk.run(worker, Job(input="run", response_schema=AnswerModel))
     assert report.status == "completed"
+    assert report.data is not None
     assert report.data.answer == "ok"
     assert adapter.structured_calls == 2
     assert adapter.acomplete_calls >= 4
@@ -633,6 +634,7 @@ def test_structured_output_uses_adapter() -> None:
     worker = Worker(name="Worker", model="fake")
     report = desk.run(worker, Job(input="run", response_schema=AnswerModel))
     assert adapter.called is True
+    assert report.data is not None
     assert report.data.answer == "ok"
 
 
@@ -696,7 +698,8 @@ def test_memory_message_keeps_primary_system_message_first() -> None:
     assert "Primary system" in report.messages[0].content
     assert "Keep strict format" in report.messages[0].content
     assert report.messages[1].role == "system"
-    assert report.messages[1].content.startswith("Memory:\n")
+    content = report.messages[1].content
+    assert isinstance(content, str) and content.startswith("Memory:\n")
 
 
 def test_resume_preserves_stream_flag_when_paused_again() -> None:
