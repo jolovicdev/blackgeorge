@@ -50,6 +50,7 @@ desk = Desk(
     stream=False,
 
     # Structured output
+    structured_stream_mode="off",
     structured_output_retries=3,
 
     # Limits
@@ -91,13 +92,16 @@ Model names follow LiteLLM provider prefixes:
 
 Streaming occurs when:
 - Desk or desk.run() has `stream=True`
-- Worker has no tools for the job
 - No response schema is set
+- Or `structured_stream_mode="preview"` with a response schema
+
+On tool turns, streamed `stream.token` events contain tool argument deltas.
 
 ### Structured output
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
+| `structured_stream_mode` | str | "off" | Structured output mode: "off" (strict non-stream) or "preview" (stream tokens, then validate/fallback) |
 | `structured_output_retries` | int | 3 | Retries for structured output validation failures |
 
 ### Execution limits

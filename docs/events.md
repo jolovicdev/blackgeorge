@@ -191,8 +191,9 @@ await bus.aemit(event)
 `stream.token` emits only when all are true:
 
 - streaming enabled on desk/run
-- no tools for that turn
-- no response schema for that turn
+- no response schema for that turn, or `structured_stream_mode="preview"`
+
+On tool turns, `stream.token` payloads carry streamed tool argument deltas.
 
 ```python
 def on_token(event):

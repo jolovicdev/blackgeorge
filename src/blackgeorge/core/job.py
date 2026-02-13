@@ -1,5 +1,5 @@
 import importlib
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_serializer, field_validator
 
@@ -52,6 +52,7 @@ class Job(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
     initial_messages: list[Message] | None = None
     thinking: dict[str, Any] | None = None
+    structured_stream_mode: Literal["off", "preview"] | None = None
     drop_params: bool | None = None
     extra_body: dict[str, Any] | None = None
 

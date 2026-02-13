@@ -37,6 +37,17 @@ def test_render_input_serializes_non_multimodal_list() -> None:
     assert json.loads(rendered) == content
 
 
+def test_render_input_serializes_typed_dict_list_when_not_multimodal() -> None:
+    content = [
+        {"type": "event", "name": "click", "payload": {"id": "a1"}},
+        {"type": "event", "name": "submit", "payload": {"id": "b2"}},
+    ]
+
+    rendered = render_input(content)
+    assert isinstance(rendered, str)
+    assert json.loads(rendered) == content
+
+
 def test_multimodal_message_with_video() -> None:
     content = [
         {"type": "text", "text": "Summarize this video"},
@@ -126,6 +137,37 @@ def test_generate_image_uses_image_generation_response(monkeypatch) -> None:
     assert isinstance(result.data, dict)
     assert result.data["url"] == "https://example.com/generated.png"
     assert result.data["revised_prompt"] == "revised"
+
+
+def test_generate_image_redacts_b64_json_from_tool_content(monkeypatch) -> None:
+    large_b64 = "A" * 4096
+
+    class Image:
+        def __init__(self) -> None:
+            self.url = "https://example.com/generated.png"
+            self.b64_json = large_b64
+            self.revised_prompt = "revised"
+
+    class Response:
+        def __init__(self) -> None:
+            self.data = [Image()]
+
+    def fake_image_generation(**_kwargs):
+        return Response()
+
+    def fake_completion(**_kwargs):
+        raise AssertionError("completion fallback should not be called")
+
+    monkeypatch.setattr("litellm.image_generation", fake_image_generation)
+    monkeypatch.setattr("litellm.completion", fake_completion)
+
+    result = generate_image.callable(prompt="cat")
+    assert isinstance(result, ToolResult)
+    assert isinstance(result.data, dict)
+    assert result.data["b64_json"] == large_b64
+    assert result.content is not None
+    assert "[b64_json omitted]" in result.content
+    assert large_b64 not in result.content
 
 
 def test_generate_image_falls_back_to_chat_completion(monkeypatch) -> None:

@@ -30,7 +30,28 @@ def _is_multimodal_content_blocks(value: Any) -> bool:
         return False
     if len(value) == 0:
         return False
-    return all(isinstance(item, dict) and "type" in item for item in value)
+    known_type_fields: dict[str, tuple[str, ...]] = {
+        "text": ("text",),
+        "image_url": ("image_url",),
+        "video_url": ("video_url",),
+        "file": ("file",),
+        "audio_url": ("audio_url",),
+        "input_text": ("text",),
+        "input_image": ("image_url", "file_id"),
+        "input_audio": ("input_audio",),
+    }
+    for item in value:
+        if not isinstance(item, dict):
+            return False
+        block_type = item.get("type")
+        if not isinstance(block_type, str):
+            return False
+        required_fields = known_type_fields.get(block_type)
+        if required_fields is None:
+            return False
+        if not any(field in item for field in required_fields):
+            return False
+    return True
 
 
 def render_input(value: Any) -> str | list[dict[str, Any]]:

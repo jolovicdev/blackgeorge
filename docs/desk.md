@@ -12,6 +12,7 @@ desk = Desk(
     temperature=0.2,
     max_tokens=800,
     stream=False,
+    structured_stream_mode="off",
     structured_output_retries=3,
     max_iterations=10,
     max_tool_calls=20,
@@ -25,6 +26,7 @@ desk = Desk(
 - temperature: model temperature
 - max_tokens: max tokens for completion requests
 - stream: enables streaming when the worker is eligible
+- structured_stream_mode: "off" (strict structured output) or "preview" (stream preview tokens for schema jobs)
 - structured_output_retries: retries for structured output validation
 - max_iterations: max model turns per worker run
 - max_tool_calls: max tool calls per worker run
@@ -80,7 +82,10 @@ report = desk.run(worker, job, stream=True)
 report = await desk.arun(worker, job, stream=True)
 ```
 
-When `stream=True`, `report.events` contains `stream.token` events with incremental content.
+When `stream=True`, `report.events` contains `stream.token` events with incremental deltas for
+eligible turns. On tool turns, `stream.token` contains streamed tool argument deltas. Structured
+schema turns remain strict by default, unless
+`structured_stream_mode="preview"` is enabled.
 
 ## Running a workforce
 

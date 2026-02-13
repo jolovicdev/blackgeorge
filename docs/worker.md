@@ -72,10 +72,15 @@ If tools are present, the worker may call tools first and then request structure
 Streaming only happens when all of the following are true:
 
 - `Desk.stream` (or `desk.run(..., stream=True)`) is enabled
-- the worker has no tools for the job
 - no response schema is set
+- or a response schema is set and `structured_stream_mode="preview"`
 
-When streaming is enabled, the worker emits `stream.token` events.
+When streaming is enabled, the worker emits `stream.token` events. On tool turns, these tokens
+are streamed tool argument deltas.
+
+With `structured_stream_mode="preview"`, streamed tokens are preview output. The final `Report.data`
+is still validated against `response_schema`. If preview JSON is invalid, Blackgeorge falls back to
+strict structured completion before returning.
 
 ## Async usage
 

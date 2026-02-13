@@ -232,8 +232,8 @@ async def _acontext_retry(
     return ContextDecision(True, None)
 
 
-def _should_stream(stream: bool, tools: list[Tool], response_schema: Any | None) -> bool:
-    return stream and not tools and response_schema is None
+def _should_stream(stream: bool, _tools: list[Tool], response_schema: Any | None) -> bool:
+    return stream and response_schema is None
 
 
 def _tool_result_preview(result: ToolResult, limit: int) -> tuple[str | None, bool]:

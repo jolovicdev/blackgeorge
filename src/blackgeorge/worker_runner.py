@@ -1,7 +1,10 @@
 import asyncio
+import json
 import warnings
 from collections.abc import Callable, Iterable
 from typing import Any, cast
+
+from pydantic import BaseModel, TypeAdapter
 
 from blackgeorge.adapters.base import BaseModelAdapter, ModelResponse
 from blackgeorge.core.event import Event
@@ -13,6 +16,7 @@ from blackgeorge.store.state import RunState
 from blackgeorge.tools.base import Tool, ToolResult
 from blackgeorge.tools.execution import aexecute_tool
 from blackgeorge.tools.registry import Toolbelt
+from blackgeorge.utils import new_id
 from blackgeorge.worker_context import (
     aapply_context_summary,
     is_context_limit_error,
@@ -50,6 +54,97 @@ from blackgeorge.worker_runner_helpers import (
     _tool_event_payload,
 )
 from blackgeorge.worker_tools import resume_argument_key, update_arguments
+
+
+def _parse_structured_stream_json(response_schema: Any, content: str) -> Any:
+    if isinstance(response_schema, TypeAdapter):
+        return response_schema.validate_json(content)
+    if isinstance(response_schema, type) and issubclass(response_schema, BaseModel):
+        return response_schema.model_validate_json(content)
+    return TypeAdapter(response_schema).validate_json(content)
+
+
+def _stream_value(value: Any, key: str, default: Any = None) -> Any:
+    if isinstance(value, dict):
+        return value.get(key, default)
+    return getattr(value, key, default)
+
+
+def _append_tool_error(current: str | None, message: str) -> str:
+    return message if current is None else f"{current}; {message}"
+
+
+def _is_stream_unsupported_error(exc: Exception) -> bool:
+    if isinstance(exc, NotImplementedError):
+        return True
+    message = f"{type(exc).__name__}: {exc}".lower()
+    mentions_stream = "stream" in message or "streaming" in message
+    unsupported_markers = (
+        "unsupported",
+        "not support",
+        "not supported",
+        "not implemented",
+        "cannot stream",
+    )
+    return mentions_stream and any(marker in message for marker in unsupported_markers)
+
+
+def _chunk_tool_call_deltas(chunk: Any) -> tuple[list[Any], bool]:
+    choices = _stream_value(chunk, "choices", []) or []
+    if not choices:
+        return [], False
+    choice = choices[0]
+    delta = _stream_value(choice, "delta")
+    if delta is not None:
+        tool_calls = _stream_value(delta, "tool_calls")
+        if isinstance(tool_calls, list) and tool_calls:
+            return tool_calls, False
+    message = _stream_value(choice, "message")
+    if message is None:
+        return [], False
+    tool_calls = _stream_value(message, "tool_calls", []) or []
+    if isinstance(tool_calls, list):
+        return tool_calls, True
+    return [], False
+
+
+def _streamed_tool_calls(states: list[dict[str, Any]]) -> list[ToolCall]:
+    parsed: list[ToolCall] = []
+    for state in states:
+        error = cast(str | None, state.get("error"))
+        name_raw = state.get("name")
+        name = name_raw.strip() if isinstance(name_raw, str) else ""
+        if not name:
+            error = _append_tool_error(error, "Missing tool name")
+
+        arguments: dict[str, Any] = {}
+        arguments_obj = state.get("arguments_obj")
+        if isinstance(arguments_obj, dict):
+            arguments = dict(arguments_obj)
+        else:
+            argument_parts = state.get("arguments_parts")
+            argument_text = (
+                "".join(argument_parts) if isinstance(argument_parts, list) else ""
+            )
+            if argument_text:
+                try:
+                    parsed_arguments = json.loads(argument_text)
+                    if isinstance(parsed_arguments, dict):
+                        arguments = parsed_arguments
+                    else:
+                        error = _append_tool_error(
+                            error, "Tool arguments JSON must decode to object"
+                        )
+                except json.JSONDecodeError as exc:
+                    error = _append_tool_error(
+                        error,
+                        f"Invalid JSON in tool arguments: {exc}. Raw: {argument_text[:100]}",
+                    )
+
+        call_id_raw = state.get("id")
+        call_id = call_id_raw if isinstance(call_id_raw, str) and call_id_raw else new_id()
+        parsed.append(ToolCall(id=call_id, name=name, arguments=arguments, error=error))
+    return parsed
 
 
 class WorkerRunner:
@@ -178,6 +273,7 @@ class WorkerRunner:
         adapter: BaseModelAdapter,
         model: str,
         messages: list[Message],
+        tools: list[Tool],
         temperature: float | None,
         max_tokens: int | None,
         stream_options: dict[str, Any] | None,
@@ -195,8 +291,8 @@ class WorkerRunner:
                 stream = await adapter.acomplete(
                     model=model,
                     messages=messages_to_payload(messages),
-                    tools=None,
-                    tool_choice=None,
+                    tools=tool_schemas(tools) if tools else None,
+                    tool_choice="auto" if tools else None,
                     temperature=temperature,
                     max_tokens=max_tokens,
                     stream=True,
@@ -206,57 +302,187 @@ class WorkerRunner:
                     extra_body=extra_body,
                 )
             except NotImplementedError:
-                stream = await asyncio.to_thread(
-                    adapter.complete,
+                try:
+                    stream = await asyncio.to_thread(
+                        adapter.complete,
+                        model=model,
+                        messages=messages_to_payload(messages),
+                        tools=tool_schemas(tools) if tools else None,
+                        tool_choice="auto" if tools else None,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        stream=True,
+                        stream_options=stream_options,
+                        thinking=thinking,
+                        drop_params=drop_params,
+                        extra_body=extra_body,
+                    )
+                except Exception as exc:
+                    if _is_stream_unsupported_error(exc):
+                        return await self._acompletion(
+                            adapter=adapter,
+                            model=model,
+                            messages=messages,
+                            tools=tools,
+                            temperature=temperature,
+                            max_tokens=max_tokens,
+                            stream_options=stream_options,
+                            thinking=thinking,
+                            drop_params=drop_params,
+                            extra_body=extra_body,
+                            run_id=run_id,
+                            emit=emit,
+                        )
+                    raise
+            except Exception as exc:
+                if _is_stream_unsupported_error(exc):
+                    return await self._acompletion(
+                        adapter=adapter,
+                        model=model,
+                        messages=messages,
+                        tools=tools,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        stream_options=stream_options,
+                        thinking=thinking,
+                        drop_params=drop_params,
+                        extra_body=extra_body,
+                        run_id=run_id,
+                        emit=emit,
+                    )
+                raise
+            if isinstance(stream, ModelResponse):
+                return stream
+            is_async_stream = hasattr(stream, "__aiter__")
+            is_sync_stream = (
+                hasattr(stream, "__iter__")
+                and not isinstance(stream, (str, bytes, bytearray, dict))
+            )
+            if not is_async_stream and not is_sync_stream:
+                return await self._acompletion(
+                    adapter=adapter,
                     model=model,
-                    messages=messages_to_payload(messages),
-                    tools=None,
-                    tool_choice=None,
+                    messages=messages,
+                    tools=tools,
                     temperature=temperature,
                     max_tokens=max_tokens,
-                    stream=True,
                     stream_options=stream_options,
                     thinking=thinking,
                     drop_params=drop_params,
                     extra_body=extra_body,
+                    run_id=run_id,
+                    emit=emit,
                 )
             content_parts: list[str] = []
             reasoning_parts: list[str] = []
             thinking_blocks: list[dict[str, Any]] = []
+            tool_states: list[dict[str, Any]] = []
+            keyed_states: dict[tuple[str, Any], dict[str, Any]] = {}
             usage: dict[str, Any] = {}
+
+            def process_chunk(chunk: Any) -> None:
+                nonlocal usage
+                token = chunk_content(chunk)
+                if token:
+                    content_parts.append(token)
+                    on_token(token)
+
+                tool_deltas, from_message_payload = _chunk_tool_call_deltas(chunk)
+                for position, tool_delta in enumerate(tool_deltas):
+                    index_value = _stream_value(tool_delta, "index")
+                    call_id_value = _stream_value(tool_delta, "id")
+                    stable_keys: list[tuple[str, Any]] = []
+                    if isinstance(index_value, int):
+                        stable_keys.append(("index", index_value))
+                    if isinstance(call_id_value, str) and call_id_value:
+                        stable_keys.append(("id", call_id_value))
+                    fallback_key = ("position", position)
+                    lookup_keys = stable_keys or [fallback_key]
+
+                    state: dict[str, Any] | None = None
+                    for key in lookup_keys:
+                        existing = keyed_states.get(key)
+                        if existing is not None:
+                            state = existing
+                            break
+                    if state is None:
+                        state = {
+                            "id": None,
+                            "name": "",
+                            "arguments_parts": [],
+                            "arguments_obj": None,
+                            "error": None,
+                        }
+                        tool_states.append(state)
+                    store_keys = stable_keys or [fallback_key]
+                    for key in store_keys:
+                        keyed_states[key] = state
+
+                    if isinstance(call_id_value, str) and call_id_value:
+                        state["id"] = call_id_value
+
+                    function = _stream_value(tool_delta, "function")
+                    name_value = _stream_value(function, "name")
+                    if isinstance(name_value, str):
+                        name = name_value.strip()
+                        if name:
+                            existing_name = cast(str, state["name"])
+                            if not existing_name or name.startswith(existing_name):
+                                state["name"] = name
+                            elif not existing_name.startswith(name):
+                                state["name"] = f"{existing_name}{name}"
+
+                    arguments_value = _stream_value(function, "arguments")
+                    if isinstance(arguments_value, str):
+                        argument_parts = cast(list[str], state["arguments_parts"])
+                        if from_message_payload:
+                            previous_arguments = "".join(argument_parts)
+                            if previous_arguments != arguments_value:
+                                argument_parts.clear()
+                                argument_parts.append(arguments_value)
+                                if arguments_value:
+                                    on_token(arguments_value)
+                        else:
+                            argument_parts.append(arguments_value)
+                            if arguments_value:
+                                on_token(arguments_value)
+                    elif isinstance(arguments_value, dict):
+                        arguments_obj = state.get("arguments_obj")
+                        if isinstance(arguments_obj, dict):
+                            merged_arguments = dict(arguments_obj)
+                        else:
+                            merged_arguments = {}
+                        merged_arguments.update(arguments_value)
+                        state["arguments_obj"] = merged_arguments
+                        serialized = json.dumps(arguments_value, ensure_ascii=True)
+                        if serialized:
+                            on_token(serialized)
+                    elif arguments_value is not None:
+                        type_name = type(arguments_value).__name__
+                        state["error"] = _append_tool_error(
+                            cast(str | None, state.get("error")),
+                            f"Unsupported tool arguments type: {type_name}",
+                        )
+
+                reasoning = chunk_reasoning_content(chunk)
+                if reasoning:
+                    reasoning_parts.append(reasoning)
+                blocks = chunk_thinking_blocks(chunk)
+                if blocks:
+                    thinking_blocks.extend(blocks)
+                usage_chunk = chunk_usage(chunk)
+                if usage_chunk:
+                    usage = usage_chunk
+
             with warnings.catch_warnings():
                 warnings.filterwarnings("ignore", message="Pydantic serializer warnings")
                 try:
-                    if hasattr(stream, "__aiter__"):
+                    if is_async_stream:
                         async for chunk in stream:
-                            token = chunk_content(chunk)
-                            if token:
-                                content_parts.append(token)
-                                on_token(token)
-                            reasoning = chunk_reasoning_content(chunk)
-                            if reasoning:
-                                reasoning_parts.append(reasoning)
-                            blocks = chunk_thinking_blocks(chunk)
-                            if blocks:
-                                thinking_blocks.extend(blocks)
-                            usage_chunk = chunk_usage(chunk)
-                            if usage_chunk:
-                                usage = usage_chunk
+                            process_chunk(chunk)
                     else:
                         for chunk in cast(Iterable[Any], stream):
-                            token = chunk_content(chunk)
-                            if token:
-                                content_parts.append(token)
-                                on_token(token)
-                            reasoning = chunk_reasoning_content(chunk)
-                            if reasoning:
-                                reasoning_parts.append(reasoning)
-                            blocks = chunk_thinking_blocks(chunk)
-                            if blocks:
-                                thinking_blocks.extend(blocks)
-                            usage_chunk = chunk_usage(chunk)
-                            if usage_chunk:
-                                usage = usage_chunk
+                            process_chunk(chunk)
                 finally:
                     if hasattr(stream, "aclose"):
                         await stream.aclose()
@@ -266,7 +492,7 @@ class WorkerRunner:
                 content="".join(content_parts),
                 reasoning_content="".join(reasoning_parts) or None,
                 thinking_blocks=thinking_blocks or None,
-                tool_calls=[],
+                tool_calls=_streamed_tool_calls(tool_states),
                 usage=usage,
                 raw=stream,
             )
@@ -300,6 +526,7 @@ class WorkerRunner:
         tools = self._resolve_tools(job)
         allowed_tools = {tool.name: tool for tool in tools}
         response_schema = job.response_schema
+        structured_stream_mode = job.structured_stream_mode or "off"
         context_summaries = 0
         model_registered = litellm_model_registered(model_name)
 
@@ -311,6 +538,7 @@ class WorkerRunner:
                         adapter=adapter,
                         model=model_name,
                         messages=messages,
+                        tools=tools,
                         temperature=temperature,
                         max_tokens=max_tokens,
                         stream_options=stream_options,
@@ -351,6 +579,130 @@ class WorkerRunner:
                         return decision.report, None
                     context_summaries += 1
                     continue
+            elif (
+                stream
+                and response_schema is not None
+                and not tools
+                and structured_stream_mode == "preview"
+            ):
+                try:
+                    streamed = await self._astream_completion(
+                        adapter=adapter,
+                        model=model_name,
+                        messages=messages,
+                        tools=[],
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        stream_options=stream_options,
+                        on_token=lambda token: emit("stream.token", self.name, {"token": token}),
+                        thinking=job.thinking,
+                        drop_params=job.drop_params,
+                        extra_body=job.extra_body,
+                        run_id=run_id,
+                        emit=emit,
+                    )
+                except Exception as exc:
+                    if not is_context_limit_error(exc):
+                        raise
+                    decision = await _acontext_retry(
+                        run_id=run_id,
+                        worker_name=self.name,
+                        messages=messages,
+                        tool_calls=tool_calls,
+                        metrics=metrics,
+                        events=events,
+                        errors=errors,
+                        emit=emit,
+                        model_registered=model_registered,
+                        respect_context_window=respect_context_window,
+                        context_summaries=context_summaries,
+                        apply_summary=lambda: aapply_context_summary(
+                            adapter=adapter,
+                            model_name=model_name,
+                            messages=messages,
+                            temperature=temperature,
+                            metrics=metrics,
+                            emit=emit,
+                            worker_name=self.name,
+                            model_registered=model_registered,
+                        ),
+                    )
+                    if decision.report is not None:
+                        return decision.report, None
+                    context_summaries += 1
+                    continue
+
+                metrics["usage"] = streamed.usage
+                streamed_content = streamed.content or ""
+                try:
+                    data = _parse_structured_stream_json(response_schema, streamed_content)
+                except Exception:
+                    try:
+                        data = await self._astructured_completion(
+                            adapter=adapter,
+                            model=model_name,
+                            messages=messages,
+                            response_schema=response_schema,
+                            retries=structured_output_retries,
+                        )
+                    except Exception as exc:
+                        if is_context_limit_error(exc):
+                            decision = await _acontext_retry(
+                                run_id=run_id,
+                                worker_name=self.name,
+                                messages=messages,
+                                tool_calls=tool_calls,
+                                metrics=metrics,
+                                events=events,
+                                errors=errors,
+                                emit=emit,
+                                model_registered=model_registered,
+                                respect_context_window=respect_context_window,
+                                context_summaries=context_summaries,
+                                apply_summary=lambda: aapply_context_summary(
+                                    adapter=adapter,
+                                    model_name=model_name,
+                                    messages=messages,
+                                    temperature=temperature,
+                                    metrics=metrics,
+                                    emit=emit,
+                                    worker_name=self.name,
+                                    model_registered=model_registered,
+                                ),
+                            )
+                            if decision.report is not None:
+                                return decision.report, None
+                            context_summaries += 1
+                            continue
+                        return (
+                            _fail_report(
+                                run_id=run_id,
+                                worker_name=self.name,
+                                message=str(exc),
+                                messages=messages,
+                                tool_calls=tool_calls,
+                                metrics=metrics,
+                                events=events,
+                                errors=errors,
+                                emit=emit,
+                            ),
+                            None,
+                        )
+
+                return (
+                    _finalize_structured_response(
+                        run_id=run_id,
+                        data=data,
+                        messages=messages,
+                        tool_calls=tool_calls,
+                        metrics=metrics,
+                        events=events,
+                        errors=errors,
+                        emit=emit,
+                        worker_name=self.name,
+                    ),
+                    None,
+                )
             elif response_schema is not None and not tools:
                 try:
                     data = await self._astructured_completion(

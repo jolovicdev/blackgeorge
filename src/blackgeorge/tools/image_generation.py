@@ -91,6 +91,9 @@ def _tool_result(payload: dict[str, str]) -> ToolResult:
     url = compact.get("url")
     if isinstance(url, str) and url.startswith("data:image/"):
         compact["url"] = "[data-url omitted]"
+    b64_json = compact.get("b64_json")
+    if isinstance(b64_json, str) and b64_json:
+        compact["b64_json"] = "[b64_json omitted]"
     return ToolResult(
         content=json.dumps(compact, ensure_ascii=True, default=str),
         data=payload,

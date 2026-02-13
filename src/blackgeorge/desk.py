@@ -1,6 +1,6 @@
 import json
 import os
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel
 
@@ -31,6 +31,7 @@ class Desk:
         temperature: float | None = None,
         max_tokens: int | None = None,
         stream: bool = False,
+        structured_stream_mode: Literal["off", "preview"] = "off",
         structured_output_retries: int = 3,
         max_iterations: int = 10,
         max_tool_calls: int = 20,
@@ -45,6 +46,9 @@ class Desk:
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.stream = stream
+        if structured_stream_mode not in ("off", "preview"):
+            raise ValueError("structured_stream_mode must be 'off' or 'preview'")
+        self.structured_stream_mode = structured_stream_mode
         self.structured_output_retries = structured_output_retries
         self.max_iterations = max_iterations
         self.max_tool_calls = max_tool_calls
@@ -144,6 +148,11 @@ class Desk:
             messages = [memory_message]
         return job.model_copy(update={"initial_messages": messages})
 
+    def _resolve_structured_stream_mode(self, job: Job) -> Job:
+        if job.structured_stream_mode is not None:
+            return job
+        return job.model_copy(update={"structured_stream_mode": self.structured_stream_mode})
+
     def _write_memory(self, worker: Worker, report: Report) -> None:
         if self.memory_store is None:
             return
@@ -161,6 +170,7 @@ class Desk:
         events: list[Event] = []
         stream_enabled = self.stream if stream is None else stream
         stream_options = {"include_usage": True} if stream_enabled else None
+        job = self._resolve_structured_stream_mode(job)
         if isinstance(runner, Worker):
             job = self._apply_memory(runner, job)
         self.run_store.create_run(run_id, job.model_dump(mode="json"))
@@ -246,6 +256,7 @@ class Desk:
         events: list[Event] = []
         stream_enabled = self.stream if stream is None else stream
         stream_options = {"include_usage": True} if stream_enabled else None
+        job = self._resolve_structured_stream_mode(job)
         if isinstance(runner, Worker):
             job = self._apply_memory(runner, job)
         self.run_store.create_run(run_id, job.model_dump(mode="json"))

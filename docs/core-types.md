@@ -19,6 +19,7 @@ Fields:
 - thinking: enables thinking mode for reasoning models (format varies by provider)
   - DeepSeek: `{"type": "enabled"}`
   - Anthropic: `{"type": "enabled", "budget_tokens": 1024}` - example.
+- structured_stream_mode: optional `"off"` or `"preview"` override for schema-job streaming behavior
 - drop_params: drops unsupported parameters instead of erroring
 - extra_body: provider-specific parameters passed to the model API
 

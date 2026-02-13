@@ -168,6 +168,62 @@ class StructuredAdapter(BaseModelAdapter):
         return response_schema(answer="ok")
 
 
+class StructuredStreamPreviewAdapter(BaseModelAdapter):
+    def __init__(self, chunks: list[dict[str, Any]], fallback_answer: str) -> None:
+        self._chunks = chunks
+        self._fallback_answer = fallback_answer
+        self.stream_calls = 0
+        self.structured_calls = 0
+
+    def complete(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        tool_choice: str | dict[str, Any] | None,
+        temperature: float | None,
+        max_tokens: int | None,
+        stream: bool,
+        stream_options: dict[str, Any] | None,
+        thinking: dict[str, Any] | None = None,
+        drop_params: bool | None = None,
+        extra_body: dict[str, Any] | None = None,
+    ) -> ModelResponse:
+        raise RuntimeError("sync path not used")
+
+    async def acomplete(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        tool_choice: str | dict[str, Any] | None,
+        temperature: float | None,
+        max_tokens: int | None,
+        stream: bool,
+        stream_options: dict[str, Any] | None,
+        thinking: dict[str, Any] | None = None,
+        drop_params: bool | None = None,
+        extra_body: dict[str, Any] | None = None,
+    ) -> ModelResponse | Any:
+        if not stream:
+            raise RuntimeError("non-stream completion should not be used")
+        self.stream_calls += 1
+        return iter(self._chunks)
+
+    async def astructured_complete(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, Any]],
+        response_schema: Any,
+        retries: int,
+    ) -> Any:
+        self.structured_calls += 1
+        return response_schema(answer=self._fallback_answer)
+
+
 class ToolThenStructuredContextAdapter(BaseModelAdapter):
     def __init__(self) -> None:
         self.acomplete_calls = 0
@@ -626,6 +682,622 @@ def test_streaming_with_thinking_blocks() -> None:
         {"type": "thinking", "thinking": "first", "signature": "sig1"},
         {"type": "thinking", "thinking": "second", "signature": "sig2"},
     ]
+
+
+def test_streaming_tool_turn_emits_tokens_and_executes_tool() -> None:
+    from tests.utils import StreamingAdapter
+
+    @tool()
+    async def echo(text: str) -> str:
+        return f"echo:{text}"
+
+    streams = [
+        [
+            {
+                "choices": [
+                    {
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "index": 0,
+                                    "id": "call_1",
+                                    "function": {"name": "echo", "arguments": ""},
+                                }
+                            ]
+                        }
+                    }
+                ]
+            },
+            {
+                "choices": [
+                    {
+                        "delta": {
+                            "tool_calls": [{"index": 0, "function": {"arguments": '{"text": '}}]
+                        }
+                    }
+                ]
+            },
+            {
+                "choices": [
+                    {"delta": {"tool_calls": [{"index": 0, "function": {"arguments": '"hi"}'}}]}}
+                ]
+            },
+            {
+                "choices": [{"delta": {}, "finish_reason": "tool_calls"}],
+                "usage": {"total_tokens": 9},
+            },
+        ],
+        [
+            {"choices": [{"delta": {"content": "done"}}]},
+            {"choices": [{"delta": {}}], "usage": {"total_tokens": 4}},
+        ],
+    ]
+    desk = Desk(
+        model="fake",
+        adapter=StreamingAdapter(streams),
+        run_store=InMemoryRunStore(),
+        stream=True,
+    )
+    worker = Worker(name="Worker", model="fake", tools=[echo])
+    streamed_tokens: list[str] = []
+
+    def on_token(event: Any) -> None:
+        token = event.payload.get("token")
+        if isinstance(token, str):
+            streamed_tokens.append(token)
+
+    desk.event_bus.subscribe("stream.token", on_token)
+    report = desk.run(worker, Job(input="run"), stream=True)
+
+    assert report.status == "completed"
+    assert report.content == "done"
+    assert len(report.tool_calls) == 1
+    assert report.tool_calls[0].name == "echo"
+    assert report.tool_calls[0].arguments == {"text": "hi"}
+    assert report.tool_calls[0].result is not None
+    assert '{"text": ' in streamed_tokens
+    assert '"hi"}' in streamed_tokens
+    assert "done" in streamed_tokens
+
+
+def test_streaming_accepts_adapter_model_response_for_tool_turns() -> None:
+    @tool()
+    async def echo(text: str) -> str:
+        return f"echo:{text}"
+
+    responses = [
+        ModelResponse(
+            content=None,
+            tool_calls=[ToolCall(id="call-1", name="echo", arguments={"text": "hi"})],
+            usage={},
+            raw={},
+        ),
+        ModelResponse(content="done", tool_calls=[], usage={}, raw={}),
+    ]
+    desk = Desk(
+        model="fake",
+        adapter=FakeAdapter(responses),
+        run_store=InMemoryRunStore(),
+        stream=True,
+    )
+    worker = Worker(name="Worker", model="fake", tools=[echo])
+    report = desk.run(worker, Job(input="run"), stream=True)
+
+    assert report.status == "completed"
+    assert report.content == "done"
+    assert len(report.tool_calls) == 1
+    assert report.tool_calls[0].name == "echo"
+    assert report.tool_calls[0].arguments == {"text": "hi"}
+    assert report.tool_calls[0].result is not None
+
+
+def test_streaming_accepts_adapter_model_response_on_resume() -> None:
+    @tool(requires_confirmation=True)
+    async def risky(action: str) -> str:
+        return f"ok:{action}"
+
+    responses = [
+        ModelResponse(
+            content=None,
+            tool_calls=[ToolCall(id="call-1", name="risky", arguments={"action": "go"})],
+            usage={},
+            raw={},
+        ),
+        ModelResponse(content="finished", tool_calls=[], usage={}, raw={}),
+    ]
+    desk = Desk(
+        model="fake",
+        adapter=FakeAdapter(responses),
+        run_store=InMemoryRunStore(),
+        stream=True,
+    )
+    worker = Worker(name="Worker", model="fake", tools=[risky])
+    paused = desk.run(worker, Job(input="run"), stream=True)
+
+    assert paused.status == "paused"
+    resumed = desk.resume(paused, True, stream=True)
+    assert resumed.status == "completed"
+    assert resumed.content == "finished"
+
+
+def test_streaming_falls_back_when_adapter_returns_non_iterable() -> None:
+    class NonIterableStreamAdapter(BaseModelAdapter):
+        def __init__(self) -> None:
+            self.calls: list[bool] = []
+
+        def complete(
+            self,
+            *,
+            model: str,
+            messages: list[dict[str, Any]],
+            tools: list[dict[str, Any]] | None,
+            tool_choice: str | dict[str, Any] | None,
+            temperature: float | None,
+            max_tokens: int | None,
+            stream: bool,
+            stream_options: dict[str, Any] | None,
+            thinking: dict[str, Any] | None = None,
+            drop_params: bool | None = None,
+            extra_body: dict[str, Any] | None = None,
+        ) -> ModelResponse:
+            raise RuntimeError("sync path not used")
+
+        async def acomplete(
+            self,
+            *,
+            model: str,
+            messages: list[dict[str, Any]],
+            tools: list[dict[str, Any]] | None,
+            tool_choice: str | dict[str, Any] | None,
+            temperature: float | None,
+            max_tokens: int | None,
+            stream: bool,
+            stream_options: dict[str, Any] | None,
+            thinking: dict[str, Any] | None = None,
+            drop_params: bool | None = None,
+            extra_body: dict[str, Any] | None = None,
+        ) -> ModelResponse | Any:
+            self.calls.append(stream)
+            if stream:
+                return {"unsupported_stream_payload": True}
+            return ModelResponse(content="done", tool_calls=[], usage={}, raw={})
+
+    adapter = NonIterableStreamAdapter()
+    desk = Desk(model="fake", adapter=adapter, run_store=InMemoryRunStore(), stream=True)
+    worker = Worker(name="Worker", model="fake")
+    report = desk.run(worker, Job(input="run"), stream=True)
+
+    assert report.status == "completed"
+    assert report.content == "done"
+    assert adapter.calls == [True, False]
+
+
+def test_streaming_tool_turn_falls_back_when_streaming_unsupported() -> None:
+    class StreamUnsupportedToolAdapter(BaseModelAdapter):
+        def __init__(self) -> None:
+            self.stream_calls = 0
+            self.non_stream_calls = 0
+
+        def complete(
+            self,
+            *,
+            model: str,
+            messages: list[dict[str, Any]],
+            tools: list[dict[str, Any]] | None,
+            tool_choice: str | dict[str, Any] | None,
+            temperature: float | None,
+            max_tokens: int | None,
+            stream: bool,
+            stream_options: dict[str, Any] | None,
+            thinking: dict[str, Any] | None = None,
+            drop_params: bool | None = None,
+            extra_body: dict[str, Any] | None = None,
+        ) -> ModelResponse:
+            raise RuntimeError("sync path not used")
+
+        async def acomplete(
+            self,
+            *,
+            model: str,
+            messages: list[dict[str, Any]],
+            tools: list[dict[str, Any]] | None,
+            tool_choice: str | dict[str, Any] | None,
+            temperature: float | None,
+            max_tokens: int | None,
+            stream: bool,
+            stream_options: dict[str, Any] | None,
+            thinking: dict[str, Any] | None = None,
+            drop_params: bool | None = None,
+            extra_body: dict[str, Any] | None = None,
+        ) -> ModelResponse:
+            if stream:
+                self.stream_calls += 1
+                raise RuntimeError("streaming not supported for tool calls")
+            self.non_stream_calls += 1
+            if self.non_stream_calls == 1:
+                return ModelResponse(
+                    content=None,
+                    tool_calls=[ToolCall(id="call-1", name="echo", arguments={"text": "hi"})],
+                    usage={},
+                    raw={},
+                )
+            return ModelResponse(content="done", tool_calls=[], usage={}, raw={})
+
+    @tool()
+    async def echo(text: str) -> str:
+        return f"echo:{text}"
+
+    adapter = StreamUnsupportedToolAdapter()
+    desk = Desk(model="fake", adapter=adapter, run_store=InMemoryRunStore(), stream=True)
+    worker = Worker(name="Worker", model="fake", tools=[echo])
+    report = desk.run(worker, Job(input="run"), stream=True)
+
+    assert report.status == "completed"
+    assert report.content == "done"
+    assert len(report.tool_calls) == 1
+    assert report.tool_calls[0].name == "echo"
+    assert report.tool_calls[0].arguments == {"text": "hi"}
+    assert report.tool_calls[0].error is None
+    assert report.tool_calls[0].result is not None
+    assert adapter.stream_calls >= 2
+    assert adapter.non_stream_calls == 2
+
+
+def test_streaming_parallel_tool_calls_do_not_collide_on_position() -> None:
+    from tests.utils import StreamingAdapter
+
+    @tool()
+    async def tool_a(x: str) -> str:
+        return f"a:{x}"
+
+    @tool()
+    async def tool_b(y: str) -> str:
+        return f"b:{y}"
+
+    streams = [
+        [
+            {
+                "choices": [
+                    {
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "index": 0,
+                                    "id": "call-a",
+                                    "function": {"name": "tool_a", "arguments": ""},
+                                }
+                            ]
+                        }
+                    }
+                ]
+            },
+            {
+                "choices": [
+                    {
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "index": 1,
+                                    "id": "call-b",
+                                    "function": {"name": "tool_b", "arguments": ""},
+                                }
+                            ]
+                        }
+                    }
+                ]
+            },
+            {
+                "choices": [
+                    {
+                        "delta": {
+                            "tool_calls": [{"index": 0, "function": {"arguments": '{"x":"1"}'}}]
+                        }
+                    }
+                ]
+            },
+            {
+                "choices": [
+                    {
+                        "delta": {
+                            "tool_calls": [{"index": 1, "function": {"arguments": '{"y":"2"}'}}]
+                        }
+                    }
+                ]
+            },
+            {
+                "choices": [{"delta": {}, "finish_reason": "tool_calls"}],
+                "usage": {"total_tokens": 14},
+            },
+        ],
+        [
+            {"choices": [{"delta": {"content": "done"}}]},
+            {"choices": [{"delta": {}}], "usage": {"total_tokens": 4}},
+        ],
+    ]
+    desk = Desk(
+        model="fake",
+        adapter=StreamingAdapter(streams),
+        run_store=InMemoryRunStore(),
+        stream=True,
+    )
+    worker = Worker(name="Worker", model="fake", tools=[tool_a, tool_b])
+    report = desk.run(worker, Job(input="run"), stream=True)
+
+    assert report.status == "completed"
+    assert report.content == "done"
+    assert len(report.tool_calls) == 2
+    parsed = {call.name: call.arguments for call in report.tool_calls}
+    assert parsed["tool_a"] == {"x": "1"}
+    assert parsed["tool_b"] == {"y": "2"}
+    assert all(call.error is None for call in report.tool_calls)
+
+
+def test_streaming_tool_calls_fallback_to_message_payload() -> None:
+    from tests.utils import StreamingAdapter
+
+    @tool()
+    async def echo(text: str) -> str:
+        return f"echo:{text}"
+
+    streams = [
+        [
+            {
+                "choices": [
+                    {
+                        "delta": {"tool_calls": []},
+                        "message": {
+                            "tool_calls": [
+                                {
+                                    "index": 0,
+                                    "id": "call-echo",
+                                    "function": {
+                                        "name": "echo",
+                                        "arguments": '{"text":"hi"}',
+                                    },
+                                }
+                            ]
+                        },
+                    }
+                ]
+            },
+            {
+                "choices": [{"delta": {}, "finish_reason": "tool_calls"}],
+                "usage": {"total_tokens": 6},
+            },
+        ],
+        [
+            {"choices": [{"delta": {"content": "done"}}]},
+            {"choices": [{"delta": {}}], "usage": {"total_tokens": 3}},
+        ],
+    ]
+    desk = Desk(
+        model="fake",
+        adapter=StreamingAdapter(streams),
+        run_store=InMemoryRunStore(),
+        stream=True,
+    )
+    worker = Worker(name="Worker", model="fake", tools=[echo])
+    report = desk.run(worker, Job(input="run"), stream=True)
+
+    assert report.status == "completed"
+    assert report.content == "done"
+    assert len(report.tool_calls) == 1
+    assert report.tool_calls[0].name == "echo"
+    assert report.tool_calls[0].arguments == {"text": "hi"}
+    assert report.tool_calls[0].error is None
+    assert report.tool_calls[0].result is not None
+
+
+def test_streaming_message_fallback_overrides_partial_delta_arguments() -> None:
+    from tests.utils import StreamingAdapter
+
+    @tool()
+    async def echo(text: str) -> str:
+        return f"echo:{text}"
+
+    streams = [
+        [
+            {
+                "choices": [
+                    {
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "index": 0,
+                                    "id": "call-1",
+                                    "function": {"name": "echo", "arguments": "{"},
+                                }
+                            ]
+                        }
+                    }
+                ]
+            },
+            {
+                "choices": [
+                    {
+                        "delta": {
+                            "tool_calls": [{"index": 0, "function": {"arguments": '"text":"hi"}'}}]
+                        }
+                    }
+                ]
+            },
+            {
+                "choices": [
+                    {
+                        "delta": {"tool_calls": []},
+                        "message": {
+                            "tool_calls": [
+                                {
+                                    "index": 0,
+                                    "id": "call-1",
+                                    "function": {
+                                        "name": "echo",
+                                        "arguments": '{"text":"hi"}',
+                                    },
+                                }
+                            ]
+                        },
+                    }
+                ]
+            },
+            {
+                "choices": [{"delta": {}, "finish_reason": "tool_calls"}],
+                "usage": {"total_tokens": 12},
+            },
+        ],
+        [
+            {"choices": [{"delta": {"content": "done"}}]},
+            {"choices": [{"delta": {}}], "usage": {"total_tokens": 3}},
+        ],
+    ]
+    desk = Desk(
+        model="fake",
+        adapter=StreamingAdapter(streams),
+        run_store=InMemoryRunStore(),
+        stream=True,
+    )
+    worker = Worker(name="Worker", model="fake", tools=[echo])
+    report = desk.run(worker, Job(input="run"), stream=True)
+
+    assert report.status == "completed"
+    assert report.content == "done"
+    assert len(report.tool_calls) == 1
+    assert report.tool_calls[0].name == "echo"
+    assert report.tool_calls[0].arguments == {"text": "hi"}
+    assert report.tool_calls[0].error is None
+    assert report.tool_calls[0].result is not None
+
+
+def test_structured_stream_preview_validates_streamed_json() -> None:
+    adapter = StructuredStreamPreviewAdapter(
+        chunks=[
+            {"choices": [{"delta": {"content": '{"answer":"ok"}'}}]},
+            {"choices": [{"delta": {}}], "usage": {"total_tokens": 6}},
+        ],
+        fallback_answer="fallback",
+    )
+    desk = Desk(
+        model="fake",
+        adapter=adapter,
+        run_store=InMemoryRunStore(),
+        stream=True,
+        structured_stream_mode="preview",
+    )
+    worker = Worker(name="Worker", model="fake")
+    streamed_tokens: list[str] = []
+
+    def on_token(event: Any) -> None:
+        token = event.payload.get("token")
+        if isinstance(token, str):
+            streamed_tokens.append(token)
+
+    desk.event_bus.subscribe("stream.token", on_token)
+    report = desk.run(worker, Job(input="run", response_schema=AnswerModel), stream=True)
+    assert report.status == "completed"
+    assert report.data is not None
+    assert report.data.answer == "ok"
+    assert "".join(streamed_tokens) == '{"answer":"ok"}'
+    assert adapter.stream_calls == 1
+    assert adapter.structured_calls == 0
+
+
+def test_structured_stream_preview_falls_back_on_invalid_json() -> None:
+    adapter = StructuredStreamPreviewAdapter(
+        chunks=[
+            {"choices": [{"delta": {"content": "not-json"}}]},
+            {"choices": [{"delta": {}}], "usage": {"total_tokens": 6}},
+        ],
+        fallback_answer="fixed",
+    )
+    desk = Desk(
+        model="fake",
+        adapter=adapter,
+        run_store=InMemoryRunStore(),
+        stream=True,
+        structured_stream_mode="preview",
+    )
+    worker = Worker(name="Worker", model="fake")
+    streamed_tokens: list[str] = []
+
+    def on_token(event: Any) -> None:
+        token = event.payload.get("token")
+        if isinstance(token, str):
+            streamed_tokens.append(token)
+
+    desk.event_bus.subscribe("stream.token", on_token)
+    report = desk.run(worker, Job(input="run", response_schema=AnswerModel), stream=True)
+    assert report.status == "completed"
+    assert report.data is not None
+    assert report.data.answer == "fixed"
+    assert "".join(streamed_tokens) == "not-json"
+    assert adapter.stream_calls == 1
+    assert adapter.structured_calls == 1
+
+
+def test_structured_output_stream_remains_strict_by_default() -> None:
+    class AsyncStructuredOnlyAdapter(BaseModelAdapter):
+        def complete(
+            self,
+            *,
+            model: str,
+            messages: list[dict[str, Any]],
+            tools: list[dict[str, Any]] | None,
+            tool_choice: str | dict[str, Any] | None,
+            temperature: float | None,
+            max_tokens: int | None,
+            stream: bool,
+            stream_options: dict[str, Any] | None,
+            thinking: dict[str, Any] | None = None,
+            drop_params: bool | None = None,
+            extra_body: dict[str, Any] | None = None,
+        ) -> ModelResponse:
+            raise RuntimeError("sync path not used")
+
+        async def acomplete(
+            self,
+            *,
+            model: str,
+            messages: list[dict[str, Any]],
+            tools: list[dict[str, Any]] | None,
+            tool_choice: str | dict[str, Any] | None,
+            temperature: float | None,
+            max_tokens: int | None,
+            stream: bool,
+            stream_options: dict[str, Any] | None,
+            thinking: dict[str, Any] | None = None,
+            drop_params: bool | None = None,
+            extra_body: dict[str, Any] | None = None,
+        ) -> ModelResponse:
+            raise AssertionError(
+                "stream completion should not be used for strict structured output"
+            )
+
+        async def astructured_complete(
+            self,
+            *,
+            model: str,
+            messages: list[dict[str, Any]],
+            response_schema: Any,
+            retries: int,
+        ) -> Any:
+            return response_schema(answer="ok")
+
+    adapter = AsyncStructuredOnlyAdapter()
+    desk = Desk(model="fake", adapter=adapter, run_store=InMemoryRunStore(), stream=True)
+    worker = Worker(name="Worker", model="fake")
+    streamed_tokens: list[str] = []
+
+    def on_token(event: Any) -> None:
+        token = event.payload.get("token")
+        if isinstance(token, str):
+            streamed_tokens.append(token)
+
+    desk.event_bus.subscribe("stream.token", on_token)
+    report = desk.run(worker, Job(input="run", response_schema=AnswerModel), stream=True)
+    assert report.status == "completed"
+    assert report.data is not None
+    assert report.data.answer == "ok"
+    assert streamed_tokens == []
 
 
 def test_structured_output_uses_adapter() -> None:
