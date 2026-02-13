@@ -78,11 +78,15 @@ def message_summary_text(message: Message) -> str:
         if isinstance(message.content, str):
             parts.append(message.content)
         else:
-            text_parts = [
-                part["text"]
-                for part in message.content
-                if isinstance(part, dict) and part.get("type") == "text"
-            ]
+            text_parts: list[str] = []
+            for part in message.content:
+                if not isinstance(part, dict):
+                    continue
+                if part.get("type") not in {"text", "input_text", "output_text"}:
+                    continue
+                text_value = part.get("text")
+                if isinstance(text_value, str) and text_value:
+                    text_parts.append(text_value)
             if text_parts:
                 parts.append(" ".join(text_parts))
             else:

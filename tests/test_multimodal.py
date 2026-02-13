@@ -211,6 +211,47 @@ def test_generate_image_falls_back_to_chat_completion(monkeypatch) -> None:
     assert calls[0]["modalities"] == ["image", "text"]
 
 
+def test_generate_image_fallback_extracts_image_from_content_blocks(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class EmptyResponse:
+        def __init__(self) -> None:
+            self.data: list[object] = []
+
+    def fake_image_generation(**_kwargs):
+        return EmptyResponse()
+
+    def fake_completion(**kwargs):
+        calls.append(kwargs)
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": [
+                            {"type": "text", "text": "Generated image"},
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": "data:image/png;base64,from-content-block"},
+                            },
+                        ]
+                    }
+                }
+            ]
+        }
+
+    monkeypatch.setattr("litellm.image_generation", fake_image_generation)
+    monkeypatch.setattr("litellm.completion", fake_completion)
+
+    result = generate_image.callable(prompt="cat")
+    assert isinstance(result, ToolResult)
+    assert isinstance(result.data, dict)
+    assert result.data["url"] == "data:image/png;base64,from-content-block"
+    assert result.content is not None
+    assert "[data-url omitted]" in result.content
+    assert len(calls) == 1
+    assert calls[0]["modalities"] == ["image", "text"]
+
+
 @pytest.mark.asyncio
 async def test_agenerate_image_falls_back_to_chat_completion(monkeypatch) -> None:
     calls: list[dict[str, object]] = []

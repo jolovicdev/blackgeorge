@@ -39,6 +39,30 @@ def _extract_image_generation_response(response: object) -> dict[str, str]:
     return result
 
 
+def _extract_image_url_from_content_blocks(content: object) -> str | None:
+    if not isinstance(content, Sequence) or isinstance(content, str | bytes):
+        return None
+    for block in content:
+        block_type = _value(block, "type")
+        image_url = _value(block, "image_url")
+        if (
+            block_type not in {"image_url", "input_image", "output_image"}
+            and image_url is None
+            and _value(block, "url") is None
+        ):
+            continue
+        if isinstance(image_url, str) and image_url:
+            return image_url
+        if image_url is not None:
+            nested_url = _value(image_url, "url")
+            if isinstance(nested_url, str) and nested_url:
+                return nested_url
+        direct_url = _value(block, "url")
+        if isinstance(direct_url, str) and direct_url:
+            return direct_url
+    return None
+
+
 def _extract_chat_image_response(response: object) -> dict[str, str]:
     choices = _value(response, "choices")
     if not isinstance(choices, Sequence) or isinstance(choices, str | bytes):
@@ -62,8 +86,13 @@ def _extract_chat_image_response(response: object) -> dict[str, str]:
             result["url"] = url
 
     content = _value(message, "content")
-    if "url" not in result and isinstance(content, str) and content.startswith("data:image/"):
-        result["url"] = content
+    if "url" not in result:
+        if isinstance(content, str) and content.startswith("data:image/"):
+            result["url"] = content
+        else:
+            block_url = _extract_image_url_from_content_blocks(content)
+            if isinstance(block_url, str) and block_url:
+                result["url"] = block_url
 
     return result
 
