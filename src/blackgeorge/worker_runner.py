@@ -123,9 +123,7 @@ def _streamed_tool_calls(states: list[dict[str, Any]]) -> list[ToolCall]:
             arguments = dict(arguments_obj)
         else:
             argument_parts = state.get("arguments_parts")
-            argument_text = (
-                "".join(argument_parts) if isinstance(argument_parts, list) else ""
-            )
+            argument_text = "".join(argument_parts) if isinstance(argument_parts, list) else ""
             if argument_text:
                 try:
                     parsed_arguments = json.loads(argument_text)
@@ -354,9 +352,8 @@ class WorkerRunner:
             if isinstance(stream, ModelResponse):
                 return stream
             is_async_stream = hasattr(stream, "__aiter__")
-            is_sync_stream = (
-                hasattr(stream, "__iter__")
-                and not isinstance(stream, (str, bytes, bytearray, dict))
+            is_sync_stream = hasattr(stream, "__iter__") and not isinstance(
+                stream, (str, bytes, bytearray, dict)
             )
             if not is_async_stream and not is_sync_stream:
                 return await self._acompletion(
