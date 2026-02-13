@@ -75,7 +75,22 @@ def chunk_text(model_name: str, text: str, target_tokens: int) -> list[str]:
 def message_summary_text(message: Message) -> str:
     parts: list[str] = []
     if message.content:
-        parts.append(message.content)
+        if isinstance(message.content, str):
+            parts.append(message.content)
+        else:
+            text_parts: list[str] = []
+            for part in message.content:
+                if not isinstance(part, dict):
+                    continue
+                if part.get("type") not in {"text", "input_text", "output_text"}:
+                    continue
+                text_value = part.get("text")
+                if isinstance(text_value, str) and text_value:
+                    text_parts.append(text_value)
+            if text_parts:
+                parts.append(" ".join(text_parts))
+            else:
+                parts.append("[multimodal message]")
     if message.tool_calls:
         calls: list[str] = []
         for call in message.tool_calls:

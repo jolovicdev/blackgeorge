@@ -8,7 +8,7 @@ from blackgeorge.core.types import MessageRole
 
 class Message(BaseModel):
     role: MessageRole
-    content: str
+    content: str | list[dict[str, Any]]
     reasoning_content: str | None = None
     thinking_blocks: list[dict[str, Any]] | None = None
     tool_calls: list[ToolCall] = Field(default_factory=list)
