@@ -48,6 +48,42 @@ class ContextLimitFailingAdapter(BaseModelAdapter):
         raise RuntimeError("context length exceeded")
 
 
+class RuntimeFailingAdapter(BaseModelAdapter):
+    def complete(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        tool_choice: str | dict[str, Any] | None,
+        temperature: float | None,
+        max_tokens: int | None,
+        stream: bool,
+        stream_options: dict[str, Any] | None,
+        thinking: dict[str, Any] | None = None,
+        drop_params: bool | None = None,
+        extra_body: dict[str, Any] | None = None,
+    ) -> ModelResponse:
+        raise RuntimeError("adapter exploded")
+
+    async def acomplete(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        tool_choice: str | dict[str, Any] | None,
+        temperature: float | None,
+        max_tokens: int | None,
+        stream: bool,
+        stream_options: dict[str, Any] | None,
+        thinking: dict[str, Any] | None = None,
+        drop_params: bool | None = None,
+        extra_body: dict[str, Any] | None = None,
+    ) -> ModelResponse:
+        raise RuntimeError("adapter exploded")
+
+
 @pytest.mark.asyncio
 async def test_subworker_runs_through_desk_and_records_child_run() -> None:
     desk = Desk(
@@ -156,6 +192,37 @@ async def test_subworker_failure_report_is_returned_as_tool_error() -> None:
     assert "context length exceeded" in result.error.lower()
     assert isinstance(result.data, dict)
     assert result.data.get("status") == "failed"
+
+
+@pytest.mark.asyncio
+async def test_subworker_runtime_exception_marks_child_run_failed() -> None:
+    desk = Desk(
+        model="fake",
+        adapter=RuntimeFailingAdapter(),
+        run_store=InMemoryRunStore(),
+    )
+    spawn_tool = create_subworker_tool(desk=desk, default_model="fake")
+    call = ToolCall(
+        id="spawn-runtime-fail",
+        name=spawn_tool.name,
+        arguments={
+            "name": "ChildWorker",
+            "instructions": "Return output.",
+            "task": "run",
+        },
+    )
+
+    result = await aexecute_tool(spawn_tool, call)
+
+    assert result.error is not None
+    assert "adapter exploded" in result.error
+    assert isinstance(result.data, dict)
+    run_id_value = result.data.get("run_id")
+    assert isinstance(run_id_value, str)
+    assert result.data.get("status") == "failed"
+    record = desk.run_store.get_run(run_id_value)
+    assert record is not None
+    assert record.status == "failed"
 
 
 @pytest.mark.asyncio

@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 from blackgeorge.core.job import Job
 from blackgeorge.tools.base import Tool, ToolResult
 from blackgeorge.tools.registry import Toolbelt
+from blackgeorge.utils import new_id
 from blackgeorge.worker import Worker
 
 if TYPE_CHECKING:
@@ -59,6 +60,27 @@ def _child_desk(
         memory_store=desk.memory_store,
         adapter=desk.adapter,
         storage_dir=desk.storage_dir,
+    )
+
+
+def _mark_child_run_failed(
+    desk: "Desk",
+    run_id: str,
+    job: Job,
+    error: str,
+) -> None:
+    record = desk.run_store.get_run(run_id)
+    if record is None:
+        desk.run_store.create_run(run_id, job.model_dump(mode="json"))
+        record = desk.run_store.get_run(run_id)
+    if record is not None and record.status != "running":
+        return
+    desk.run_store.update_run(
+        run_id,
+        "failed",
+        None,
+        {"error": error},
+        None,
     )
 
 
@@ -144,11 +166,33 @@ def create_subworker_tool(
             max_iterations=max_iterations,
             max_tool_calls=max_tool_calls,
         )
+        child_job = Job(input=task)
+        child_run_id = new_id()
 
         try:
-            report = await child_runner.arun(subworker, Job(input=task), stream=False)
+            report = await child_runner.arun(
+                subworker,
+                child_job,
+                stream=False,
+                run_id=child_run_id,
+            )
         except Exception as exc:
-            return ToolResult(error=f"Subworker execution failed: {exc}")
+            error_message = str(exc)
+            _mark_child_run_failed(
+                desk=child_runner,
+                run_id=child_run_id,
+                job=child_job,
+                error=error_message,
+            )
+            return ToolResult(
+                error=f"Subworker execution failed: {error_message}",
+                data={
+                    "run_id": child_run_id,
+                    "status": "failed",
+                    "worker": name,
+                    "errors": [error_message],
+                },
+            )
 
         result_data: dict[str, object] = {
             "run_id": report.run_id,
