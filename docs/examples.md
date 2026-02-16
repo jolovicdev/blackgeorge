@@ -1,6 +1,7 @@
 # Examples
 
 This repository includes a coding agent example under `examples/coding_agent`.
+It also includes a subworker delegation example in `e2e.py`.
 
 ## What it demonstrates
 
@@ -20,6 +21,13 @@ Set your API key for the selected model provider and run the script.
 ```
 export DEEPSEEK_API_KEY="..."
 python examples/coding_agent/run.py
+```
+
+Run subworker deep-research example:
+
+```
+export DEEPSEEK_API_KEY="..."
+uv run e2e.py
 ```
 
 The example stores run data at:
