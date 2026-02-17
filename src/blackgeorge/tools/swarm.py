@@ -75,6 +75,14 @@ def _mark_child_run_failed(
         record = desk.run_store.get_run(run_id)
     if record is not None and record.status != "running":
         return
+    events = desk.run_store.get_events(run_id)
+    desk._emit(
+        events,
+        run_id,
+        "run.failed",
+        "desk",
+        {"errors": [error]},
+    )
     desk.run_store.update_run(
         run_id,
         "failed",
@@ -152,7 +160,6 @@ def create_subworker_tool(
             missing = ", ".join(missing_tools)
             return ToolResult(error=f"Requested tools are not available: {missing}")
 
-        spawn_count += 1
         subworker = Worker(
             name=name,
             instructions=instructions,
@@ -220,6 +227,7 @@ def create_subworker_tool(
                 data=result_data,
             )
 
+        spawn_count += 1
         content = report.content
         if content is None and report.data is not None:
             content = json.dumps(report.data, ensure_ascii=True, default=str)
