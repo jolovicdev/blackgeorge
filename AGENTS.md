@@ -86,6 +86,8 @@ uv run mkdocs serve
 - Use `uv add <package>` for deps, `uv add --dev <package>` for dev deps
 - Never use pip directly
 - Flow.run/Flow.resume cannot be called from a running event loop (use arun/aresume)
+- Enable repo hooks locally: `git config core.hooksPath .githooks && chmod +x .githooks/pre-push`
+- The local `pre-push` hook blocks `v*` tag pushes when the tag version does not match `pyproject.toml` or the tagged commit is not on `origin/master` (fallback: local `master`)
 
 ## Testing Instructions
 
