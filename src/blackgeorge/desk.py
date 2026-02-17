@@ -165,8 +165,15 @@ class Desk:
             value = value.model_dump(mode="json", warnings=False)
         self.memory_store.write("last_output", value, worker.memory_scope)
 
-    def run(self, runner: Worker | Workforce, job: Job, *, stream: bool | None = None) -> Report:
-        run_id = new_id()
+    def run(
+        self,
+        runner: Worker | Workforce,
+        job: Job,
+        *,
+        stream: bool | None = None,
+        run_id: str | None = None,
+    ) -> Report:
+        run_id = run_id or new_id()
         events: list[Event] = []
         stream_enabled = self.stream if stream is None else stream
         stream_options = {"include_usage": True} if stream_enabled else None
@@ -251,8 +258,9 @@ class Desk:
         job: Job,
         *,
         stream: bool | None = None,
+        run_id: str | None = None,
     ) -> Report:
-        run_id = new_id()
+        run_id = run_id or new_id()
         events: list[Event] = []
         stream_enabled = self.stream if stream is None else stream
         stream_options = {"include_usage": True} if stream_enabled else None

@@ -131,6 +131,27 @@ from blackgeorge.tools import Toolbelt
 belt = Toolbelt()
 ```
 
+## Subworker tools
+
+Use `create_subworker_tool` to let a worker delegate to bounded child workers with explicit
+guardrails and run-level persistence.
+
+```python
+from blackgeorge.tools import create_subworker_tool
+
+spawn_subworker = create_subworker_tool(
+    desk=desk,
+    max_subworkers=5,
+    max_tools_per_subworker=8,
+)
+```
+
+This tool returns `ToolResult` with a structured payload that includes child `run_id` and `status`.
+Child runs are executed through `Desk`, so they use the same adapter, run store, event bus, and
+memory integration as top-level runs.
+
+For full API and behavior details, see `subworkers.md`.
+
 ## MCP Tool Integration
 
 Connect to MCP (Model Context Protocol) servers and use their tools. MCP tools are automatically converted to the blackgeorge `Tool` format and can be passed to workers.

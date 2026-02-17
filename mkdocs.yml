@@ -39,6 +39,7 @@ plugins:
           - session.md
           - workflow.md
           - tools.md
+          - subworkers.md
           - tool-hooks.md
           - collaboration.md
           - events.md
@@ -80,6 +81,7 @@ nav:
   - WorkerSession: session.md
   - Workflow: workflow.md
   - Tools: tools.md
+  - Subworkers: subworkers.md
   - Tool hooks: tool-hooks.md
   - Collaboration: collaboration.md
   - Events and streaming: events.md
