@@ -62,6 +62,26 @@ def test_tool_decorator_accepts_hooks() -> None:
     assert executed == ["pre:hook-call", "post:hook-call"]
 
 
+def test_sync_tool_execution_supports_async_hooks() -> None:
+    executed: list[str] = []
+
+    async def pre_hook(call: ToolCall) -> None:
+        executed.append(f"pre:{call.id}")
+
+    async def post_hook(call: ToolCall, _result) -> None:
+        executed.append(f"post:{call.id}")
+
+    @tool(pre=(pre_hook,), post=(post_hook,))
+    def add(a: int, b: int) -> int:
+        return a + b
+
+    call = ToolCall(id="sync-async-hook", name="add", arguments={"a": 2, "b": 3})
+    result = execute_tool(add, call)
+    assert result.error is None
+    assert result.content == "5"
+    assert executed == ["pre:sync-async-hook", "post:sync-async-hook"]
+
+
 @pytest.mark.asyncio
 async def test_async_tool_execution() -> None:
     @tool()

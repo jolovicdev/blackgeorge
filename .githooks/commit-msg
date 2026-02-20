@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+message_file="${1:-}"
+if [ -z "${message_file}" ] || [ ! -f "${message_file}" ]; then
+    echo "commit-msg: missing commit message file" >&2
+    exit 1
+fi
+
+subject="$(sed -n '1p' "${message_file}" | tr -d '\r')"
+if [ -z "${subject}" ]; then
+    echo "commit-msg: empty commit subject" >&2
+    exit 1
+fi
+
+if [[ "${subject}" == Merge\ * ]] || [[ "${subject}" == Revert\ * ]]; then
+    exit 0
+fi
+
+pattern='^(feat|fix|refactor|docs|test|chore)(\([a-z0-9._/-]+\))?!?: [a-z0-9][a-z0-9 ,._:/-]*$'
+if ! printf '%s' "${subject}" | grep -Eq "${pattern}"; then
+    echo "commit-msg: expected Conventional Commit, e.g. fix: adjust retry handling" >&2
+    exit 1
+fi
+
+if [[ "${subject}" == *"." ]]; then
+    echo "commit-msg: subject must not end with a period" >&2
+    exit 1
+fi

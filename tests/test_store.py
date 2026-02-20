@@ -1,3 +1,4 @@
+import sqlite3
 import threading
 
 from pydantic import BaseModel
@@ -86,6 +87,54 @@ def test_sqlite_run_store_serializes_base_models(tmp_path) -> None:
     updated = store.get_run(run_id)
     assert updated is not None
     assert updated.output_json == {"items": [{"value": 1}, {"nested": {"value": 2}}]}
+
+
+def test_sqlite_run_store_flushes_buffer_on_close(tmp_path) -> None:
+    path = tmp_path / "run_buffered.db"
+    run_id = "run_buffered"
+    store = SQLiteRunStore(str(path))
+    store.create_run(run_id, {"input": "x"})
+    store.add_event(
+        Event(
+            event_id=new_id(),
+            type="run.started",
+            timestamp=utc_now(),
+            run_id=run_id,
+            source="test",
+            payload={},
+        )
+    )
+    store.close()
+
+    reopened = SQLiteRunStore(str(path))
+    events = reopened.get_events(run_id)
+    assert len(events) == 1
+    reopened.close()
+
+
+def test_sqlite_run_store_add_event_persists_immediately(tmp_path) -> None:
+    path = tmp_path / "run_immediate.db"
+    run_id = "run_immediate"
+    store = SQLiteRunStore(str(path))
+    store.create_run(run_id, {"input": "x"})
+    store.add_event(
+        Event(
+            event_id=new_id(),
+            type="run.started",
+            timestamp=utc_now(),
+            run_id=run_id,
+            source="test",
+            payload={},
+        )
+    )
+
+    with sqlite3.connect(str(path)) as conn:
+        cursor = conn.execute("SELECT COUNT(*) FROM events WHERE run_id = ?", (run_id,))
+        row = cursor.fetchone()
+
+    assert row is not None
+    assert row[0] == 1
+    store.close()
 
 
 def test_sqlite_memory_store_thread_safe(tmp_path) -> None:

@@ -208,7 +208,9 @@ The `reducer` is not used in managed mode.
 
 ### Collaborate mode
 
-In collaborate mode, all workers run sequentially. Provide a custom reducer to control how reports are combined:
+In collaborate mode, workers without tools run concurrently, while workers with tools run
+sequentially to preserve deterministic pause/resume semantics. Provide a custom reducer to control
+how reports are combined:
 
 ```python
 from blackgeorge import Report

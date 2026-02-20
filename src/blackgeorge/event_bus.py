@@ -18,8 +18,20 @@ class EventBus:
     def subscribe(self, event_type: str, handler: EventHandler) -> None:
         self._handlers.setdefault(event_type, []).append(handler)
 
+    def unsubscribe(self, event_type: str, handler: EventHandler) -> None:
+        handlers = self._handlers.get(event_type)
+        if handlers is None:
+            return
+        self._handlers[event_type] = [
+            registered for registered in handlers if registered != handler
+        ]
+        if not self._handlers[event_type]:
+            self._handlers.pop(event_type, None)
+
     def emit(self, event: Event) -> None:
-        for handler in self._handlers.get(event.type, []):
+        handlers = list(self._handlers.get(event.type, []))
+        handlers.extend(self._handlers.get("*", []))
+        for handler in handlers:
             result = handler(event)
             if iscoroutinefunction(handler) or isinstance(result, Awaitable):
                 self._run_async(result, event.type)
@@ -55,10 +67,24 @@ class EventBus:
         return await awaitable
 
     async def aemit(self, event: Event) -> None:
-        for handler in self._handlers.get(event.type, []):
+        handlers = list(self._handlers.get(event.type, []))
+        handlers.extend(self._handlers.get("*", []))
+        for handler in handlers:
             if iscoroutinefunction(handler):
                 await handler(event)
             else:
                 result = handler(event)
                 if isinstance(result, Awaitable):
                     await result
+
+    async def await_pending(self) -> None:
+        loop = asyncio.get_running_loop()
+        while True:
+            pending = [
+                future
+                for future in list(self._pending)
+                if not future.done() and future.get_loop() is loop
+            ]
+            if not pending:
+                break
+            await asyncio.gather(*pending, return_exceptions=True)

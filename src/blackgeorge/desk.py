@@ -221,6 +221,7 @@ class Desk:
                 max_tool_calls=self.max_tool_calls,
                 default_model=self.model,
                 respect_context_window=self.respect_context_window,
+                drain_async_handlers=self.event_bus.await_pending,
             )
         else:
             raise TypeError("Runner must be Worker or Workforce")
@@ -436,6 +437,160 @@ class Desk:
             if workforce is None:
                 return resume_failed("Workforce not registered")
             updated_report, updated_state = workforce.resume(
+                adapter=self.adapter,
+                state=state,
+                decision_or_input=decision_or_input,
+                events=events,
+                emit=emit,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                stream=stream_enabled,
+                stream_options=stream_options,
+                structured_output_retries=self.structured_output_retries,
+                max_iterations=self.max_iterations,
+                max_tool_calls=self.max_tool_calls,
+                default_model=self.model,
+                respect_context_window=self.respect_context_window,
+            )
+        else:
+            return resume_failed("Unknown runner type")
+
+        if updated_state is not None and updated_report.status == "paused":
+            updated_state.payload["stream"] = stream_enabled
+            self._emit(events, report.run_id, "run.paused", "desk", {})
+            self.run_store.update_run(
+                report.run_id,
+                "paused",
+                updated_report.content,
+                None,
+                updated_state,
+            )
+        elif updated_report.status == "completed":
+            self._emit(events, report.run_id, "run.completed", "desk", {})
+            self.run_store.update_run(
+                report.run_id,
+                "completed",
+                updated_report.content,
+                self._output_json(updated_report),
+                None,
+            )
+            if worker is not None:
+                self._write_memory(worker, updated_report)
+        else:
+            self._emit(
+                events,
+                report.run_id,
+                "run.failed",
+                "desk",
+                {"errors": updated_report.errors},
+            )
+            self.run_store.update_run(
+                report.run_id,
+                "failed",
+                updated_report.content,
+                self._output_json(updated_report),
+                None,
+            )
+
+        return updated_report
+
+    async def aresume(
+        self,
+        report: Report,
+        decision_or_input: Any,
+        *,
+        stream: bool | None = None,
+    ) -> Report:
+        record = self.run_store.get_run(report.run_id)
+        if record is None:
+            failed = Report(
+                run_id=report.run_id,
+                status="failed",
+                content=None,
+                reasoning_content=None,
+                data=None,
+                messages=report.messages,
+                tool_calls=report.tool_calls,
+                metrics=report.metrics,
+                events=report.events,
+                pending_action=None,
+                errors=["No stored state"],
+            )
+            return failed
+        events = self.run_store.get_events(report.run_id)
+
+        def resume_failed(message: str) -> Report:
+            failed = Report(
+                run_id=report.run_id,
+                status="failed",
+                content=None,
+                data=None,
+                messages=report.messages,
+                tool_calls=report.tool_calls,
+                metrics=report.metrics,
+                events=events,
+                pending_action=None,
+                errors=[message],
+            )
+            self._emit(
+                events,
+                report.run_id,
+                "run.failed",
+                "desk",
+                {"errors": failed.errors},
+            )
+            self.run_store.update_run(
+                report.run_id,
+                "failed",
+                failed.content,
+                self._output_json(failed),
+                None,
+            )
+            return failed
+
+        if record.state is None:
+            return resume_failed("No stored state")
+
+        state = record.state
+        if state.runner_type == "flow":
+            flow = self._flow_runs.get(report.run_id)
+            if flow is None:
+                return resume_failed("Flow not registered")
+            return await flow.aresume(report, decision_or_input, stream=stream)
+        stream_enabled = stream if stream is not None else state.payload.get("stream", self.stream)
+        stream_options = {"include_usage": True} if stream_enabled else None
+
+        def emit(event_type: str, source: str, payload: dict[str, Any]) -> None:
+            self._emit(events, report.run_id, event_type, source, payload)
+
+        self._emit(events, report.run_id, "run.resumed", "desk", {})
+
+        worker: Worker | None = None
+        if state.runner_type == "worker":
+            worker = self._workers.get(state.runner_name)
+            if worker is None:
+                return resume_failed("Worker not registered")
+            updated_report, updated_state = await worker.aresume(
+                adapter=self.adapter,
+                state=state,
+                decision_or_input=decision_or_input,
+                events=events,
+                emit=emit,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                stream=stream_enabled,
+                stream_options=stream_options,
+                structured_output_retries=self.structured_output_retries,
+                max_iterations=self.max_iterations,
+                max_tool_calls=self.max_tool_calls,
+                model_name=worker.model or self.model,
+                respect_context_window=self.respect_context_window,
+            )
+        elif state.runner_type == "workforce":
+            workforce = self._workforces.get(state.runner_name)
+            if workforce is None:
+                return resume_failed("Workforce not registered")
+            updated_report, updated_state = await workforce.aresume(
                 adapter=self.adapter,
                 state=state,
                 decision_or_input=decision_or_input,

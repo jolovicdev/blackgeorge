@@ -53,6 +53,8 @@ class SQLiteRunStore(RunStore):
         self._path = path
         self._lock = threading.Lock()
         self._conn = sqlite3.connect(self._path, check_same_thread=False)
+        self._event_buffer: dict[str, list[Event]] = {}
+        self._event_buffer_limit = 128
         with self._lock, self._conn:
             self._conn.execute(
                 """
@@ -89,6 +91,33 @@ class SQLiteRunStore(RunStore):
     def _connect(self) -> sqlite3.Connection:
         return self._conn
 
+    def _event_row(self, event: Event) -> tuple[str, str, str, str, str]:
+        return (
+            event.event_id,
+            event.run_id,
+            event.type,
+            _serialize(event.model_dump(mode="json", warnings=False)),
+            event.timestamp.isoformat(),
+        )
+
+    def _flush_events_locked(self, run_id: str | None = None) -> None:
+        conn = self._connect()
+        run_ids = list(self._event_buffer.keys()) if run_id is None else [run_id]
+        for current_run_id in run_ids:
+            events = self._event_buffer.get(current_run_id)
+            if not events:
+                continue
+            rows = [self._event_row(event) for event in events]
+            with conn:
+                conn.executemany(
+                    """
+                    INSERT INTO events (id, run_id, type, payload, timestamp)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    rows,
+                )
+            self._event_buffer.pop(current_run_id, None)
+
     def create_run(self, run_id: str, input_payload: Any) -> None:
         now = utc_now().isoformat()
         with self._lock:
@@ -123,6 +152,7 @@ class SQLiteRunStore(RunStore):
     ) -> None:
         now = utc_now().isoformat()
         with self._lock:
+            self._flush_events_locked(run_id)
             conn = self._connect()
             with conn:
                 conn.execute(
@@ -143,6 +173,7 @@ class SQLiteRunStore(RunStore):
 
     def get_run(self, run_id: str) -> RunRecord | None:
         with self._lock:
+            self._flush_events_locked(run_id)
             conn = self._connect()
             cursor = conn.execute(
                 """
@@ -172,24 +203,13 @@ class SQLiteRunStore(RunStore):
 
     def add_event(self, event: Event) -> None:
         with self._lock:
-            conn = self._connect()
-            with conn:
-                conn.execute(
-                    """
-                    INSERT INTO events (id, run_id, type, payload, timestamp)
-                    VALUES (?, ?, ?, ?, ?)
-                    """,
-                    (
-                        event.event_id,
-                        event.run_id,
-                        event.type,
-                        _serialize(event.model_dump(mode="json", warnings=False)),
-                        event.timestamp.isoformat(),
-                    ),
-                )
+            buffered = self._event_buffer.setdefault(event.run_id, [])
+            buffered.append(event)
+            self._flush_events_locked(event.run_id)
 
     def get_events(self, run_id: str) -> list[Event]:
         with self._lock:
+            self._flush_events_locked(run_id)
             conn = self._connect()
             cursor = conn.execute(
                 """
@@ -202,6 +222,7 @@ class SQLiteRunStore(RunStore):
 
     def close(self) -> None:
         with self._lock:
+            self._flush_events_locked()
             self._conn.close()
 
 
