@@ -1,4 +1,5 @@
-from collections.abc import Callable
+import asyncio
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from pydantic import BaseModel
@@ -31,6 +32,16 @@ from blackgeorge.workforce_helpers import (
 )
 
 Reducer = Callable[[list[Report]], Report]
+
+
+def _ensure_not_running_loop(action: str, async_action: str) -> None:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    raise RuntimeError(
+        f"{action} cannot be called from a running event loop. Use {async_action} instead."
+    )
 
 
 class WorkerDecision(BaseModel):
@@ -207,6 +218,87 @@ class Workforce:
             respect_context_window=respect_context_window,
         )
 
+    def _can_parallelize_collaborate(self, job: Job) -> bool:
+        if job.tools_override is not None:
+            return len(job.tools_override) == 0
+        return all(not worker.tools() for worker in self.workers)
+
+    async def _arun_collaborate_parallel(
+        self,
+        *,
+        adapter: Any,
+        job: Job,
+        run_id: str,
+        events: list[Event],
+        emit: Callable[[str, str, dict[str, Any]], None],
+        temperature: float | None,
+        max_tokens: int | None,
+        stream: bool,
+        stream_options: dict[str, Any] | None,
+        structured_output_retries: int,
+        max_iterations: int,
+        max_tool_calls: int,
+        default_model: str,
+        respect_context_window: bool,
+        drain_async_handlers: Callable[[], Awaitable[None]] | None = None,
+    ) -> tuple[Report, RunState | None]:
+        try:
+            tasks: list[asyncio.Task[tuple[Report, RunState | None]]] = []
+            for worker in self.workers:
+                tasks.append(
+                    asyncio.create_task(
+                        self._arun_worker(
+                            worker=worker,
+                            adapter=adapter,
+                            job=job,
+                            run_id=run_id,
+                            events=events,
+                            emit=emit,
+                            temperature=temperature,
+                            max_tokens=max_tokens,
+                            stream=stream,
+                            stream_options=stream_options,
+                            structured_output_retries=structured_output_retries,
+                            max_iterations=max_iterations,
+                            max_tool_calls=max_tool_calls,
+                            default_model=default_model,
+                            respect_context_window=respect_context_window,
+                        )
+                    )
+                )
+            results = await asyncio.gather(*tasks)
+            reports: list[tuple[Worker, Report]] = []
+            any_failed = False
+            for worker, (report, worker_state) in zip(self.workers, results, strict=False):
+                if worker_state is not None:
+                    state = _build_workforce_state(
+                        run_id,
+                        "paused",
+                        self.name,
+                        job,
+                        worker_state,
+                        "collaborate",
+                        payload={
+                            "root_job": job.model_dump(mode="json"),
+                            "completed_reports": [
+                                rep.model_dump(mode="json") for _, rep in reports
+                            ],
+                            "pending_worker_index": len(reports),
+                        },
+                    )
+                    return report, state
+                reports.append((worker, report))
+                if report.status == "failed":
+                    any_failed = True
+            if any_failed:
+                return _aggregate_reports(reports, run_id, events, "failed"), None
+            if self.reducer:
+                return self.reducer([report for _, report in reports]), None
+            return _default_reducer(reports, run_id, events), None
+        finally:
+            if drain_async_handlers is not None:
+                await drain_async_handlers()
+
     def run(
         self,
         *,
@@ -224,6 +316,7 @@ class Workforce:
         max_tool_calls: int,
         default_model: str,
         respect_context_window: bool = True,
+        drain_async_handlers: Callable[[], Awaitable[None]] | None = None,
     ) -> tuple[Report, RunState | None]:
         emit("workforce.started", self.name, {})
 
@@ -307,9 +400,32 @@ class Workforce:
             if report.status == "failed":
                 emit("workforce.completed", self.name, {})
                 return report, None
-
             emit("workforce.completed", self.name, {})
             return report, None
+
+        if self._can_parallelize_collaborate(job):
+            _ensure_not_running_loop("run", "arun")
+            report, parallel_state = asyncio.run(
+                self._arun_collaborate_parallel(
+                    adapter=adapter,
+                    job=job,
+                    run_id=run_id,
+                    events=events,
+                    emit=emit,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    stream=stream,
+                    stream_options=stream_options,
+                    structured_output_retries=structured_output_retries,
+                    max_iterations=max_iterations,
+                    max_tool_calls=max_tool_calls,
+                    default_model=default_model,
+                    respect_context_window=respect_context_window,
+                    drain_async_handlers=drain_async_handlers,
+                )
+            )
+            emit("workforce.completed", self.name, {})
+            return report, parallel_state
 
         reports: list[tuple[Worker, Report]] = []
         for worker in self.workers:
@@ -461,9 +577,28 @@ class Workforce:
             if report.status == "failed":
                 emit("workforce.completed", self.name, {})
                 return report, None
-
             emit("workforce.completed", self.name, {})
             return report, None
+
+        if self._can_parallelize_collaborate(job):
+            report, parallel_state = await self._arun_collaborate_parallel(
+                adapter=adapter,
+                job=job,
+                run_id=run_id,
+                events=events,
+                emit=emit,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                stream=stream,
+                stream_options=stream_options,
+                structured_output_retries=structured_output_retries,
+                max_iterations=max_iterations,
+                max_tool_calls=max_tool_calls,
+                default_model=default_model,
+                respect_context_window=respect_context_window,
+            )
+            emit("workforce.completed", self.name, {})
+            return report, parallel_state
 
         reports: list[tuple[Worker, Report]] = []
         for worker in self.workers:

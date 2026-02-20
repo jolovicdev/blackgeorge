@@ -1,5 +1,7 @@
+import asyncio
 import sqlite3
 import tempfile
+import time
 
 import pytest
 
@@ -133,6 +135,39 @@ def test_session_with_tools() -> None:
     assert len(report.tool_calls) == 1
 
 
+def test_session_stream_run_yields_realtime_events() -> None:
+    @tool()
+    def slow_echo(text: str) -> str:
+        time.sleep(0.35)
+        return f"slow:{text}"
+
+    responses = [
+        ModelResponse(
+            content=None,
+            tool_calls=[ToolCall(id="1", name="slow_echo", arguments={"text": "test"})],
+            usage={},
+            raw={},
+        ),
+        ModelResponse(content="Done", tool_calls=[], usage={}, raw={}),
+    ]
+    worker = Worker(name="Assistant", model="fake", tools=[slow_echo])
+    desk = Desk(model="fake", adapter=FakeAdapter(responses), run_store=InMemoryRunStore())
+    session = desk.session(worker)
+
+    started = time.perf_counter()
+    stream = session.stream_run("use slow tool")
+    first_event = next(stream)
+    elapsed = time.perf_counter() - started
+    remaining_events = list(stream)
+
+    assert first_event.type == "run.started"
+    assert elapsed < 0.25
+    assert any(event.type == "tool.completed" for event in remaining_events)
+    assert any(
+        message.role == "assistant" and message.content == "Done" for message in session.history()
+    )
+
+
 def test_session_preserves_reasoning_content_for_tool_calls() -> None:
     @tool()
     def echo(text: str) -> str:
@@ -262,6 +297,41 @@ async def test_session_async() -> None:
 
     history = session.history()
     assert len(history) >= 4
+
+
+@pytest.mark.asyncio
+async def test_session_astream_run_yields_realtime_events() -> None:
+    @tool()
+    async def slow_echo(text: str) -> str:
+        await asyncio.sleep(0.35)
+        return f"slow:{text}"
+
+    responses = [
+        ModelResponse(
+            content=None,
+            tool_calls=[ToolCall(id="1", name="slow_echo", arguments={"text": "test"})],
+            usage={},
+            raw={},
+        ),
+        ModelResponse(content="Done", tool_calls=[], usage={}, raw={}),
+    ]
+    worker = Worker(name="Assistant", model="fake", tools=[slow_echo])
+    desk = Desk(model="fake", adapter=FakeAdapter(responses), run_store=InMemoryRunStore())
+    session = desk.session(worker)
+
+    stream = session.astream_run("use slow tool async")
+    started = time.perf_counter()
+    first_event = await stream.__anext__()
+    elapsed = time.perf_counter() - started
+
+    remaining_events = [event async for event in stream]
+
+    assert first_event.type == "run.started"
+    assert elapsed < 0.25
+    assert any(event.type == "run.completed" for event in remaining_events)
+    assert any(
+        message.role == "assistant" and message.content == "Done" for message in session.history()
+    )
 
 
 def test_in_memory_session_store() -> None:

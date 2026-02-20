@@ -3,7 +3,7 @@ import concurrent.futures
 import contextlib
 import json
 import time
-from inspect import iscoroutinefunction
+from inspect import isawaitable, iscoroutinefunction
 from typing import Any
 
 from pydantic import BaseModel
@@ -40,6 +40,67 @@ def _run_sync_call(tool: Tool, args: dict[str, Any]) -> Any:
     return tool.callable(**args)
 
 
+def _validate_tool_call(call: ToolCall, tool: Tool) -> dict[str, Any]:
+    validated = tool.input_model.model_validate(call.arguments)
+    return validated.model_dump()
+
+
+def _sync_invoke_hook(hook: Any, *args: Any) -> None:
+    result = hook(*args)
+    if isawaitable(result):
+        _run_coroutine_sync(result)
+
+
+def _sync_pre_hooks(tool: Tool, call: ToolCall) -> None:
+    for pre_hook in tool.pre:
+        _sync_invoke_hook(pre_hook, call)
+
+
+def _sync_post_hooks(tool: Tool, call: ToolCall, result: ToolResult) -> None:
+    for post_hook in tool.post:
+        _sync_invoke_hook(post_hook, call, result)
+
+
+async def _async_invoke_hook(hook: Any, *args: Any) -> None:
+    result = hook(*args)
+    if isawaitable(result):
+        await result
+
+
+async def _async_pre_hooks(tool: Tool, call: ToolCall) -> None:
+    for pre_hook in tool.pre:
+        await _async_invoke_hook(pre_hook, call)
+
+
+async def _async_post_hooks(tool: Tool, call: ToolCall, result: ToolResult) -> None:
+    for post_hook in tool.post:
+        await _async_invoke_hook(post_hook, call, result)
+
+
+def _backoff_delay(retry_delay: float, attempt: int) -> float:
+    return float(retry_delay * (2**attempt))
+
+
+def _execute_sync_with_retries(
+    tool: Tool,
+    args: dict[str, Any],
+) -> ToolResult:
+    retries = tool.retries
+    retry_delay = tool.retry_delay
+    last_result: ToolResult | None = None
+
+    for attempt in range(retries + 1):
+        last_result = _execute_sync_once(tool, args, tool.timeout)
+        if last_result.error is None:
+            break
+        if last_result.cancelled:
+            break
+        if attempt < retries:
+            time.sleep(_backoff_delay(retry_delay, attempt))
+
+    return last_result or ToolResult(error="No execution result")
+
+
 def _execute_sync_once(tool: Tool, args: dict[str, Any], timeout: float | None) -> ToolResult:
     try:
         if timeout is None:
@@ -63,36 +124,17 @@ def _execute_sync_once(tool: Tool, args: dict[str, Any], timeout: float | None) 
 
 
 def execute_tool(tool: Tool, call: ToolCall) -> ToolResult:
-    for pre_hook in tool.pre:
-        pre_hook(call)
+    _sync_pre_hooks(tool, call)
 
     try:
-        validated = tool.input_model.model_validate(call.arguments)
-        args = validated.model_dump()
+        args = _validate_tool_call(call, tool)
     except Exception as exc:
         tool_result = ToolResult(error=str(exc))
-        for post_hook in tool.post:
-            post_hook(call, tool_result)
+        _sync_post_hooks(tool, call, tool_result)
         return tool_result
 
-    timeout = tool.timeout
-    retries = tool.retries
-    retry_delay = tool.retry_delay
-    last_result: ToolResult | None = None
-
-    for attempt in range(retries + 1):
-        last_result = _execute_sync_once(tool, args, timeout)
-        if last_result.error is None:
-            break
-        if last_result.cancelled:
-            break
-        if attempt < retries:
-            time.sleep(retry_delay * (2**attempt))
-
-    tool_result = last_result or ToolResult(error="No execution result")
-
-    for post_hook in tool.post:
-        post_hook(call, tool_result)
+    tool_result = _execute_sync_with_retries(tool, args)
+    _sync_post_hooks(tool, call, tool_result)
 
     return tool_result
 
@@ -162,25 +204,15 @@ async def aexecute_tool(
     cancel_event: asyncio.Event | None = None,
     on_progress: ProgressCallback | None = None,
 ) -> ToolResult:
-    for pre_hook in tool.pre:
-        if iscoroutinefunction(pre_hook):
-            await pre_hook(call)
-        else:
-            pre_hook(call)
+    await _async_pre_hooks(tool, call)
 
     try:
-        validated = tool.input_model.model_validate(call.arguments)
-        args = validated.model_dump()
+        args = _validate_tool_call(call, tool)
     except Exception as exc:
         tool_result = ToolResult(error=f"Validation error: {exc}")
-        for post_hook in tool.post:
-            if iscoroutinefunction(post_hook):
-                await post_hook(call, tool_result)
-            else:
-                post_hook(call, tool_result)
+        await _async_post_hooks(tool, call, tool_result)
         return tool_result
 
-    timeout = tool.timeout
     retries = tool.retries
     retry_delay = tool.retry_delay
     last_result: ToolResult | None = None
@@ -192,7 +224,7 @@ async def aexecute_tool(
         if on_progress is not None and attempt > 0:
             on_progress(f"Retry attempt {attempt}/{retries}")
 
-        last_result = await _execute_once(tool, args, timeout, cancel_event)
+        last_result = await _execute_once(tool, args, tool.timeout, cancel_event)
 
         if last_result.error is None:
             break
@@ -201,17 +233,13 @@ async def aexecute_tool(
             break
 
         if attempt < retries:
-            delay = retry_delay * (2**attempt)
+            delay = _backoff_delay(retry_delay, attempt)
             if on_progress is not None:
                 on_progress(f"Waiting {delay:.1f}s before retry")
             await asyncio.sleep(delay)
 
     tool_result = last_result or ToolResult(error="No execution result")
 
-    for post_hook in tool.post:
-        if iscoroutinefunction(post_hook):
-            await post_hook(call, tool_result)
-        else:
-            post_hook(call, tool_result)
+    await _async_post_hooks(tool, call, tool_result)
 
     return tool_result

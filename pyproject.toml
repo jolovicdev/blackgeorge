@@ -1,6 +1,6 @@
 [project]
 name = "blackgeorge"
-version = "1.1.7"
+version = "1.1.8"
 description = "Agentic framework (runtime) with desk/worker/workforce primitives"
 readme = "README.md"
 license = { file = "LICENCE.md" }
@@ -10,7 +10,7 @@ requires-python = ">=3.12"
 dependencies = [
     "chromadb>=0.4.0",
     "instructor[litellm]>=1.11.0",
-    "litellm>=1.80.0",
+    "litellm>=1.81.13",
     "mcp>=1.0.0",
     "pydantic>=2.8.0",
 ]

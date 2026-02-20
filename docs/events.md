@@ -32,7 +32,7 @@ Event handlers receive an `Event` with these fields:
 - `source`: emitter name (for example worker/tool/workforce name)
 - `payload`: event-specific data
 
-`EventBus.subscribe` matches exact event types only. Wildcard subscriptions like `*` are not supported.
+`EventBus.subscribe` supports exact event types and `*` for all event types.
 
 ### Emitting events
 
@@ -61,7 +61,12 @@ await bus.aemit(event)
 
 ### Unsubscribing
 
-EventBus has no built-in unsubscribe API. Use a wrapper with an internal enabled flag when you need dynamic opt-out.
+Use `unsubscribe` to remove a previously registered handler.
+
+```python
+bus.unsubscribe("run.started", handle_event)
+bus.unsubscribe("*", handle_event)
+```
 
 ## Event types
 

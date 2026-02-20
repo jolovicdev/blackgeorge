@@ -158,8 +158,8 @@ If you already have a running event loop, use `arun()` instead of `run()`.
 
 ## Streaming responses
 
-The `stream_run()` and `astream_run()` methods run with streaming enabled and then yield the
-collected events from the completed report:
+The `stream_run()` and `astream_run()` methods run with streaming enabled and yield events in
+real time as they are emitted for that run:
 
 ```python
 # Sync streaming

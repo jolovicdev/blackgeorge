@@ -31,8 +31,10 @@ If the manager or selected worker pauses, the workforce returns a paused report 
 
 ## Collaborate mode
 
-In collaborate mode, workers run sequentially and their reports are combined.
+In collaborate mode, reports are combined across all workers.
 
+- If all workers have no tools, workers run concurrently for lower latency.
+- If any worker has tools, workers run sequentially to preserve deterministic pause/resume behavior.
 - If a worker pauses, the workforce returns a paused report and stores state.
 - When resumed, the workforce continues from the paused worker and then completes the remaining workers.
 

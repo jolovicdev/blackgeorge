@@ -113,8 +113,7 @@ def main() -> None:
         stream=stream_enabled,
     )
     keep_changes = os.getenv("PRESERVE_EXAMPLE_CHANGES") == "1"
-
-    for event_type in [
+    event_types = {
         "run.started",
         "run.paused",
         "run.resumed",
@@ -132,8 +131,13 @@ def main() -> None:
         "tool.user_input_requested",
         "assistant.message",
         "stream.token",
-    ]:
-        desk.event_bus.subscribe(event_type, print_event)
+    }
+
+    def on_event(event) -> None:
+        if event.type in event_types:
+            print_event(event)
+
+    desk.event_bus.subscribe("*", on_event)
 
     manager = Worker(
         name="Manager",
@@ -301,6 +305,7 @@ def main() -> None:
         print("Run store path:", desk.db_path)
         print("Events stored:", len(desk.run_store.get_events(report.run_id)))
     finally:
+        desk.event_bus.unsubscribe("*", on_event)
         if not keep_changes:
             changed = modified_files()
             if changed:
