@@ -1,4 +1,5 @@
 import asyncio
+import threading
 import time
 from typing import Any
 
@@ -179,6 +180,31 @@ class SlowAsyncAdapter(BaseModelAdapter):
         return ModelResponse(content="ok", tool_calls=[], usage={}, raw={})
 
 
+class SyncOnlyAdapter(BaseModelAdapter):
+    def __init__(self) -> None:
+        self.calls = 0
+        self._lock = threading.Lock()
+
+    def complete(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        tool_choice: str | dict[str, Any] | None,
+        temperature: float | None,
+        max_tokens: int | None,
+        stream: bool,
+        stream_options: dict[str, Any] | None,
+        thinking: dict[str, Any] | None = None,
+        drop_params: bool | None = None,
+        extra_body: dict[str, Any] | None = None,
+    ) -> ModelResponse:
+        with self._lock:
+            self.calls += 1
+        return ModelResponse(content="ok", tool_calls=[], usage={}, raw={})
+
+
 def test_workforce_collaborate_default_reducer() -> None:
     responses = [
         ModelResponse(content="alpha", tool_calls=[], usage={}, raw={}),
@@ -241,6 +267,21 @@ def test_workforce_sync_parallel_drains_async_event_handlers() -> None:
     assert report.status == "completed"
     assert sorted(started_sources) == ["A", "B"]
     assert sorted(completed_sources) == ["A", "B"]
+
+
+def test_workforce_sync_parallel_supports_sync_only_adapter() -> None:
+    adapter = SyncOnlyAdapter()
+    desk = Desk(model="fake", adapter=adapter, run_store=InMemoryRunStore())
+    worker_a = Worker(name="A", model="fake")
+    worker_b = Worker(name="B", model="fake")
+    workforce = Workforce([worker_a, worker_b], mode="collaborate", name="team")
+
+    report = desk.run(workforce, Job(input="work"))
+
+    assert report.status == "completed"
+    assert adapter.calls == 2
+    assert "[A]" in report.content
+    assert "[B]" in report.content
 
 
 def test_workforce_collaborate_parallel_guard_requires_no_tools() -> None:

@@ -1,3 +1,4 @@
+import asyncio
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -46,6 +47,15 @@ class Channel:
             self._messages[recipient].append(message)
         return message
 
+    async def asend(
+        self,
+        sender: str,
+        recipient: str,
+        content: Any,
+        metadata: dict[str, Any] | None = None,
+    ) -> ChannelMessage:
+        return await asyncio.to_thread(self.send, sender, recipient, content, metadata)
+
     def broadcast(
         self,
         sender: str,
@@ -63,6 +73,14 @@ class Channel:
         with self._lock:
             self._broadcast.append(message)
         return message
+
+    async def abroadcast(
+        self,
+        sender: str,
+        content: Any,
+        metadata: dict[str, Any] | None = None,
+    ) -> ChannelMessage:
+        return await asyncio.to_thread(self.broadcast, sender, content, metadata)
 
     def receive(
         self,
@@ -86,8 +104,19 @@ class Channel:
                 broadcasts = []
         return direct + list(broadcasts)
 
+    async def areceive(
+        self,
+        recipient: str,
+        clear: bool = True,
+        broadcast_mode: BroadcastMode = "one_shot",
+    ) -> list[ChannelMessage]:
+        return await asyncio.to_thread(self.receive, recipient, clear, broadcast_mode)
+
     def peek(self, recipient: str) -> list[ChannelMessage]:
         return self.receive(recipient, clear=False)
+
+    async def apeek(self, recipient: str) -> list[ChannelMessage]:
+        return await self.areceive(recipient, clear=False)
 
     def clear(self, recipient: str | None = None) -> None:
         with self._lock:
@@ -98,6 +127,9 @@ class Channel:
             else:
                 self._messages[recipient] = []
 
+    async def aclear(self, recipient: str | None = None) -> None:
+        await asyncio.to_thread(self.clear, recipient)
+
     def all_messages(self) -> list[ChannelMessage]:
         with self._lock:
             all_msgs: list[ChannelMessage] = []
@@ -105,3 +137,6 @@ class Channel:
                 all_msgs.extend(msgs)
             all_msgs.extend(self._broadcast)
         return sorted(all_msgs, key=lambda m: m.timestamp)
+
+    async def aall_messages(self) -> list[ChannelMessage]:
+        return await asyncio.to_thread(self.all_messages)

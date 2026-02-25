@@ -1,7 +1,8 @@
 import asyncio
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
 
+from blackgeorge.core.event_types import EventType
 from blackgeorge.core.job import Job
 from blackgeorge.workflow.context import WorkflowContext
 from blackgeorge.workflow.result import StepOutput, StepResult
@@ -24,12 +25,12 @@ class Step:
 
     async def execute(self, flow: Any, context: WorkflowContext) -> list[StepOutput]:
         job = self.job_builder(context) if self.job_builder else context.job
-        flow.emit("step.started", self.name, {})
+        flow.emit(EventType.STEP_STARTED, self.name, {})
         report, state = await flow._run_runner(self.runner, job)
         if state is not None and report.status == "paused":
-            flow.emit("step.paused", self.name, {"status": report.status})
+            flow.emit(EventType.STEP_PAUSED, self.name, {"status": report.status})
             return [StepResult(report, state)]
-        flow.emit("step.completed", self.name, {"status": report.status})
+        flow.emit(EventType.STEP_COMPLETED, self.name, {"status": report.status})
         return [StepResult(report, state)]
 
 
@@ -97,26 +98,90 @@ class Router:
 
 
 class Loop:
+    _counter: int = 0
+
     def __init__(
         self,
         steps: list[Executable],
         stop: Callable[[WorkflowContext], bool],
         max_iterations: int = 10,
+        name: str | None = None,
     ) -> None:
         self.steps = steps
         self.stop = stop
         self.max_iterations = max_iterations
+        if name is not None:
+            self.name = name
+        else:
+            Loop._counter += 1
+            self.name = f"loop_{Loop._counter}"
 
     async def execute(self, flow: Any, context: WorkflowContext) -> list[StepOutput]:
+        context.set_loop_iteration(self.name, 0)
         reports: list[StepOutput] = []
-        iteration = 0
-        while iteration < self.max_iterations:
-            iteration += 1
+        while context.loop_iteration(self.name) < self.max_iterations:
+            context.increment_loop_iteration(self.name)
             for step in self.steps:
                 step_outputs = await step.execute(flow, context)
                 reports.extend(step_outputs)
                 if _should_stop(step_outputs):
                     return reports
             if self.stop(context):
+                break
+        return reports
+
+
+class AsyncCondition:
+    def __init__(
+        self,
+        predicate: Callable[[WorkflowContext], Awaitable[bool]],
+        if_true: list[Executable],
+        if_false: list[Executable] | None = None,
+    ) -> None:
+        self.predicate = predicate
+        self.if_true = if_true
+        self.if_false = if_false or []
+
+    async def execute(self, flow: Any, context: WorkflowContext) -> list[StepOutput]:
+        steps = self.if_true if await self.predicate(context) else self.if_false
+        reports: list[StepOutput] = []
+        for step in steps:
+            step_outputs = await step.execute(flow, context)
+            reports.extend(step_outputs)
+            if _should_stop(step_outputs):
+                return reports
+        return reports
+
+
+class AsyncLoop:
+    _counter: int = 0
+
+    def __init__(
+        self,
+        steps: list[Executable],
+        stop: Callable[[WorkflowContext], Awaitable[bool]],
+        max_iterations: int = 10,
+        name: str | None = None,
+    ) -> None:
+        self.steps = steps
+        self.stop = stop
+        self.max_iterations = max_iterations
+        if name is not None:
+            self.name = name
+        else:
+            AsyncLoop._counter += 1
+            self.name = f"async_loop_{AsyncLoop._counter}"
+
+    async def execute(self, flow: Any, context: WorkflowContext) -> list[StepOutput]:
+        context.set_loop_iteration(self.name, 0)
+        reports: list[StepOutput] = []
+        while context.loop_iteration(self.name) < self.max_iterations:
+            context.increment_loop_iteration(self.name)
+            for step in self.steps:
+                step_outputs = await step.execute(flow, context)
+                reports.extend(step_outputs)
+                if _should_stop(step_outputs):
+                    return reports
+            if await self.stop(context):
                 break
         return reports

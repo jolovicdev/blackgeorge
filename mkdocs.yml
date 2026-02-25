@@ -43,6 +43,8 @@ plugins:
           - tool-hooks.md
           - collaboration.md
           - events.md
+          - event-payloads.md
+          - exceptions.md
           - core-types.md
           - multimodal.md
         Advanced Features:
@@ -85,6 +87,8 @@ nav:
   - Tool hooks: tool-hooks.md
   - Collaboration: collaboration.md
   - Events and streaming: events.md
+  - Event payloads: event-payloads.md
+  - Exceptions: exceptions.md
   - Multimodal: multimodal.md
   - Storage: storage.md
   - Memory: memory.md

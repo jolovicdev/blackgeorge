@@ -6,6 +6,7 @@ from typing import Any
 
 from blackgeorge.adapters.base import ModelResponse
 from blackgeorge.core.event import Event
+from blackgeorge.core.event_types import EventType
 from blackgeorge.core.job import Job
 from blackgeorge.core.message import Message
 from blackgeorge.core.pending_action import PendingAction
@@ -150,7 +151,7 @@ def _fail_report(
     emit: EventEmitter,
 ) -> Report:
     errors.append(message)
-    emit("worker.failed", worker_name, {"error": message})
+    emit(EventType.WORKER_FAILED, worker_name, {"error": message})
     return _build_report(
         run_id,
         "failed",
@@ -289,7 +290,7 @@ def _finalize_structured_response(
     assistant_message = Message(role="assistant", content=content)
     messages.append(assistant_message)
     emit_assistant_message(emit, worker_name, assistant_message)
-    emit("worker.completed", worker_name, {})
+    emit(EventType.WORKER_COMPLETED, worker_name, {})
     return _build_report(
         run_id,
         "completed",
@@ -325,7 +326,7 @@ def _finalize_plain_response(
     )
     messages.append(assistant_message)
     emit_assistant_message(emit, worker_name, assistant_message)
-    emit("worker.completed", worker_name, {})
+    emit(EventType.WORKER_COMPLETED, worker_name, {})
     return _build_report(
         run_id,
         "completed",
@@ -406,7 +407,7 @@ async def _execute_tool_calls_async(
     results: dict[str, ToolResult] = dict(immediate_results)
     if executable_calls:
         for call, tool in executable_calls:
-            emit("tool.started", tool.name, {"tool_call_id": call.id})
+            emit(EventType.TOOL_STARTED, tool.name, {"tool_call_id": call.id})
         if len(executable_calls) == 1:
             call, tool = executable_calls[0]
             results[call.id] = await aexecute_tool(tool, call)
@@ -418,9 +419,9 @@ async def _execute_tool_calls_async(
     for call in ordered_calls:
         result = results.get(call.id, ToolResult(error="Tool execution failed"))
         if result.error:
-            emit("tool.failed", call.name, {"tool_call_id": call.id, "error": result.error})
+            emit(EventType.TOOL_FAILED, call.name, {"tool_call_id": call.id, "error": result.error})
         else:
-            emit("tool.completed", call.name, _tool_event_payload(call, result))
+            emit(EventType.TOOL_COMPLETED, call.name, _tool_event_payload(call, result))
         tool_result_message = tool_message(result, call)
         messages.append(tool_result_message)
         replace_tool_call(tool_calls, tool_call_with_result(call, result))

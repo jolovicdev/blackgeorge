@@ -2,6 +2,7 @@ from collections.abc import Callable
 from typing import Any
 
 from blackgeorge.adapters.base import BaseModelAdapter
+from blackgeorge.config import RunConfig
 from blackgeorge.core.event import Event
 from blackgeorge.core.job import Job
 from blackgeorge.core.report import Report
@@ -69,6 +70,9 @@ class Worker:
             respect_context_window=respect_context_window,
         )
 
+    def run_with_config(self, config: RunConfig, job: Job) -> tuple[Report, RunState | None]:
+        return self._runner().run_with_config(config, job, self.model)
+
     async def arun(
         self,
         *,
@@ -103,6 +107,9 @@ class Worker:
             model_name=model_name,
             respect_context_window=respect_context_window,
         )
+
+    async def arun_with_config(self, config: RunConfig, job: Job) -> tuple[Report, RunState | None]:
+        return await self._runner().arun_with_config(config, job, self.model)
 
     def resume(
         self,
@@ -139,6 +146,11 @@ class Worker:
             respect_context_window=respect_context_window,
         )
 
+    def resume_with_config(
+        self, config: RunConfig, state: RunState, decision_or_input: Any
+    ) -> tuple[Report, RunState | None]:
+        return self._runner().resume_with_config(config, state, decision_or_input, self.model)
+
     async def aresume(
         self,
         *,
@@ -172,4 +184,11 @@ class Worker:
             max_tool_calls=max_tool_calls,
             model_name=model_name,
             respect_context_window=respect_context_window,
+        )
+
+    async def aresume_with_config(
+        self, config: RunConfig, state: RunState, decision_or_input: Any
+    ) -> tuple[Report, RunState | None]:
+        return await self._runner().aresume_with_config(
+            config, state, decision_or_input, self.model
         )

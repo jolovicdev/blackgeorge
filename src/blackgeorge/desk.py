@@ -186,6 +186,9 @@ class Desk:
         def emit(event_type: str, source: str, payload: dict[str, Any]) -> None:
             self._emit(events, run_id, event_type, source, payload)
 
+        async def drain_handlers() -> None:
+            await self.event_bus.await_pending()
+
         if isinstance(runner, Worker):
             self.register_worker(runner)
             report, state = runner.run(
@@ -221,7 +224,7 @@ class Desk:
                 max_tool_calls=self.max_tool_calls,
                 default_model=self.model,
                 respect_context_window=self.respect_context_window,
-                drain_async_handlers=self.event_bus.await_pending,
+                drain_async_handlers=drain_handlers,
             )
         else:
             raise TypeError("Runner must be Worker or Workforce")

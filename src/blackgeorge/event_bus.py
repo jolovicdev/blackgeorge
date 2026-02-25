@@ -4,6 +4,7 @@ from inspect import iscoroutinefunction
 from typing import Any
 
 from blackgeorge.core.event import Event
+from blackgeorge.exceptions import EventHandlerError
 from blackgeorge.logging import get_logger
 
 EventHandler = Callable[[Event], Any]
@@ -13,6 +14,7 @@ class EventBus:
     def __init__(self) -> None:
         self._handlers: dict[str, list[EventHandler]] = {}
         self._pending: dict[asyncio.Future[Any], str | None] = {}
+        self._errors: list[EventHandlerError] = []
         self._logger = get_logger("blackgeorge.event_bus")
 
     def subscribe(self, event_type: str, handler: EventHandler) -> None:
@@ -58,6 +60,11 @@ class EventBus:
             return
         exc = task.exception()
         if exc is not None:
+            if isinstance(exc, Exception):
+                error = EventHandlerError(event_type or "unknown", exc)
+            else:
+                error = EventHandlerError(event_type or "unknown", Exception(str(exc)))
+            self._errors.append(error)
             payload = {"error": str(exc), "error_type": type(exc).__name__}
             if event_type is not None:
                 payload["event_type"] = event_type
@@ -77,7 +84,13 @@ class EventBus:
                 if isinstance(result, Awaitable):
                     await result
 
-    async def await_pending(self) -> None:
+    def get_errors(self) -> list[EventHandlerError]:
+        return list(self._errors)
+
+    def clear_errors(self) -> None:
+        self._errors.clear()
+
+    async def await_pending(self, *, raise_on_error: bool = False) -> list[EventHandlerError]:
         loop = asyncio.get_running_loop()
         while True:
             pending = [
@@ -88,3 +101,6 @@ class EventBus:
             if not pending:
                 break
             await asyncio.gather(*pending, return_exceptions=True)
+        if raise_on_error and self._errors:
+            raise self._errors[0]
+        return self.get_errors()

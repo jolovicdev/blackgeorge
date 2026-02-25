@@ -21,6 +21,7 @@ A tool includes:
 - timeout
 - retries
 - retry_delay
+- output_type (optional)
 
 `external_execution` is available for your own conventions. The core worker does not change behavior based on this flag.
 
@@ -116,6 +117,42 @@ def fetch_status(code: int) -> ToolResult:
         return ToolResult(content="ok", data={"code": code})
     return ToolResult(error="not ok")
 ```
+
+`ToolResult` fields:
+
+- `content`: String content returned to the model
+- `data`: Structured data (preserved when using `output_type`)
+- `error`: Error message if execution failed
+- `timed_out`: Whether the tool timed out
+- `cancelled`: Whether the tool was cancelled
+- `original_exception`: The original exception if an error occurred
+
+## Output Type Validation
+
+Tools can declare an `output_type` for automatic validation of return values:
+
+```python
+from pydantic import BaseModel
+from blackgeorge.tools import tool
+
+class AnalysisResult(BaseModel):
+    findings: list[str]
+    confidence: float
+
+@tool(output_type=AnalysisResult)
+def analyze(text: str) -> dict:
+    return {
+        "findings": ["insight 1", "insight 2"],
+        "confidence": 0.85,
+    }
+```
+
+When `output_type` is set:
+- Return values are validated against the Pydantic model
+- Invalid outputs produce a `ToolResult` with `error` set
+- Valid outputs are available as structured `data`
+
+This enables type-safe tool outputs and automatic schema validation.
 
 ## Hooks
 

@@ -71,6 +71,61 @@ desk = Desk(
 )
 ```
 
+## RunConfig
+
+For programmatic control, use `RunConfig` to bundle run parameters:
+
+```python
+from blackgeorge import Desk, Worker, RunConfig
+from blackgeorge.adapters import LiteLLMAdapter
+
+adapter = LiteLLMAdapter()
+worker = Worker(name="analyst")
+
+config = RunConfig(
+    adapter=adapter,
+    emit=lambda type, source, payload: print(f"{type}: {source}"),
+    run_id="run-123",
+    temperature=0.7,
+    max_tokens=1000,
+    max_iterations=5,
+    max_tool_calls=10,
+    default_model="openai/gpt-5-nano",
+)
+
+# Use config-based methods
+report, state = worker.run_with_config(config, job)
+report, state = await worker.arun_with_config(config, job)
+```
+
+### RunConfig fields
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `adapter` | BaseModelAdapter | Required | LLM adapter for model calls |
+| `emit` | EventEmitter | Required | Event emission callback |
+| `run_id` | str | Required | Unique run identifier |
+| `events` | list[Event] | [] | Event list for the run |
+| `temperature` | float | None | Model temperature |
+| `max_tokens` | int | None | Maximum completion tokens |
+| `stream` | bool | False | Enable streaming |
+| `stream_options` | dict | None | Streaming options |
+| `structured_output_retries` | int | 3 | Structured output retry count |
+| `max_iterations` | int | 10 | Maximum model turns |
+| `max_tool_calls` | int | 20 | Maximum tool calls |
+| `respect_context_window` | bool | True | Auto-summarize on context errors |
+| `default_model` | str | None | Default model name |
+
+### RunConfig methods
+
+```python
+# Create a copy with overrides
+new_config = config.with_overrides(temperature=0.5, max_tokens=500)
+
+# Get effective model name (worker model or default)
+model = config.model_name(worker.model)
+```
+
 ### Model configuration
 
 | Parameter | Type | Default | Description |
