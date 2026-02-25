@@ -1,3 +1,4 @@
+import copy
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -25,7 +26,7 @@ class RunConfig:
     default_model: str | None = None
 
     def with_overrides(self, **kwargs: Any) -> "RunConfig":
-        current = {**self.__dict__}
+        current = copy.deepcopy(self.__dict__)
         current.update(kwargs)
         return RunConfig(**current)
 
