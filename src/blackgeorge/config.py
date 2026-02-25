@@ -1,4 +1,3 @@
-import copy
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -26,7 +25,11 @@ class RunConfig:
     default_model: str | None = None
 
     def with_overrides(self, **kwargs: Any) -> "RunConfig":
-        current = copy.deepcopy(self.__dict__)
+        current = dict(self.__dict__)
+        if "events" not in kwargs and current.get("events") is not None:
+            current["events"] = list(current["events"])
+        if "stream_options" not in kwargs and current.get("stream_options") is not None:
+            current["stream_options"] = dict(current["stream_options"])
         current.update(kwargs)
         return RunConfig(**current)
 
