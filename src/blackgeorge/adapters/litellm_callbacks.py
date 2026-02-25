@@ -7,6 +7,8 @@ from typing import Any
 
 from litellm.cost_calculator import completion_cost
 
+from blackgeorge.core.event_types import EventType
+
 
 def _compute_latency_ms(
     start_time: float | datetime | None,
@@ -103,7 +105,7 @@ def emit_llm_completed(model: str, response: Any) -> None:
     if cost is not None:
         payload["cost"] = cost
 
-    emit("llm.completed", "litellm_adapter", payload)
+    emit(EventType.LLM_COMPLETED, "litellm_adapter", payload)
 
 
 def emit_llm_failed(model: str, exception: Exception | None) -> None:

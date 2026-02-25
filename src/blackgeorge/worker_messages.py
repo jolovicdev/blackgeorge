@@ -5,6 +5,7 @@ from typing import Any, cast
 
 from pydantic import BaseModel
 
+from blackgeorge.core.event_types import EventType
 from blackgeorge.core.job import Job
 from blackgeorge.core.message import Message
 from blackgeorge.core.tool_call import ToolCall
@@ -250,7 +251,7 @@ def emit_assistant_message(
     payload: dict[str, Any] = {"content": message.content}
     if message.tool_calls:
         payload["tool_calls"] = tool_call_summaries(message.tool_calls)
-    emit("assistant.message", worker_name, payload)
+    emit(EventType.ASSISTANT_MESSAGE, worker_name, payload)
 
 
 def ensure_content(value: str | None) -> str:

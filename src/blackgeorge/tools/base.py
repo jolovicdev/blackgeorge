@@ -18,6 +18,7 @@ class ToolResult:
     error: str | None = None
     timed_out: bool = False
     cancelled: bool = False
+    exception_type: str | None = None
 
 
 @dataclass(frozen=True)
@@ -38,3 +39,4 @@ class Tool:
     timeout: float | None = None
     retries: int = 0
     retry_delay: float = 1.0
+    output_type: type[BaseModel] | None = None

@@ -309,3 +309,40 @@ report = desk.run(workforce, job)
 ## Thread safety
 
 Both `Blackboard` and `Channel` are thread-safe. They use internal locks to ensure safe concurrent access from multiple workers.
+
+## Async methods
+
+For use in async contexts (like `Workforce` with `mode="collaborate"`), both `Blackboard` and `Channel` provide async method variants:
+
+### Async Blackboard
+
+```python
+# Async variants of all methods
+await blackboard.awrite("key", value, "author")
+value = await blackboard.aread("key")
+entry = await blackboard.aread_entry("key")
+exists = await blackboard.aexists("key")
+deleted = await blackboard.adelete("key")
+keys = await blackboard.akeys()
+entries = await blackboard.aall_entries()
+await blackboard.asubscribe("key", callback)
+await blackgeorge.asubscribe_all(callback)
+await blackboard.aunsubscribe("key", callback)
+await blackboard.aclear()
+```
+
+### Async Channel
+
+```python
+# Async variants of all methods
+message = await channel.asend("sender", "recipient", content, metadata)
+message = await channel.abroadcast("sender", content, metadata)
+messages = await channel.areceive("recipient", clear=True, broadcast_mode="one_shot")
+messages = await channel.apeek("recipient")
+await channel.aclear("recipient")
+messages = await channel.aall_messages()
+```
+
+### Why async methods?
+
+When using `Workforce` with `mode="collaborate"`, workers run in parallel using `asyncio.gather`. The async variants use `asyncio.to_thread()` to delegate to sync methods, ensuring thread-safe access through a single `threading.Lock`. This prevents blocking the event loop while maintaining correct synchronization.

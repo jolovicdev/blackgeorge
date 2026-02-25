@@ -3,6 +3,7 @@ import concurrent.futures
 import contextlib
 import json
 import time
+import weakref
 from inspect import isawaitable, iscoroutinefunction
 from typing import Any
 
@@ -10,7 +11,29 @@ from pydantic import BaseModel
 
 from blackgeorge.async_utils import run_coroutine_in_thread, run_coroutine_sync
 from blackgeorge.core.tool_call import ToolCall
+from blackgeorge.exceptions import ToolExecutionError, ToolTimeoutError, ToolValidationError
 from blackgeorge.tools.base import ProgressCallback, Tool, ToolResult
+
+_shared_executor: concurrent.futures.ThreadPoolExecutor | None = None
+_executor_refs: weakref.WeakSet[concurrent.futures.ThreadPoolExecutor] = weakref.WeakSet()
+
+
+def get_shared_executor() -> concurrent.futures.ThreadPoolExecutor:
+    global _shared_executor
+    if _shared_executor is None or _shared_executor._shutdown:  # type: ignore[attr-defined]
+        _shared_executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=10,
+            thread_name_prefix="blackgeorge-tool-",
+        )
+        _executor_refs.add(_shared_executor)
+    return _shared_executor
+
+
+def shutdown_executor(wait: bool = True) -> None:
+    global _shared_executor
+    if _shared_executor is not None:
+        _shared_executor.shutdown(wait=wait)
+        _shared_executor = None
 
 
 def _to_content(value: Any) -> str:
@@ -24,6 +47,18 @@ def _to_content(value: Any) -> str:
         return json.dumps(value, ensure_ascii=True, default=str)
     except TypeError:
         return str(value)
+
+
+def _validate_output(result: Any, output_type: type[BaseModel] | None) -> tuple[Any, str | None]:
+    if output_type is None:
+        return result, None
+    if isinstance(result, output_type):
+        return result, None
+    try:
+        validated = output_type.model_validate(result)
+        return validated, None
+    except Exception as exc:
+        return result, f"Output validation failed: {exc}"
 
 
 def _run_coroutine_in_thread(coro: Any) -> Any:
@@ -106,21 +141,36 @@ def _execute_sync_once(tool: Tool, args: dict[str, Any], timeout: float | None) 
         if timeout is None:
             result = _run_sync_call(tool, args)
         else:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(_run_sync_call, tool, args)
-                try:
-                    result = future.result(timeout=timeout)
-                except concurrent.futures.TimeoutError:
-                    future.cancel()
-                    return ToolResult(
-                        error=f"Tool execution timed out after {timeout}s",
-                        timed_out=True,
-                    )
+            executor = get_shared_executor()
+            future = executor.submit(_run_sync_call, tool, args)
+            try:
+                result = future.result(timeout=timeout)
+            except concurrent.futures.TimeoutError:
+                future.cancel()
+                timeout_exc = ToolTimeoutError(tool.name, timeout)
+                return ToolResult(
+                    error=str(timeout_exc),
+                    timed_out=True,
+                    exception_type=type(timeout_exc).__name__,
+                )
         if isinstance(result, ToolResult):
             return result
-        return ToolResult(content=_to_content(result), data=result)
-    except Exception as exc:
-        return ToolResult(error=str(exc))
+        validated_result, validation_error = _validate_output(result, tool.output_type)
+        if validation_error:
+            validation_exc = ToolValidationError(tool.name, validation_error)
+            return ToolResult(
+                error=str(validation_exc),
+                exception_type=type(validation_exc).__name__,
+            )
+        return ToolResult(content=_to_content(validated_result), data=validated_result)
+    except Exception as original_exc:
+        if isinstance(original_exc, (ToolExecutionError, ToolTimeoutError, ToolValidationError)):
+            return ToolResult(
+                error=str(original_exc),
+                exception_type=type(original_exc).__name__,
+            )
+        tool_exc = ToolExecutionError(tool.name, str(original_exc), original_exc)
+        return ToolResult(error=str(tool_exc), exception_type=type(tool_exc).__name__)
 
 
 def execute_tool(tool: Tool, call: ToolCall) -> ToolResult:
@@ -129,7 +179,11 @@ def execute_tool(tool: Tool, call: ToolCall) -> ToolResult:
     try:
         args = _validate_tool_call(call, tool)
     except Exception as exc:
-        tool_result = ToolResult(error=str(exc))
+        exc_wrapped = ToolValidationError(tool.name, str(exc))
+        tool_result = ToolResult(
+            error=str(exc_wrapped),
+            exception_type=type(exc_wrapped).__name__,
+        )
         _sync_post_hooks(tool, call, tool_result)
         return tool_result
 
@@ -171,7 +225,14 @@ async def _execute_once(
             result = await task
             if isinstance(result, ToolResult):
                 return result
-            return ToolResult(content=_to_content(result), data=result)
+            validated_result, validation_error = _validate_output(result, tool.output_type)
+            if validation_error:
+                validation_exc = ToolValidationError(tool.name, validation_error)
+                return ToolResult(
+                    error=str(validation_exc),
+                    exception_type=type(validation_exc).__name__,
+                )
+            return ToolResult(content=_to_content(validated_result), data=validated_result)
 
         if cancel_task is not None and cancel_task in done:
             task.cancel()
@@ -182,14 +243,25 @@ async def _execute_once(
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task
-        return ToolResult(error=f"Tool execution timed out after {timeout}s", timed_out=True)
+        timeout_exc = ToolTimeoutError(tool.name, timeout or 0)
+        return ToolResult(
+            error=str(timeout_exc),
+            timed_out=True,
+            exception_type=type(timeout_exc).__name__,
+        )
     except asyncio.CancelledError:
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task
         return ToolResult(error="Tool execution cancelled", cancelled=True)
-    except Exception as exc:
-        return ToolResult(error=str(exc))
+    except Exception as original_exc:
+        if isinstance(original_exc, (ToolExecutionError, ToolTimeoutError, ToolValidationError)):
+            return ToolResult(
+                error=str(original_exc),
+                exception_type=type(original_exc).__name__,
+            )
+        tool_exc = ToolExecutionError(tool.name, str(original_exc), original_exc)
+        return ToolResult(error=str(tool_exc), exception_type=type(tool_exc).__name__)
     finally:
         if cancel_task is not None and not cancel_task.done():
             cancel_task.cancel()
@@ -209,7 +281,11 @@ async def aexecute_tool(
     try:
         args = _validate_tool_call(call, tool)
     except Exception as exc:
-        tool_result = ToolResult(error=f"Validation error: {exc}")
+        exc_wrapped = ToolValidationError(tool.name, str(exc))
+        tool_result = ToolResult(
+            error=str(exc_wrapped),
+            exception_type=type(exc_wrapped).__name__,
+        )
         await _async_post_hooks(tool, call, tool_result)
         return tool_result
 

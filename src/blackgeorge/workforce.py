@@ -1,17 +1,21 @@
 import asyncio
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
 
 from blackgeorge.collaboration.blackboard import Blackboard
 from blackgeorge.collaboration.channel import Channel
 from blackgeorge.core.event import Event
+from blackgeorge.core.event_types import EventType
 from blackgeorge.core.job import Job
 from blackgeorge.core.report import Report
 from blackgeorge.core.types import WorkforceMode
 from blackgeorge.store.state import RunState
 from blackgeorge.worker import Worker
+
+if TYPE_CHECKING:
+    from blackgeorge.config import RunConfig
 from blackgeorge.workforce_helpers import (
     aggregate_reports as _aggregate_reports,
 )
@@ -242,31 +246,75 @@ class Workforce:
         respect_context_window: bool,
         drain_async_handlers: Callable[[], Awaitable[None]] | None = None,
     ) -> tuple[Report, RunState | None]:
-        try:
-            tasks: list[asyncio.Task[tuple[Report, RunState | None]]] = []
-            for worker in self.workers:
-                tasks.append(
-                    asyncio.create_task(
-                        self._arun_worker(
-                            worker=worker,
-                            adapter=adapter,
-                            job=job,
-                            run_id=run_id,
-                            events=events,
-                            emit=emit,
-                            temperature=temperature,
-                            max_tokens=max_tokens,
-                            stream=stream,
-                            stream_options=stream_options,
-                            structured_output_retries=structured_output_retries,
-                            max_iterations=max_iterations,
-                            max_tool_calls=max_tool_calls,
-                            default_model=default_model,
-                            respect_context_window=respect_context_window,
-                        )
+        tasks: list[asyncio.Task[tuple[Report, RunState | None]]] = []
+        for worker in self.workers:
+            tasks.append(
+                asyncio.create_task(
+                    self._arun_worker(
+                        worker=worker,
+                        adapter=adapter,
+                        job=job,
+                        run_id=run_id,
+                        events=events,
+                        emit=emit,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        stream=stream,
+                        stream_options=stream_options,
+                        structured_output_retries=structured_output_retries,
+                        max_iterations=max_iterations,
+                        max_tool_calls=max_tool_calls,
+                        default_model=default_model,
+                        respect_context_window=respect_context_window,
                     )
                 )
-            results = await asyncio.gather(*tasks)
+            )
+        try:
+            done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION)
+            for task in pending:
+                task.cancel()
+            if pending:
+                await asyncio.gather(*pending, return_exceptions=True)
+            results: list[tuple[Report, RunState | None]] = []
+            for task in tasks:
+                try:
+                    results.append(task.result())
+                except asyncio.CancelledError:
+                    results.append(
+                        (
+                            Report(
+                                run_id=run_id,
+                                status="failed",
+                                content=None,
+                                data=None,
+                                messages=[],
+                                tool_calls=[],
+                                metrics={},
+                                events=events,
+                                pending_action=None,
+                                errors=["Worker cancelled due to sibling failure"],
+                            ),
+                            None,
+                        )
+                    )
+                except Exception as exc:
+                    results.append(
+                        (
+                            Report(
+                                run_id=run_id,
+                                status="failed",
+                                content=None,
+                                data=None,
+                                messages=[],
+                                tool_calls=[],
+                                metrics={},
+                                events=events,
+                                pending_action=None,
+                                errors=[str(exc)],
+                            ),
+                            None,
+                        )
+                    )
             reports: list[tuple[Worker, Report]] = []
             any_failed = False
             for worker, (report, worker_state) in zip(self.workers, results, strict=False):
@@ -295,6 +343,11 @@ class Workforce:
             if self.reducer:
                 return self.reducer([report for _, report in reports]), None
             return _default_reducer(reports, run_id, events), None
+        except asyncio.CancelledError:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
         finally:
             if drain_async_handlers is not None:
                 await drain_async_handlers()
@@ -318,7 +371,7 @@ class Workforce:
         respect_context_window: bool = True,
         drain_async_handlers: Callable[[], Awaitable[None]] | None = None,
     ) -> tuple[Report, RunState | None]:
-        emit("workforce.started", self.name, {})
+        emit(EventType.WORKFORCE_STARTED, self.name, {})
 
         if self.mode == "managed":
             manager = self.manager or self.workers[0]
@@ -357,10 +410,10 @@ class Workforce:
                     "manager",
                     payload={"root_job": job.model_dump(mode="json")},
                 )
-                emit("workforce.completed", self.name, {})
+                emit(EventType.WORKFORCE_COMPLETED, self.name, {})
                 return manager_report, state
             if manager_report.status == "failed":
-                emit("workforce.completed", self.name, {})
+                emit(EventType.WORKFORCE_COMPLETED, self.name, {})
                 return manager_report, None
 
             selected = _select_worker_name(manager_report, self.workers)
@@ -395,12 +448,12 @@ class Workforce:
                         "selected_worker": worker.name,
                     },
                 )
-                emit("workforce.completed", self.name, {})
+                emit(EventType.WORKFORCE_COMPLETED, self.name, {})
                 return report, state
             if report.status == "failed":
-                emit("workforce.completed", self.name, {})
+                emit(EventType.WORKFORCE_COMPLETED, self.name, {})
                 return report, None
-            emit("workforce.completed", self.name, {})
+            emit(EventType.WORKFORCE_COMPLETED, self.name, {})
             return report, None
 
         if self._can_parallelize_collaborate(job):
@@ -424,7 +477,7 @@ class Workforce:
                     drain_async_handlers=drain_async_handlers,
                 )
             )
-            emit("workforce.completed", self.name, {})
+            emit(EventType.WORKFORCE_COMPLETED, self.name, {})
             return report, parallel_state
 
         reports: list[tuple[Worker, Report]] = []
@@ -460,10 +513,10 @@ class Workforce:
                         "pending_worker_index": len(reports),
                     },
                 )
-                emit("workforce.completed", self.name, {})
+                emit(EventType.WORKFORCE_COMPLETED, self.name, {})
                 return report, state
             if report.status == "failed":
-                emit("workforce.completed", self.name, {})
+                emit(EventType.WORKFORCE_COMPLETED, self.name, {})
                 return _aggregate_reports(
                     reports + [(worker, report)],
                     run_id,
@@ -472,7 +525,7 @@ class Workforce:
                 ), None
             reports.append((worker, report))
 
-        emit("workforce.completed", self.name, {})
+        emit(EventType.WORKFORCE_COMPLETED, self.name, {})
         if self.reducer:
             return self.reducer([report for _, report in reports]), None
         return _default_reducer(reports, run_id, events), None
@@ -494,8 +547,9 @@ class Workforce:
         max_tool_calls: int,
         default_model: str,
         respect_context_window: bool = True,
+        drain_async_handlers: Callable[[], Awaitable[None]] | None = None,
     ) -> tuple[Report, RunState | None]:
-        emit("workforce.started", self.name, {})
+        emit(EventType.WORKFORCE_STARTED, self.name, {})
 
         if self.mode == "managed":
             manager = self.manager or self.workers[0]
@@ -534,10 +588,10 @@ class Workforce:
                     "manager",
                     payload={"root_job": job.model_dump(mode="json")},
                 )
-                emit("workforce.completed", self.name, {})
+                emit(EventType.WORKFORCE_COMPLETED, self.name, {})
                 return manager_report, state
             if manager_report.status == "failed":
-                emit("workforce.completed", self.name, {})
+                emit(EventType.WORKFORCE_COMPLETED, self.name, {})
                 return manager_report, None
 
             selected = _select_worker_name(manager_report, self.workers)
@@ -572,12 +626,12 @@ class Workforce:
                         "selected_worker": worker.name,
                     },
                 )
-                emit("workforce.completed", self.name, {})
+                emit(EventType.WORKFORCE_COMPLETED, self.name, {})
                 return report, state
             if report.status == "failed":
-                emit("workforce.completed", self.name, {})
+                emit(EventType.WORKFORCE_COMPLETED, self.name, {})
                 return report, None
-            emit("workforce.completed", self.name, {})
+            emit(EventType.WORKFORCE_COMPLETED, self.name, {})
             return report, None
 
         if self._can_parallelize_collaborate(job):
@@ -596,8 +650,9 @@ class Workforce:
                 max_tool_calls=max_tool_calls,
                 default_model=default_model,
                 respect_context_window=respect_context_window,
+                drain_async_handlers=drain_async_handlers,
             )
-            emit("workforce.completed", self.name, {})
+            emit(EventType.WORKFORCE_COMPLETED, self.name, {})
             return report, parallel_state
 
         reports: list[tuple[Worker, Report]] = []
@@ -633,10 +688,10 @@ class Workforce:
                         "pending_worker_index": len(reports),
                     },
                 )
-                emit("workforce.completed", self.name, {})
+                emit(EventType.WORKFORCE_COMPLETED, self.name, {})
                 return report, state
             if report.status == "failed":
-                emit("workforce.completed", self.name, {})
+                emit(EventType.WORKFORCE_COMPLETED, self.name, {})
                 return _aggregate_reports(
                     reports + [(worker, report)],
                     run_id,
@@ -645,7 +700,7 @@ class Workforce:
                 ), None
             reports.append((worker, report))
 
-        emit("workforce.completed", self.name, {})
+        emit(EventType.WORKFORCE_COMPLETED, self.name, {})
         if self.reducer:
             return self.reducer([report for _, report in reports]), None
         return _default_reducer(reports, run_id, events), None
@@ -1229,3 +1284,68 @@ class Workforce:
             errors=["Unknown workflow stage"],
         )
         return report, None
+
+    def run_with_config(
+        self,
+        config: "RunConfig",
+        job: Job,
+        drain_async_handlers: Callable[[], Awaitable[None]] | None = None,
+    ) -> tuple[Report, RunState | None]:
+        _ensure_not_running_loop("run", "arun")
+        return asyncio.run(self.arun_with_config(config, job, drain_async_handlers))
+
+    async def arun_with_config(
+        self,
+        config: "RunConfig",
+        job: Job,
+        drain_async_handlers: Callable[[], Awaitable[None]] | None = None,
+    ) -> tuple[Report, RunState | None]:
+        return await self.arun(
+            adapter=config.adapter,
+            job=job,
+            run_id=config.run_id,
+            events=config.events,
+            emit=config.emit,
+            temperature=config.temperature,
+            max_tokens=config.max_tokens,
+            stream=config.stream,
+            stream_options=config.stream_options,
+            structured_output_retries=config.structured_output_retries,
+            max_iterations=config.max_iterations,
+            max_tool_calls=config.max_tool_calls,
+            default_model=config.default_model or "",
+            respect_context_window=config.respect_context_window,
+            drain_async_handlers=drain_async_handlers,
+        )
+
+    def resume_with_config(
+        self,
+        config: "RunConfig",
+        state: RunState,
+        decision_or_input: Any,
+    ) -> tuple[Report, RunState | None]:
+        _ensure_not_running_loop("resume", "aresume")
+        return asyncio.run(self.aresume_with_config(config, state, decision_or_input))
+
+    async def aresume_with_config(
+        self,
+        config: "RunConfig",
+        state: RunState,
+        decision_or_input: Any,
+    ) -> tuple[Report, RunState | None]:
+        return await self.aresume(
+            adapter=config.adapter,
+            state=state,
+            decision_or_input=decision_or_input,
+            events=config.events,
+            emit=config.emit,
+            temperature=config.temperature,
+            max_tokens=config.max_tokens,
+            stream=config.stream,
+            stream_options=config.stream_options,
+            structured_output_retries=config.structured_output_retries,
+            max_iterations=config.max_iterations,
+            max_tool_calls=config.max_tool_calls,
+            default_model=config.default_model or "",
+            respect_context_window=config.respect_context_window,
+        )

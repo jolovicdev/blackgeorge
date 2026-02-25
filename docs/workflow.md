@@ -27,6 +27,8 @@ A flow produces a report. If there are multiple steps, the content is combined w
 - Condition: chooses a branch based on a predicate
 - Router: selects a route by string key
 - Loop: repeats steps until a stop predicate or max iterations
+- AsyncCondition: chooses a branch based on an async predicate
+- AsyncLoop: repeats steps until an async stop predicate or max iterations
 
 ### Step
 
@@ -84,6 +86,52 @@ loop = Loop(
     steps=[Step(worker_a)],
     stop=lambda ctx: len(ctx.outputs) >= 3,
     max_iterations=5,
+    name="analysis_loop",  # Optional: for tracking iterations
+)
+```
+
+Loops track iterations in the `WorkflowContext`:
+
+```python
+def stop_when_done(ctx):
+    iteration = ctx.loop_iteration("analysis_loop")
+    return iteration >= 3 or len(ctx.outputs) > 0
+```
+
+### AsyncCondition
+
+Use async predicates when the condition requires async operations:
+
+```python
+from blackgeorge.workflow import AsyncCondition, Step
+
+async def check_external_service(ctx):
+    result = await fetch_status()
+    return result.ready
+
+condition = AsyncCondition(
+    predicate=check_external_service,
+    if_true=[Step(worker_a)],
+    if_false=[Step(worker_b)],
+)
+```
+
+### AsyncLoop
+
+Use async predicates for loop termination:
+
+```python
+from blackgeorge.workflow import AsyncLoop, Step
+
+async def should_stop(ctx):
+    result = await check_completion()
+    return result.done
+
+loop = AsyncLoop(
+    steps=[Step(worker_a)],
+    stop=should_stop,
+    max_iterations=10,
+    name="polling_loop",
 )
 ```
 

@@ -3,7 +3,9 @@ from collections.abc import Callable
 from typing import Any
 
 from blackgeorge.adapters.base import BaseModelAdapter, ModelResponse
+from blackgeorge.core.event_types import EventType
 from blackgeorge.core.message import Message
+from blackgeorge.exceptions import ContextLimitError
 
 CONTEXT_LIMIT_ERRORS = (
     "expected a string with maximum length",
@@ -32,6 +34,8 @@ MODEL_REGISTRATION_HINT = (
 
 
 def is_context_limit_error(error: Exception) -> bool:
+    if isinstance(error, ContextLimitError):
+        return True
     message = str(error).lower()
     return any(phrase in message for phrase in CONTEXT_LIMIT_ERRORS)
 
@@ -268,7 +272,7 @@ def apply_context_summary(
     summaries = metrics.setdefault("context_summaries", [])
     if isinstance(summaries, list):
         summaries.append(info)
-    emit("worker.context_summarized", worker_name, info)
+    emit(EventType.WORKER_CONTEXT_SUMMARIZED, worker_name, info)
     return True
 
 
@@ -318,7 +322,7 @@ async def aapply_context_summary(
     summaries = metrics.setdefault("context_summaries", [])
     if isinstance(summaries, list):
         summaries.append(info)
-    emit("worker.context_summarized", worker_name, info)
+    emit(EventType.WORKER_CONTEXT_SUMMARIZED, worker_name, info)
     return True
 
 

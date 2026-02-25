@@ -12,6 +12,34 @@ from blackgeorge.event_bus import EventBus
 bus = EventBus()
 ```
 
+### Error collection
+
+EventBus collects errors from async handlers for inspection:
+
+```python
+bus = EventBus()
+
+# After running handlers...
+errors = bus.get_errors()
+for error in errors:
+    print(f"Handler failed: {error.event_type} - {error.handler_error}")
+
+bus.clear_errors()
+```
+
+To await all pending handlers and optionally raise on first error:
+
+```python
+# Wait for all pending async handlers
+errors = await bus.await_pending()
+
+# Wait and raise on first error
+try:
+    errors = await bus.await_pending(raise_on_error=True)
+except EventHandlerError as e:
+    print(f"Handler failed: {e.event_type} - {e.handler_error}")
+```
+
 ### Subscribing to events
 
 ```python
@@ -69,6 +97,53 @@ bus.unsubscribe("*", handle_event)
 ```
 
 ## Event types
+
+### EventType Enum
+
+Use typed event types for IDE autocomplete and type safety:
+
+```python
+from blackgeorge import EventType
+
+# Access event types as enum values
+bus.subscribe(EventType.RUN_STARTED, handler)
+bus.subscribe(EventType.WORKER_COMPLETED, handler)
+bus.subscribe(EventType.TOOL_FAILED, handler)
+
+# Compare with strings
+assert EventType.WORKER_STARTED == "worker.started"
+assert EventType.WORKER_STARTED.value == "worker.started"
+```
+
+Available event types:
+
+| EventType | String Value |
+|-----------|--------------|
+| `RUN_STARTED` | `run.started` |
+| `RUN_COMPLETED` | `run.completed` |
+| `RUN_FAILED` | `run.failed` |
+| `RUN_PAUSED` | `run.paused` |
+| `RUN_RESUMED` | `run.resumed` |
+| `STEP_STARTED` | `step.started` |
+| `STEP_COMPLETED` | `step.completed` |
+| `STEP_PAUSED` | `step.paused` |
+| `WORKER_STARTED` | `worker.started` |
+| `WORKER_COMPLETED` | `worker.completed` |
+| `WORKER_FAILED` | `worker.failed` |
+| `WORKER_PAUSED` | `worker.paused` |
+| `WORKER_CONTEXT_SUMMARIZED` | `worker.context_summarized` |
+| `WORKFORCE_STARTED` | `workforce.started` |
+| `WORKFORCE_COMPLETED` | `workforce.completed` |
+| `TOOL_STARTED` | `tool.started` |
+| `TOOL_COMPLETED` | `tool.completed` |
+| `TOOL_FAILED` | `tool.failed` |
+| `TOOL_CONFIRMATION_REQUESTED` | `tool.confirmation_requested` |
+| `TOOL_USER_INPUT_REQUESTED` | `tool.user_input_requested` |
+| `STREAM_TOKEN` | `stream.token` |
+| `ASSISTANT_MESSAGE` | `assistant.message` |
+| `LLM_STARTED` | `llm.started` |
+| `LLM_COMPLETED` | `llm.completed` |
+| `LLM_FAILED` | `llm.failed` |
 
 ### Run events
 

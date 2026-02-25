@@ -2,21 +2,30 @@ import asyncio
 import json
 import warnings
 from collections.abc import Callable, Iterable
-from typing import Any, cast
-
-from pydantic import BaseModel, TypeAdapter
+from typing import TYPE_CHECKING, Any, cast
 
 from blackgeorge.adapters.base import BaseModelAdapter, ModelResponse
 from blackgeorge.core.event import Event
+from blackgeorge.core.event_types import EventType
 from blackgeorge.core.job import Job
+
+if TYPE_CHECKING:
+    from blackgeorge.config import RunConfig
 from blackgeorge.core.message import Message
 from blackgeorge.core.report import Report
 from blackgeorge.core.tool_call import ToolCall
+from blackgeorge.runner.streaming import (
+    append_tool_error,
+    chunk_tool_call_deltas,
+    is_stream_unsupported_error,
+    parse_structured_stream_json,
+    stream_value,
+    streamed_tool_calls,
+)
 from blackgeorge.store.state import RunState
 from blackgeorge.tools.base import Tool, ToolResult
 from blackgeorge.tools.execution import aexecute_tool
 from blackgeorge.tools.registry import Toolbelt
-from blackgeorge.utils import new_id
 from blackgeorge.worker_context import (
     aapply_context_summary,
     is_context_limit_error,
@@ -54,95 +63,6 @@ from blackgeorge.worker_runner_helpers import (
     _tool_event_payload,
 )
 from blackgeorge.worker_tools import resume_argument_key, update_arguments
-
-
-def _parse_structured_stream_json(response_schema: Any, content: str) -> Any:
-    if isinstance(response_schema, TypeAdapter):
-        return response_schema.validate_json(content)
-    if isinstance(response_schema, type) and issubclass(response_schema, BaseModel):
-        return response_schema.model_validate_json(content)
-    return TypeAdapter(response_schema).validate_json(content)
-
-
-def _stream_value(value: Any, key: str, default: Any = None) -> Any:
-    if isinstance(value, dict):
-        return value.get(key, default)
-    return getattr(value, key, default)
-
-
-def _append_tool_error(current: str | None, message: str) -> str:
-    return message if current is None else f"{current}; {message}"
-
-
-def _is_stream_unsupported_error(exc: Exception) -> bool:
-    if isinstance(exc, NotImplementedError):
-        return True
-    message = f"{type(exc).__name__}: {exc}".lower()
-    mentions_stream = "stream" in message or "streaming" in message
-    unsupported_markers = (
-        "unsupported",
-        "not support",
-        "not supported",
-        "not implemented",
-        "cannot stream",
-    )
-    return mentions_stream and any(marker in message for marker in unsupported_markers)
-
-
-def _chunk_tool_call_deltas(chunk: Any) -> tuple[list[Any], bool]:
-    choices = _stream_value(chunk, "choices", []) or []
-    if not choices:
-        return [], False
-    choice = choices[0]
-    delta = _stream_value(choice, "delta")
-    if delta is not None:
-        tool_calls = _stream_value(delta, "tool_calls")
-        if isinstance(tool_calls, list) and tool_calls:
-            return tool_calls, False
-    message = _stream_value(choice, "message")
-    if message is None:
-        return [], False
-    tool_calls = _stream_value(message, "tool_calls", []) or []
-    if isinstance(tool_calls, list):
-        return tool_calls, True
-    return [], False
-
-
-def _streamed_tool_calls(states: list[dict[str, Any]]) -> list[ToolCall]:
-    parsed: list[ToolCall] = []
-    for state in states:
-        error = cast(str | None, state.get("error"))
-        name_raw = state.get("name")
-        name = name_raw.strip() if isinstance(name_raw, str) else ""
-        if not name:
-            error = _append_tool_error(error, "Missing tool name")
-
-        arguments: dict[str, Any] = {}
-        arguments_obj = state.get("arguments_obj")
-        if isinstance(arguments_obj, dict):
-            arguments = dict(arguments_obj)
-        else:
-            argument_parts = state.get("arguments_parts")
-            argument_text = "".join(argument_parts) if isinstance(argument_parts, list) else ""
-            if argument_text:
-                try:
-                    parsed_arguments = json.loads(argument_text)
-                    if isinstance(parsed_arguments, dict):
-                        arguments = parsed_arguments
-                    else:
-                        error = _append_tool_error(
-                            error, "Tool arguments JSON must decode to object"
-                        )
-                except json.JSONDecodeError as exc:
-                    error = _append_tool_error(
-                        error,
-                        f"Invalid JSON in tool arguments: {exc}. Raw: {argument_text[:100]}",
-                    )
-
-        call_id_raw = state.get("id")
-        call_id = call_id_raw if isinstance(call_id_raw, str) and call_id_raw else new_id()
-        parsed.append(ToolCall(id=call_id, name=name, arguments=arguments, error=error))
-    return parsed
 
 
 class WorkerRunner:
@@ -316,7 +236,7 @@ class WorkerRunner:
                         extra_body=extra_body,
                     )
                 except Exception as exc:
-                    if _is_stream_unsupported_error(exc):
+                    if is_stream_unsupported_error(exc):
                         return await self._acompletion(
                             adapter=adapter,
                             model=model,
@@ -333,7 +253,7 @@ class WorkerRunner:
                         )
                     raise
             except Exception as exc:
-                if _is_stream_unsupported_error(exc):
+                if is_stream_unsupported_error(exc):
                     return await self._acompletion(
                         adapter=adapter,
                         model=model,
@@ -384,10 +304,10 @@ class WorkerRunner:
                     content_parts.append(token)
                     on_token(token)
 
-                tool_deltas, from_message_payload = _chunk_tool_call_deltas(chunk)
+                tool_deltas, from_message_payload = chunk_tool_call_deltas(chunk)
                 for position, tool_delta in enumerate(tool_deltas):
-                    index_value = _stream_value(tool_delta, "index")
-                    call_id_value = _stream_value(tool_delta, "id")
+                    index_value = stream_value(tool_delta, "index")
+                    call_id_value = stream_value(tool_delta, "id")
                     stable_keys: list[tuple[str, Any]] = []
                     if isinstance(index_value, int):
                         stable_keys.append(("index", index_value))
@@ -418,8 +338,8 @@ class WorkerRunner:
                     if isinstance(call_id_value, str) and call_id_value:
                         state["id"] = call_id_value
 
-                    function = _stream_value(tool_delta, "function")
-                    name_value = _stream_value(function, "name")
+                    function = stream_value(tool_delta, "function")
+                    name_value = stream_value(function, "name")
                     if isinstance(name_value, str):
                         name = name_value.strip()
                         if name:
@@ -429,7 +349,7 @@ class WorkerRunner:
                             elif not existing_name.startswith(name):
                                 state["name"] = f"{existing_name}{name}"
 
-                    arguments_value = _stream_value(function, "arguments")
+                    arguments_value = stream_value(function, "arguments")
                     if isinstance(arguments_value, str):
                         argument_parts = cast(list[str], state["arguments_parts"])
                         if from_message_payload:
@@ -456,7 +376,7 @@ class WorkerRunner:
                             on_token(serialized)
                     elif arguments_value is not None:
                         type_name = type(arguments_value).__name__
-                        state["error"] = _append_tool_error(
+                        state["error"] = append_tool_error(
                             cast(str | None, state.get("error")),
                             f"Unsupported tool arguments type: {type_name}",
                         )
@@ -489,7 +409,7 @@ class WorkerRunner:
                 content="".join(content_parts),
                 reasoning_content="".join(reasoning_parts) or None,
                 thinking_blocks=thinking_blocks or None,
-                tool_calls=_streamed_tool_calls(tool_states),
+                tool_calls=streamed_tool_calls(tool_states),
                 usage=usage,
                 raw=stream,
             )
@@ -539,7 +459,9 @@ class WorkerRunner:
                         temperature=temperature,
                         max_tokens=max_tokens,
                         stream_options=stream_options,
-                        on_token=lambda token: emit("stream.token", self.name, {"token": token}),
+                        on_token=lambda token: emit(
+                            EventType.STREAM_TOKEN, self.name, {"token": token}
+                        ),
                         thinking=job.thinking,
                         drop_params=job.drop_params,
                         extra_body=job.extra_body,
@@ -591,7 +513,9 @@ class WorkerRunner:
                         temperature=temperature,
                         max_tokens=max_tokens,
                         stream_options=stream_options,
-                        on_token=lambda token: emit("stream.token", self.name, {"token": token}),
+                        on_token=lambda token: emit(
+                            EventType.STREAM_TOKEN, self.name, {"token": token}
+                        ),
                         thinking=job.thinking,
                         drop_params=job.drop_params,
                         extra_body=job.extra_body,
@@ -632,7 +556,7 @@ class WorkerRunner:
                 metrics["usage"] = streamed.usage
                 streamed_content = streamed.content or ""
                 try:
-                    data = _parse_structured_stream_json(response_schema, streamed_content)
+                    data = parse_structured_stream_json(response_schema, streamed_content)
                 except Exception:
                     try:
                         data = await self._astructured_completion(
@@ -858,13 +782,18 @@ class WorkerRunner:
                     )
 
                 if plan.pending is not None:
+                    event_type = (
+                        EventType.TOOL_CONFIRMATION_REQUESTED
+                        if plan.pending.type == "confirmation"
+                        else EventType.TOOL_USER_INPUT_REQUESTED
+                    )
                     emit(
-                        f"tool.{plan.pending.type}_requested",
+                        event_type,
                         plan.pending.tool_call.name,
                         {"tool_call_id": plan.pending.tool_call.id},
                     )
                     emit(
-                        "worker.paused",
+                        EventType.WORKER_PAUSED,
                         self.name,
                         {"pending_action_type": plan.pending.type},
                     )
@@ -1053,11 +982,11 @@ class WorkerRunner:
 
         if not model_name:
             errors.append("Worker model not set")
-            emit("worker.failed", self.name, {"error": errors[-1]})
+            emit(EventType.WORKER_FAILED, self.name, {"error": errors[-1]})
             report = _report_error(run_id, messages, errors, events)
             return report, None
 
-        emit("worker.started", self.name, {})
+        emit(EventType.WORKER_STARTED, self.name, {})
         return await self._arun_loop(
             adapter=adapter,
             job=job,
@@ -1163,7 +1092,7 @@ class WorkerRunner:
         if tool is None:
             result = ToolResult(error=f"Tool not found: {pending.tool_call.name}")
             emit(
-                "tool.failed",
+                EventType.TOOL_FAILED,
                 pending.tool_call.name,
                 {"tool_call_id": pending.tool_call.id, "error": result.error},
             )
@@ -1173,7 +1102,7 @@ class WorkerRunner:
             if pending.type == "confirmation" and not decision_or_input:
                 result = ToolResult(error="Tool execution declined")
                 emit(
-                    "tool.failed",
+                    EventType.TOOL_FAILED,
                     pending.tool_call.name,
                     {"tool_call_id": pending.tool_call.id, "error": result.error},
                 )
@@ -1185,23 +1114,27 @@ class WorkerRunner:
                 if pending.type == "user_input":
                     key = resume_argument_key(pending)
                     call = update_arguments(call, key, decision_or_input)
-                emit("tool.started", tool.name, {"tool_call_id": call.id})
+                emit(EventType.TOOL_STARTED, tool.name, {"tool_call_id": call.id})
                 result = await aexecute_tool(tool, call)
                 if result.error:
-                    emit("tool.failed", tool.name, {"tool_call_id": call.id, "error": result.error})
+                    emit(
+                        EventType.TOOL_FAILED,
+                        tool.name,
+                        {"tool_call_id": call.id, "error": result.error},
+                    )
                 else:
-                    emit("tool.completed", tool.name, _tool_event_payload(call, result))
+                    emit(EventType.TOOL_COMPLETED, tool.name, _tool_event_payload(call, result))
                 tool_result_message = tool_message(result, call)
                 messages.append(tool_result_message)
                 replace_tool_call(tool_calls, tool_call_with_result(call, result))
 
         if not model_name:
             errors.append("Worker model not set")
-            emit("worker.failed", self.name, {"error": errors[-1]})
+            emit(EventType.WORKER_FAILED, self.name, {"error": errors[-1]})
             report = _report_error(state.run_id, messages, errors, events)
             return report, None
 
-        emit("worker.started", self.name, {})
+        emit(EventType.WORKER_STARTED, self.name, {})
         return await self._arun_loop(
             adapter=adapter,
             job=state.job,
@@ -1222,4 +1155,167 @@ class WorkerRunner:
             iteration=iteration,
             model_name=model_name,
             respect_context_window=respect_context_window,
+        )
+
+    def run_with_config(
+        self,
+        config: "RunConfig",
+        job: Job,
+        worker_model: str | None = None,
+    ) -> tuple[Report, RunState | None]:
+        _ensure_not_running_loop("run", "arun")
+        return asyncio.run(self.arun_with_config(config, job, worker_model))
+
+    async def arun_with_config(
+        self,
+        config: "RunConfig",
+        job: Job,
+        worker_model: str | None = None,
+    ) -> tuple[Report, RunState | None]:
+        model_name = config.model_name(worker_model)
+        messages = self._build_messages(job)
+        tool_calls: list[ToolCall] = []
+        metrics: dict[str, Any] = {}
+        errors: list[str] = []
+        iteration = 0
+
+        if not model_name:
+            errors.append("Worker model not set")
+            config.emit(EventType.WORKER_FAILED, self.name, {"error": errors[-1]})
+            report = _report_error(config.run_id, messages, errors, config.events)
+            return report, None
+
+        config.emit(EventType.WORKER_STARTED, self.name, {})
+        return await self._arun_loop(
+            adapter=config.adapter,
+            job=job,
+            run_id=config.run_id,
+            events=config.events,
+            emit=config.emit,
+            temperature=config.temperature,
+            max_tokens=config.max_tokens,
+            stream=config.stream,
+            stream_options=config.stream_options,
+            structured_output_retries=config.structured_output_retries,
+            max_iterations=config.max_iterations,
+            max_tool_calls=config.max_tool_calls,
+            messages=messages,
+            tool_calls=tool_calls,
+            metrics=metrics,
+            errors=errors,
+            iteration=iteration,
+            model_name=model_name,
+            respect_context_window=config.respect_context_window,
+        )
+
+    def resume_with_config(
+        self,
+        config: "RunConfig",
+        state: RunState,
+        decision_or_input: Any,
+        worker_model: str | None = None,
+    ) -> tuple[Report, RunState | None]:
+        _ensure_not_running_loop("resume", "aresume")
+        return asyncio.run(self.aresume_with_config(config, state, decision_or_input, worker_model))
+
+    async def aresume_with_config(
+        self,
+        config: "RunConfig",
+        state: RunState,
+        decision_or_input: Any,
+        worker_model: str | None = None,
+    ) -> tuple[Report, RunState | None]:
+        model_name = config.model_name(worker_model)
+        pending = state.pending_action
+        if pending is None:
+            report = _build_report(
+                state.run_id,
+                "failed",
+                None,
+                None,
+                None,
+                state.messages,
+                state.tool_calls,
+                state.metrics,
+                config.events,
+                None,
+                ["No pending action"],
+            )
+            return report, None
+
+        messages = list(state.messages)
+        tool_calls = list(state.tool_calls)
+        iteration = state.iteration
+        metrics = dict(state.metrics)
+        errors: list[str] = []
+
+        tool = self.toolbelt.resolve(pending.tool_call.name)
+        if tool is None:
+            result = ToolResult(error=f"Tool not found: {pending.tool_call.name}")
+            config.emit(
+                EventType.TOOL_FAILED,
+                pending.tool_call.name,
+                {"tool_call_id": pending.tool_call.id, "error": result.error},
+            )
+            messages.append(tool_message(result, pending.tool_call))
+            replace_tool_call(tool_calls, tool_call_with_result(pending.tool_call, result))
+        else:
+            if pending.type == "confirmation" and not decision_or_input:
+                result = ToolResult(error="Tool execution declined")
+                config.emit(
+                    EventType.TOOL_FAILED,
+                    pending.tool_call.name,
+                    {"tool_call_id": pending.tool_call.id, "error": result.error},
+                )
+                tool_result_message = tool_message(result, pending.tool_call)
+                messages.append(tool_result_message)
+                replace_tool_call(tool_calls, tool_call_with_result(pending.tool_call, result))
+            else:
+                call = pending.tool_call
+                if pending.type == "user_input":
+                    key = resume_argument_key(pending)
+                    call = update_arguments(call, key, decision_or_input)
+                config.emit(EventType.TOOL_STARTED, tool.name, {"tool_call_id": call.id})
+                result = await aexecute_tool(tool, call)
+                if result.error:
+                    config.emit(
+                        EventType.TOOL_FAILED,
+                        tool.name,
+                        {"tool_call_id": call.id, "error": result.error},
+                    )
+                else:
+                    config.emit(
+                        EventType.TOOL_COMPLETED, tool.name, _tool_event_payload(call, result)
+                    )
+                tool_result_message = tool_message(result, call)
+                messages.append(tool_result_message)
+                replace_tool_call(tool_calls, tool_call_with_result(call, result))
+
+        if not model_name:
+            errors.append("Worker model not set")
+            config.emit(EventType.WORKER_FAILED, self.name, {"error": errors[-1]})
+            report = _report_error(state.run_id, messages, errors, config.events)
+            return report, None
+
+        config.emit(EventType.WORKER_STARTED, self.name, {})
+        return await self._arun_loop(
+            adapter=config.adapter,
+            job=state.job,
+            run_id=state.run_id,
+            events=config.events,
+            emit=config.emit,
+            temperature=config.temperature,
+            max_tokens=config.max_tokens,
+            stream=config.stream,
+            stream_options=config.stream_options,
+            structured_output_retries=config.structured_output_retries,
+            max_iterations=config.max_iterations,
+            max_tool_calls=config.max_tool_calls,
+            messages=messages,
+            tool_calls=tool_calls,
+            metrics=metrics,
+            errors=errors,
+            iteration=iteration,
+            model_name=model_name,
+            respect_context_window=config.respect_context_window,
         )

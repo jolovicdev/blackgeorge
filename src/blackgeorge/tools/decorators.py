@@ -1,6 +1,8 @@
 from collections.abc import Callable
 from typing import Any
 
+from pydantic import BaseModel
+
 from blackgeorge.tools.base import Tool, ToolPostHook, ToolPreHook
 from blackgeorge.tools.schema import build_input_model, build_schema
 
@@ -19,6 +21,7 @@ def tool(
     timeout: float | None = None,
     retries: int = 0,
     retry_delay: float = 1.0,
+    output_type: type[BaseModel] | None = None,
 ) -> Callable[[Callable[..., Any]], Tool]:
     def wrapper(fn: Callable[..., Any]) -> Tool:
         input_model = build_input_model(fn)
@@ -42,6 +45,7 @@ def tool(
             timeout=timeout,
             retries=retries,
             retry_delay=retry_delay,
+            output_type=output_type,
         )
 
     return wrapper
