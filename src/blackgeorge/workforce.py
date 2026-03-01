@@ -30,6 +30,9 @@ from blackgeorge.workforce_helpers import (
     find_worker as _find_worker,
 )
 from blackgeorge.workforce_helpers import (
+    merge_swarm_reports as _merge_swarm_reports,
+)
+from blackgeorge.workforce_helpers import (
     root_job as _root_job,
 )
 from blackgeorge.workforce_helpers import (
@@ -319,19 +322,23 @@ class Workforce:
         current_job = job
         handoff_count = 0
         handoff_budget = self._swarm_handoff_budget(config)
+        swarm_history: list[Report] = []
         while True:
             report, worker_state = await self._arun_worker(config, current_worker, current_job)
             if worker_state and report.status == "paused":
                 try:
                     handoff = self._handoff_transition(report, current_job, current_worker)
                 except ValueError as exc:
-                    return self._handoff_failed_report(report, str(exc)), None
+                    failed = self._handoff_failed_report(report, str(exc))
+                    return _merge_swarm_reports(swarm_history, failed), None
                 if handoff is not None:
+                    swarm_history.append(report.model_copy(update={"pending_action": None}))
                     handoff_count += 1
                     if handoff_count > handoff_budget:
-                        return self._handoff_failed_report(
+                        failed = self._handoff_failed_report(
                             report, "Max handoff transitions exceeded."
-                        ), None
+                        )
+                        return _merge_swarm_reports(swarm_history, failed), None
                     current_worker, current_job = handoff
                     continue
             if worker_state:
@@ -344,9 +351,10 @@ class Workforce:
                         "root_job": current_job.model_dump(mode="json"),
                         "current_worker": current_worker.name,
                         "handoff_count": handoff_count,
+                        "swarm_history": [r.model_dump(mode="json") for r in swarm_history],
                     },
                 )
-            return report, None
+            return _merge_swarm_reports(swarm_history, report), None
 
     async def _arun_managed_mode(
         self, config: "RunConfig", job: Job
@@ -444,6 +452,8 @@ class Workforce:
         if not isinstance(handoff_count, int) or handoff_count < 0:
             handoff_count = 0
         handoff_budget = self._swarm_handoff_budget(config)
+        swarm_history_payload = payload.get("swarm_history", [])
+        swarm_history: list[Report] = [Report.model_validate(r) for r in swarm_history_payload]
         report, worker_state = await self._aresume_worker(
             config, current_worker, stored_worker_state, decision_or_input
         )
@@ -452,13 +462,16 @@ class Workforce:
                 try:
                     handoff = self._handoff_transition(report, current_job, current_worker)
                 except ValueError as exc:
-                    return self._handoff_failed_report(report, str(exc)), None
+                    failed = self._handoff_failed_report(report, str(exc))
+                    return _merge_swarm_reports(swarm_history, failed), None
                 if handoff is not None:
+                    swarm_history.append(report.model_copy(update={"pending_action": None}))
                     handoff_count += 1
                     if handoff_count > handoff_budget:
-                        return self._handoff_failed_report(
+                        failed = self._handoff_failed_report(
                             report, "Max handoff transitions exceeded."
-                        ), None
+                        )
+                        return _merge_swarm_reports(swarm_history, failed), None
                     current_worker, current_job = handoff
                     report, worker_state = await self._arun_worker(
                         config, current_worker, current_job
@@ -474,9 +487,10 @@ class Workforce:
                         "root_job": current_job.model_dump(mode="json"),
                         "current_worker": current_worker.name,
                         "handoff_count": handoff_count,
+                        "swarm_history": [r.model_dump(mode="json") for r in swarm_history],
                     },
                 )
-            return report, None
+            return _merge_swarm_reports(swarm_history, report), None
 
     async def _aresume_manager_stage(
         self,
