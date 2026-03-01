@@ -1,3 +1,4 @@
+import argparse
 import os
 import sys
 import time
@@ -16,13 +17,35 @@ _tool_state = {
 }
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Coding agent example")
+    parser.add_argument(
+        "--prompt",
+        type=str,
+        help="Non-interactive prompt to run (skips interactive mode)",
+    )
+    parser.add_argument(
+        "--no-stream",
+        action="store_true",
+        help="Disable streaming output",
+    )
+    parser.add_argument(
+        "--swarm",
+        action="store_true",
+        help="Use swarm mode instead of managed mode",
+    )
+    return parser.parse_args()
+
+
 def require_api_key() -> None:
     if not os.getenv("DEEPSEEK_API_KEY"):
         raise RuntimeError("DEEPSEEK_API_KEY is not set")
 
 
 def print_event(event) -> None:
-    if event.type == "stream.token":
+    from blackgeorge import EventType
+
+    if event.type == EventType.STREAM_TOKEN:
         token = event.payload.get("token", "")
         if token:
             sys.stdout.write(token)
@@ -33,7 +56,7 @@ def print_event(event) -> None:
         print()
         _stream_state["active"] = False
     pretty_type = event.type.replace(".", " ").upper()
-    if event.type == "tool.started":
+    if event.type == EventType.TOOL_STARTED:
         tool_call_id = event.payload.get("tool_call_id")
         if tool_call_id:
             _tool_state["active"].add(tool_call_id)
@@ -42,15 +65,17 @@ def print_event(event) -> None:
                 _tool_state["parallel_batches"] += 1
                 active_list = ", ".join(sorted(_tool_state["active"]))
                 print(f"[PARALLEL] tools in flight: {active_list}")
-    if event.type in {"tool.completed", "tool.failed"}:
+    if event.type in {EventType.TOOL_COMPLETED, EventType.TOOL_FAILED}:
         tool_call_id = event.payload.get("tool_call_id")
+        cancelled = event.payload.get("cancelled", False)
         if tool_call_id:
             started = _tool_state["started_at"].pop(tool_call_id, None)
             _tool_state["active"].discard(tool_call_id)
             if started is not None:
                 elapsed = time.perf_counter() - started
-                print(f"[TOOL TIMING] {tool_call_id} {elapsed:.3f}s")
-    if event.type == "assistant.message":
+                status = "CANCELLED" if cancelled else "DONE"
+                print(f"[TOOL TIMING] {tool_call_id} {elapsed:.3f}s ({status})")
+    if event.type == EventType.ASSISTANT_MESSAGE:
         content = event.payload.get("content", "")
         tool_calls = event.payload.get("tool_calls", [])
         if content:
@@ -64,6 +89,15 @@ def print_event(event) -> None:
         if not content and not tool_calls:
             print(f"[{pretty_type}] {event.source}")
         return
+    if event.type == EventType.WORKER_PAUSED:
+        pending_type = event.payload.get("pending_action_type", "unknown")
+        print(f"[{pretty_type}] {event.source}: pending_action={pending_type}")
+        return
+    if event.type == EventType.WORKER_CONTEXT_SUMMARIZED:
+        summarized = event.payload.get("summarized_messages", 0)
+        kept = event.payload.get("kept_messages", 0)
+        print(f"[{pretty_type}] {event.source}: summarized={summarized}, kept={kept}")
+        return
     payload = event.payload
     tail = ""
     if payload:
@@ -72,9 +106,17 @@ def print_event(event) -> None:
 
 
 def main() -> None:
+    args = parse_args()
     require_api_key()
 
-    from blackgeorge import Desk, Job, Worker, Workforce
+    from blackgeorge import (
+        Desk,
+        EventType,
+        Job,
+        ToolExecutionError,
+        Worker,
+        Workforce,
+    )
     from blackgeorge.collaboration import (
         Blackboard,
         Channel,
@@ -82,6 +124,7 @@ def main() -> None:
         channel_receive_tool,
         channel_send_tool,
     )
+    from blackgeorge.tools import transfer_to_agent_tool
     from blackgeorge.workflow import Parallel, Step
     from examples.coding_agent.schema import ChangeReport
     from examples.coding_agent.tools import (
@@ -97,7 +140,9 @@ def main() -> None:
     )
 
     storage_dir = str(Path(__file__).resolve().parent / ".blackgeorge")
-    stream_enabled = os.getenv("BLACKGEORGE_STREAM", "1") == "1"
+    stream_enabled = not args.no_stream and os.getenv("BLACKGEORGE_STREAM", "1") == "1"
+    use_swarm = args.swarm
+    non_interactive_prompt = args.prompt
 
     channel = Channel()
     blackboard = Blackboard()
@@ -111,26 +156,30 @@ def main() -> None:
         storage_dir=storage_dir,
         max_iterations=35,
         stream=stream_enabled,
+        max_context_messages=15,
     )
     keep_changes = os.getenv("PRESERVE_EXAMPLE_CHANGES") == "1"
+
     event_types = {
-        "run.started",
-        "run.paused",
-        "run.resumed",
-        "run.completed",
-        "run.failed",
-        "workforce.started",
-        "workforce.completed",
-        "worker.started",
-        "worker.completed",
-        "worker.failed",
-        "tool.started",
-        "tool.completed",
-        "tool.failed",
-        "tool.confirmation_requested",
-        "tool.user_input_requested",
-        "assistant.message",
-        "stream.token",
+        EventType.RUN_STARTED,
+        EventType.RUN_PAUSED,
+        EventType.RUN_RESUMED,
+        EventType.RUN_COMPLETED,
+        EventType.RUN_FAILED,
+        EventType.WORKFORCE_STARTED,
+        EventType.WORKFORCE_COMPLETED,
+        EventType.WORKER_STARTED,
+        EventType.WORKER_COMPLETED,
+        EventType.WORKER_FAILED,
+        EventType.WORKER_PAUSED,
+        EventType.WORKER_CONTEXT_SUMMARIZED,
+        EventType.TOOL_STARTED,
+        EventType.TOOL_COMPLETED,
+        EventType.TOOL_FAILED,
+        EventType.TOOL_CONFIRMATION_REQUESTED,
+        EventType.TOOL_USER_INPUT_REQUESTED,
+        EventType.ASSISTANT_MESSAGE,
+        EventType.STREAM_TOKEN,
     }
 
     def on_event(event) -> None:
@@ -138,6 +187,8 @@ def main() -> None:
             print_event(event)
 
     desk.event_bus.subscribe("*", on_event)
+
+    handoff_tool = transfer_to_agent_tool(["Coder", "Reviewer"])
 
     manager = Worker(
         name="Manager",
@@ -162,6 +213,7 @@ def main() -> None:
             remember,
             recall,
             coder_channel_send,
+            handoff_tool,
         ],
         instructions=(
             "You are a coding agent working inside a small project. "
@@ -172,7 +224,8 @@ def main() -> None:
             "Before deciding behavior for divide by zero or empty averages, "
             "call ask_user with a specific question in the question field. "
             "Use write_file to apply changes. "
-            "When done, send a message to Reviewer via channel_send."
+            "When done, send a message to Reviewer via channel_send. "
+            "In swarm mode, use transfer_to_agent to hand off to Reviewer."
         ),
     )
 
@@ -185,6 +238,7 @@ def main() -> None:
             recall,
             reviewer_channel_receive,
             reviewer_blackboard_write,
+            handoff_tool,
         ],
         instructions=(
             "You summarize the changes and provide a structured report. "
@@ -193,7 +247,8 @@ def main() -> None:
             "Use changed_files from the job input to avoid guessing. "
             "Post your review summary to the blackboard under 'review_summary' "
             "using blackboard_write. "
-            "Only respond with the schema fields."
+            "Only respond with the schema fields. "
+            "In swarm mode, use transfer_to_agent to hand off back to Coder if needed."
         ),
     )
 
@@ -207,21 +262,32 @@ def main() -> None:
         ),
     )
 
-    workforce = Workforce(
-        [coder, reviewer],
-        mode="managed",
-        name="coding_team",
-        manager=manager,
-        channel=channel,
-        blackboard=blackboard,
-    )
+    if use_swarm:
+        workforce = Workforce(
+            [coder, reviewer],
+            mode="swarm",
+            name="coding_swarm",
+            channel=channel,
+            blackboard=blackboard,
+        )
+    else:
+        workforce = Workforce(
+            [coder, reviewer],
+            mode="managed",
+            name="coding_team",
+            manager=manager,
+            channel=channel,
+            blackboard=blackboard,
+        )
 
     blackboard.write("project_name", "calculator", author="system")
     blackboard.write("task_started", True, author="system")
 
+    task_text = non_interactive_prompt or "Fix calculator behavior and update tests."
+
     job = Job(
         input={
-            "task": "Fix calculator behavior and update tests.",
+            "task": task_text,
             "project": "Use tools to inspect the project files.",
             "requirements": [
                 "Confirm divide-by-zero behavior with ask_user.",
@@ -234,16 +300,31 @@ def main() -> None:
         expected_output="Updated project files with consistent behavior.",
     )
 
+    auto_confirm = non_interactive_prompt is not None
+
     try:
         report = desk.run(workforce, job, stream=stream_enabled)
 
         while report.status == "paused" and report.pending_action is not None:
             action = report.pending_action
-            if action.type == "confirmation":
-                decision = input(f"{action.prompt} [y/n]: ").strip().lower() in {"y", "yes"}
+            if action.type == "handoff":
+                print(f"[HANDOFF] -> {action.prompt}")
+                report = desk.resume(report, "", stream=stream_enabled)
+            elif action.type == "confirmation":
+                if auto_confirm:
+                    print(f"[AUTO-CONFIRM] {action.prompt} -> y")
+                    decision = True
+                else:
+                    decision = input(f"{action.prompt} [y/n]: ").strip().lower() in {"y", "yes"}
+                report = desk.resume(report, decision, stream=stream_enabled)
             else:
-                decision = input(f"{action.prompt}: ").strip()
-            report = desk.resume(report, decision, stream=stream_enabled)
+                if auto_confirm:
+                    default_response = "proceed with safe defaults"
+                    print(f"[AUTO-INPUT] {action.prompt} -> {default_response}")
+                    decision = default_response
+                else:
+                    decision = input(f"{action.prompt}: ").strip()
+                report = desk.resume(report, decision, stream=stream_enabled)
 
         if report.status != "completed":
             print("Run did not complete")
@@ -304,6 +385,8 @@ def main() -> None:
         print("Final report content:\n", flow_report.content)
         print("Run store path:", desk.db_path)
         print("Events stored:", len(desk.run_store.get_events(report.run_id)))
+    except ToolExecutionError as e:
+        print(f"Tool execution failed: {e.tool_name}: {e}")
     finally:
         desk.event_bus.unsubscribe("*", on_event)
         if not keep_changes:

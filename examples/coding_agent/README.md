@@ -8,7 +8,10 @@ This example demonstrates a Python coding agent built with the Blackgeorge LLM a
 - **Tool timeouts/retries**: Resilient file operations
 - **Channel**: Worker-to-worker messaging
 - **Blackboard**: Shared state across workers
-- **New tools**: `search_docs`, `remember`, `recall`
+- **Swarm mode**: Dynamic handoffs between workers with `transfer_to_agent_tool`
+- **Context compaction**: Proactive summarization with `max_context_messages`
+- **Typed events**: Using `EventType` enum and typed payload classes
+- **Custom exceptions**: `ToolExecutionError`, `ContextLimitError`, etc.
 
 ## Setup
 
@@ -26,15 +29,37 @@ uv pip install -e .[dev]
 
 ## Run
 
-```
+```bash
+# Interactive mode (default)
 python examples/coding_agent/run.py
+
+# Non-interactive with prompt
+python examples/coding_agent/run.py --prompt "List files and read spec.txt"
+
+# Swarm mode with dynamic handoffs
+python examples/coding_agent/run.py --swarm --prompt "Review the calculator code"
+
+# Disable streaming
+python examples/coding_agent/run.py --no-stream --prompt "Read spec.txt"
 ```
 
-The script pauses for confirmations and user input when tools require it.
-By default it restores any edits under `examples/coding_agent/project` after the run.
-Set `PRESERVE_EXAMPLE_CHANGES=1` to keep changes.
-It streams tokens for non-tool steps and prints assistant messages as they are produced.
-Set `BLACKGEORGE_STREAM=0` to disable streaming.
+### Flags
+
+| Flag | Description |
+|------|-------------|
+| `--prompt TEXT` | Run non-interactively with the given prompt (auto-confirms tool actions) |
+| `--swarm` | Use swarm mode instead of managed mode (dynamic worker handoffs) |
+| `--no-stream` | Disable token streaming |
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DEEPSEEK_API_KEY` | (required) | API key for the LLM |
+| `BLACKGEORGE_STREAM` | `1` | Set to `0` to disable streaming |
+| `PRESERVE_EXAMPLE_CHANGES` | `0` | Set to `1` to keep file edits after run |
+
+The script pauses for confirmations and user input when tools require it (interactive mode only). By default it restores any edits under `examples/coding_agent/project` after the run.
 
 ## Sample project
 
@@ -58,12 +83,42 @@ examples/coding_agent/project
 | `channel_send` | Send a message to another worker | Channel |
 | `channel_receive` | Receive channel messages | Channel |
 | `blackboard_write` | Store shared state | Blackboard |
+| `transfer_to_agent` | Hand off to another worker | Swarm mode |
+
+## New Capabilities Demonstrated
+
+### Swarm Mode
+Workers can dynamically hand off execution using `transfer_to_agent_tool`. The workforce intercepts the handoff pending action and switches the active worker mid-run.
+
+### Proactive Context Compaction
+The example uses `max_context_messages=15` to proactively summarize conversation history before it grows too large, preventing context limit errors.
+
+### Typed Events
+Event handling uses the `EventType` enum and typed payload access:
+```python
+from blackgeorge import EventType
+
+if event.type == EventType.TOOL_COMPLETED:
+    cancelled = event.payload.get("cancelled", False)
+```
+
+### Custom Exceptions
+Tool execution errors are caught with typed exceptions:
+```python
+from blackgeorge import ToolExecutionError
+
+try:
+    report = desk.run(workforce, job)
+except ToolExecutionError as e:
+    print(f"Tool {e.tool_name} failed: {e}")
+```
 
 ## Output
 
-- Events print to the console
+- Events print to the console with typed event handling
+- `WORKER_CONTEXT_SUMMARIZED` events show proactive compaction stats
+- Tool timing includes cancellation status
 - Blackboard state printed after run and after flow summary
 - Channel messages printed after run
-- Tool completion events include a short result preview
 - Run data persists to `examples/coding_agent/.blackgeorge/blackgeorge.db`
 - Vector memory at `examples/coding_agent/.blackgeorge/memory/`
