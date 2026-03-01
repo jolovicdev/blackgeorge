@@ -1,3 +1,4 @@
+from blackgeorge._litellm_patch import *  # noqa: F401,F403
 from blackgeorge.config import EventEmitter, RunConfig
 from blackgeorge.core.event import Event
 from blackgeorge.core.event_payloads import (
