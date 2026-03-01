@@ -156,7 +156,7 @@ desk.event_bus.subscribe(EventType.TOOL_COMPLETED, handle_tool_completed)
 | `WorkerFailedPayload` | `worker.failed` | `error` |
 | `WorkerContextSummarizedPayload` | `worker.context_summarized` | `model`, `summarized_messages`, `kept_messages` |
 | `ToolStartedPayload` | `tool.started` | `tool_call_id` |
-| `ToolCompletedPayload` | `tool.completed` | `tool_call_id`, `result_preview`, `timed_out` |
+| `ToolCompletedPayload` | `tool.completed` | `tool_call_id`, `result_preview`, `result_truncated`, `timed_out`, `cancelled` |
 | `ToolFailedPayload` | `tool.failed` | `tool_call_id`, `error` |
 | `StreamTokenPayload` | `stream.token` | `token` |
 | `AssistantMessagePayload` | `assistant.message` | `content`, `tool_calls` |

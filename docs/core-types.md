@@ -11,7 +11,9 @@ Fields:
 - id: unique job id
 - input: payload passed to the worker as the user message
 - expected_output: appended to the system message
-- tools_override: optional list of tools to use for this job only
+- tools_override: optional per-run tool override list. Supports `Tool` instances and tool names.
+  In worker runs, string names are resolved from the worker toolbelt; unknown entries are ignored.
+  If duplicate entries resolve to the same tool name, later entries win.
 - response_schema: Pydantic model or TypeAdapter for structured output
 - constraints: extra constraints appended to the system message
 - metadata: arbitrary metadata for your application
@@ -78,7 +80,7 @@ A `PendingAction` is returned when a run pauses.
 Fields:
 
 - action_id
-- type: confirmation or user_input
+- type: confirmation, user_input, or handoff
 - tool_call
 - prompt
 - options
@@ -105,9 +107,9 @@ Fields:
 ## Enums and aliases
 
 - MessageRole: system, user, assistant, tool
-- PendingActionType: confirmation, user_input
+- PendingActionType: confirmation, user_input, handoff
 - RunStatus: completed, paused, failed, running
-- WorkforceMode: managed, collaborate
+- WorkforceMode: managed, collaborate, swarm
 - Brief: alias for Job
 - RunOutput: alias for Report
 

@@ -1,6 +1,6 @@
 # Workforce
 
-A `Workforce` coordinates multiple workers. It supports two modes: managed and collaborate.
+A `Workforce` coordinates multiple workers. It supports three modes: managed, collaborate, and swarm.
 
 ## Create a workforce
 
@@ -28,6 +28,32 @@ The selection rules are:
 - If nothing matches, the first worker is used.
 
 If the manager or selected worker pauses, the workforce returns a paused report with enough state to resume later.
+
+## Swarm mode
+
+In swarm mode, workers can dynamically hand off execution and context to another agent in the workforce at any time using the `transfer_to_agent_tool`. This enables complex, dynamic multi-agent orchestrations without a hardcoded manager.
+
+```python
+from blackgeorge.tools import transfer_to_agent_tool
+
+handoff_tool = transfer_to_agent_tool(["coder", "reviewer"])
+
+coder = Worker(name="coder", tools=[handoff_tool])
+reviewer = Worker(name="reviewer")
+
+swarm = Workforce([coder, reviewer], mode="swarm")
+```
+
+When a worker calls `transfer_to_agent`, the orchestrator intercepts the pending tool action and
+switches the active worker inside the same run.
+
+Swarm handoff safety rules:
+
+- The target must exist in the current workforce.
+- If the handoff tool has an `agent_name` allowlist (from `transfer_to_agent_tool([...])`), the target must be in that allowlist.
+- Allowlist enforcement works for both worker-level tools and `Job.tools_override` tools.
+- System-role messages from the prior worker are not carried into the next worker handoff context, preventing instruction leakage across roles.
+- Handoff transitions are bounded per run. Exceeding the cap returns a failed report.
 
 ## Collaborate mode
 
@@ -106,6 +132,7 @@ Workers can access `workforce.channel` and `workforce.blackboard` for communicat
 
 Resuming a workforce uses the stored stage in run state:
 
+- swarm: resume the exact paused worker identity, including handoff continuation
 - manager: resume the manager step
 - worker: resume the selected worker
 - collaborate: resume the paused worker in sequence
@@ -113,3 +140,5 @@ Resuming a workforce uses the stored stage in run state:
 The desk handles these transitions when you call `desk.resume(report, decision_or_input)`.
 
 If the stored pending worker index no longer matches the current worker list, resume fails with a `failed` report rather than raising.
+
+For swarm runs, resume also fails explicitly if the paused worker identity is missing or no longer registered.
