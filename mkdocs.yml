@@ -32,6 +32,7 @@ plugins:
       sections:
         Core Documentation:
           - quickstart.md
+          - tutorials.md
           - concepts.md
           - desk.md
           - worker.md
@@ -76,6 +77,7 @@ exclude_docs: README.md
 nav:
   - Home: index.md
   - Quickstart: quickstart.md
+  - Tutorials: tutorials.md
   - Concepts: concepts.md
   - Desk: desk.md
   - Worker: worker.md

@@ -22,6 +22,7 @@ class RunConfig:
     max_iterations: int = 10
     max_tool_calls: int = 20
     respect_context_window: bool = True
+    max_context_messages: int | None = None
     default_model: str | None = None
 
     def with_overrides(self, **kwargs: Any) -> "RunConfig":

@@ -3,7 +3,7 @@ import asyncio
 import pytest
 
 from blackgeorge.core.tool_call import ToolCall
-from blackgeorge.tools import execute_tool, tool
+from blackgeorge.tools import execute_tool, tool, transfer_to_agent_tool
 from blackgeorge.tools.execution import _run_coroutine_sync, aexecute_tool
 from blackgeorge.worker_messages import tool_message
 
@@ -60,6 +60,27 @@ def test_tool_decorator_accepts_hooks() -> None:
     assert result.error is None
     assert result.content == "3"
     assert executed == ["pre:hook-call", "post:hook-call"]
+
+
+def test_transfer_to_agent_tool_snapshots_allowlist_for_runtime_validation() -> None:
+    available_agents = ["alpha"]
+    handoff_tool = transfer_to_agent_tool(available_agents)
+    available_agents.append("beta")
+
+    call = ToolCall(
+        id="handoff-1",
+        name="transfer_to_agent",
+        arguments={"agent_name": "beta", "context": "route"},
+    )
+    result = execute_tool(handoff_tool, call)
+
+    assert result.error is not None
+    assert "not available" in result.error.lower()
+    properties = handoff_tool.schema.get("properties")
+    assert isinstance(properties, dict)
+    agent_name_schema = properties.get("agent_name")
+    assert isinstance(agent_name_schema, dict)
+    assert agent_name_schema.get("enum") == ["alpha"]
 
 
 def test_sync_tool_execution_supports_async_hooks() -> None:

@@ -160,7 +160,7 @@ Available event types:
 | Event Type | Description | Payload Fields |
 |------------|-------------|----------------|
 | `worker.started` | Worker iteration started/resumed | none |
-| `worker.paused` | Worker paused for pending action | `pending_action_type` |
+| `worker.paused` | Worker paused for pending action | `pending_action_type` (`confirmation`, `user_input`, or `handoff`) |
 | `worker.completed` | Worker completed successfully | none |
 | `worker.failed` | Worker failed | `error` |
 | `worker.context_summarized` | Context summary applied | `model`, `summarized_messages`, `kept_messages`, optional `unregistered_model`, optional `registration_hint` |
@@ -189,6 +189,9 @@ Available event types:
 | `tool.failed` | Tool execution failed | `tool_call_id`, `error` |
 | `tool.confirmation_requested` | Tool needs confirmation | `tool_call_id` |
 | `tool.user_input_requested` | Tool needs user input | `tool_call_id` |
+
+`handoff` pending actions do not emit a dedicated tool request event. They are represented by
+`worker.paused` with `pending_action_type="handoff"`.
 
 Tool/workforce/worker names are exposed via `event.source`.
 

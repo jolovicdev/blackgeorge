@@ -129,6 +129,32 @@ class ImmediateAdapter(BaseModelAdapter):
         self.call_count += 1
         return ModelResponse(content=self.response, tool_calls=[], usage={}, raw={})
 
+
+class CancellationTrackingAdapter(BaseModelAdapter):
+    def __init__(self, delay: float = 0.5, response: str = "worker result") -> None:
+        self.delay = delay
+        self.response = response
+        self.started = 0
+        self.completed = 0
+        self.cancelled = 0
+
+    def complete(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        tool_choice: str | dict[str, Any] | None,
+        temperature: float | None,
+        max_tokens: int | None,
+        stream: bool,
+        stream_options: dict[str, Any] | None,
+        thinking: dict[str, Any] | None = None,
+        drop_params: bool | None = None,
+        extra_body: dict[str, Any] | None = None,
+    ) -> ModelResponse:
+        raise RuntimeError("sync path not used in this test")
+
     async def acomplete(
         self,
         *,
@@ -144,7 +170,13 @@ class ImmediateAdapter(BaseModelAdapter):
         drop_params: bool | None = None,
         extra_body: dict[str, Any] | None = None,
     ) -> ModelResponse:
-        self.call_count += 1
+        self.started += 1
+        try:
+            await asyncio.sleep(self.delay)
+        except asyncio.CancelledError:
+            self.cancelled += 1
+            raise
+        self.completed += 1
         return ModelResponse(content=self.response, tool_calls=[], usage={}, raw={})
 
 
@@ -207,6 +239,25 @@ async def test_cancellation_cleanup():
 
     with pytest.raises(asyncio.CancelledError):
         await task
+
+
+async def test_external_cancellation_cancels_parallel_worker_tasks() -> None:
+    adapter = CancellationTrackingAdapter(delay=0.5, response="worker result")
+
+    workers = [Worker(name=f"worker-{i}") for i in range(3)]
+    workforce = Workforce(workers=workers, mode="collaborate")
+    desk = Desk(model="test-model", adapter=adapter)
+
+    job = Job(input="test")
+
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(desk.arun(workforce, job), timeout=0.2)
+
+    await asyncio.sleep(0.6)
+
+    assert adapter.started == 3
+    assert adapter.completed == 0
+    assert adapter.cancelled == 3
 
 
 async def test_parallel_execution_respects_max_iterations():

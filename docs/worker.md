@@ -31,10 +31,11 @@ The worker builds messages from the job.
 
 ## Tools and tool safety
 
-If the model returns tool calls, the worker will execute tools or pause for confirmation/user input.
+If the model returns tool calls, the worker executes tools or pauses for a pending action.
 
 - requires_confirmation: the run pauses and waits for a boolean decision
 - requires_user_input: the run pauses and waits for a string input
+- requires_handoff: the run pauses with `pending_action.type="handoff"` (typically intercepted by `Workforce` in swarm mode)
 
 When a tool is paused, the worker returns a `Report` with `status="paused"` and a `PendingAction`.
 Paused turns emit `worker.paused` events instead of `worker.completed`.
@@ -123,14 +124,25 @@ The worker stops and fails when:
 - max_iterations is exceeded
 - max_tool_calls is exceeded
 - the model fails to satisfy a structured response after retries
-- `Desk(respect_context_window=False)` and a context limit is hit
+- a context limit is hit and reactive context handling is disabled
 
 ## Context window handling
 
-When `Desk.respect_context_window` is True, the worker summarizes the conversation history and retries the model call if the provider reports a context length error. The summary preserves system instructions, key facts, tool results, and the most recent messages. If you are using a custom model, register its context window in LiteLLM for more reliable behavior.
+`Desk` supports two context compaction paths:
+
+- Reactive: when `respect_context_window=True`, context-limit errors trigger summarization and retry.
+- Proactive: when `max_context_messages` is set, the worker summarizes before model calls when message count exceeds the limit.
+
+Proactive compaction does not consume the reactive retry budget used for context-limit recovery.
+If you are using a custom model, register its context window in LiteLLM for more reliable behavior.
 
 Failures are returned as `Report` objects with status `failed` and error messages in `Report.errors`.
 
 ## Tool override
 
-`Job.tools_override` replaces the worker tool list for a single run. Only `Tool` instances in the list are used; other items are ignored.
+`Job.tools_override` replaces the worker tool list for a single run.
+
+- `Tool` instances are used directly.
+- String entries are resolved by name from the worker toolbelt.
+- Unknown or unsupported entries are ignored.
+- If multiple override entries resolve to the same tool name, the last one is effective.

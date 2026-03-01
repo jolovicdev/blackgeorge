@@ -4,6 +4,7 @@ from pydantic import BaseModel
 
 from blackgeorge.core.event import Event
 from blackgeorge.core.job import Job
+from blackgeorge.core.message import Message
 from blackgeorge.core.report import Report
 from blackgeorge.core.types import RunStatus
 from blackgeorge.store.state import RunState
@@ -76,6 +77,40 @@ def default_reducer(
     if any(report.status == "failed" for _, report in reports):
         status = "failed"
     return aggregate_reports(reports, run_id, events, status)
+
+
+def merge_swarm_reports(
+    reports: list[Report],
+    final_report: Report,
+) -> Report:
+    if not reports:
+        return final_report
+    all_tool_calls = [call for rep in reports for call in rep.tool_calls]
+    all_tool_calls.extend(final_report.tool_calls)
+    all_errors = [error for rep in reports for error in rep.errors]
+    all_errors.extend(final_report.errors)
+    all_messages: list[Message] = [msg for rep in reports for msg in rep.messages]
+    seen_ids: set[str] = set()
+    unique_messages: list[Message] = []
+    for msg in all_messages:
+        msg_id = getattr(msg, "id", None) or getattr(msg, "tool_call_id", None)
+        if msg_id and msg_id in seen_ids:
+            continue
+        if msg_id:
+            seen_ids.add(msg_id)
+        unique_messages.append(msg)
+    merged_metrics: dict[str, Any] = {}
+    for rep in reports:
+        merged_metrics.update(rep.metrics)
+    merged_metrics.update(final_report.metrics)
+    return final_report.model_copy(
+        update={
+            "tool_calls": all_tool_calls,
+            "errors": all_errors,
+            "messages": unique_messages,
+            "metrics": merged_metrics,
+        }
+    )
 
 
 def aggregate_reports(

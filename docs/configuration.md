@@ -59,6 +59,7 @@ desk = Desk(
 
     # Context window handling
     respect_context_window=True,
+    max_context_messages=10,
 
     # Custom components
     event_bus=custom_event_bus,
@@ -76,11 +77,12 @@ desk = Desk(
 For programmatic control, use `RunConfig` to bundle run parameters:
 
 ```python
-from blackgeorge import Desk, Worker, RunConfig
+from blackgeorge import Job, Worker, RunConfig
 from blackgeorge.adapters import LiteLLMAdapter
 
 adapter = LiteLLMAdapter()
 worker = Worker(name="analyst")
+job = Job(input="Summarize the latest incident report")
 
 config = RunConfig(
     adapter=adapter,
@@ -93,9 +95,9 @@ config = RunConfig(
     default_model="openai/gpt-5-nano",
 )
 
-# Use config-based methods
-report, state = worker.run_with_config(config, job)
-report, state = await worker.arun_with_config(config, job)
+# Use config-based execution
+report, state = worker.run(config, job)
+report, state = await worker.arun(config, job)
 ```
 
 ### RunConfig fields
@@ -113,7 +115,8 @@ report, state = await worker.arun_with_config(config, job)
 | `structured_output_retries` | int | 3 | Structured output retry count |
 | `max_iterations` | int | 10 | Maximum model turns |
 | `max_tool_calls` | int | 20 | Maximum tool calls |
-| `respect_context_window` | bool | True | Auto-summarize on context errors |
+| `respect_context_window` | bool | True | Auto-summarize on context errors (Reactive) |
+| `max_context_messages` | int \| None | None | Auto-summarize when message count exceeds this limit (Proactive) |
 | `default_model` | str | None | Default model name |
 
 ### RunConfig methods
@@ -172,9 +175,11 @@ When these limits are exceeded, the run fails with an error in `Report.errors`.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `respect_context_window` | bool | True | Auto-summarize on context length errors |
+| `respect_context_window` | bool | True | Auto-summarize on context length errors (Reactive) |
+| `max_context_messages` | int \| None | None | Auto-summarize when message count exceeds this limit (Proactive) |
 
-When enabled, workers summarize conversation history and retry on context limit errors.
+When `respect_context_window` is enabled, workers summarize conversation history and retry on context limit errors (Reactive).
+When `max_context_messages` is configured, workers summarize conversation proactively when the number of messages exceeds the limit to maintain a healthy context window.
 
 ### Custom components
 
@@ -235,7 +240,7 @@ workers = [Worker(name="a"), Worker(name="b")]
 
 workforce = Workforce(
     workers=workers,
-    mode="managed",           # "managed" or "collaborate"
+    mode="managed",           # "managed", "collaborate", or "swarm"
     name="team",
     manager=manager_worker,   # Only for managed mode
     reducer=custom_reducer,   # Only for collaborate mode
@@ -249,7 +254,7 @@ workforce = Workforce(
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `workers` | list[Worker] | Yes | Workers in the workforce |
-| `mode` | str | No | "managed" or "collaborate" (default: "managed") |
+| `mode` | str | No | "managed", "collaborate", or "swarm" (default: "managed") |
 | `name` | str | No | Workforce name for events |
 | `manager` | Worker | No | Manager for worker selection (managed mode) |
 | `reducer` | Callable | No | Function to combine worker reports (collaborate mode) |
@@ -289,6 +294,12 @@ workforce = Workforce(
 )
 ```
 
+### Swarm mode
+
+In swarm mode, workers can hand off execution to another worker at runtime with
+`transfer_to_agent_tool`. The workforce keeps execution inside a single run while switching
+the active worker and passing the handoff context.
+
 ## Context window configuration
 
 Module-level constants control context summarization behavior in `src/blackgeorge/worker_context.py`:
@@ -300,7 +311,8 @@ Module-level constants control context summarization behavior in `src/blackgeorg
 | `SUMMARY_ATTEMPT_LIMIT` | 2 | Maximum summarization attempts before failing |
 | `SUMMARY_MAX_OUTPUT_TOKENS` | 800 | Maximum tokens in summary output |
 
-These constants affect how workers handle context length errors when `respect_context_window=True`.
+These constants affect worker context summarization for both reactive retries
+(`respect_context_window=True`) and proactive compaction (`max_context_messages`).
 
 ### Model registration
 

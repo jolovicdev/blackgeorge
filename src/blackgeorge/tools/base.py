@@ -30,6 +30,7 @@ class Tool:
     input_model: type[BaseModel]
     requires_confirmation: bool = False
     requires_user_input: bool = False
+    requires_handoff: bool = False
     external_execution: bool = False
     pre: tuple[ToolPreHook, ...] = ()
     post: tuple[ToolPostHook, ...] = ()

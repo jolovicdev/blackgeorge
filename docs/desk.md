@@ -17,6 +17,7 @@ desk = Desk(
     max_iterations=10,
     max_tool_calls=20,
     respect_context_window=True,
+    max_context_messages=10,
 )
 ```
 
@@ -30,7 +31,8 @@ desk = Desk(
 - structured_output_retries: retries for structured output validation
 - max_iterations: max model turns per worker run
 - max_tool_calls: max tool calls per worker run
-- respect_context_window: when True, auto-summarize and retry on context length errors
+- respect_context_window: when True, auto-summarize and retry on context length errors (Reactive)
+- max_context_messages: auto-summarize when message count exceeds this limit (Proactive)
 - event_bus: custom event bus implementation
 - run_store: custom run store implementation
 - memory_store: custom memory store implementation
@@ -48,7 +50,12 @@ This is intentionally minimal so you can build your own memory workflows on top.
 
 ## Context window handling
 
-When `respect_context_window` is enabled, workers summarize conversation history on context length errors and retry the call with the summary plus the most recent messages. If you disable it, the run fails on context limit errors. For custom or unmapped models, register model context limits in LiteLLM to avoid repeated overflows.
+When `respect_context_window` is enabled, workers summarize conversation history on context length errors and retry the call with the summary plus the most recent messages (Reactive).
+When `max_context_messages` is configured, workers summarize conversation proactively when the number of messages exceeds the limit to maintain a healthy context window (Proactive).
+
+If you disable `respect_context_window`, reactive retries on context-limit errors are disabled.
+If you also do not provide `max_context_messages`, runs fail directly on context-limit errors.
+For custom or unmapped models, register model context limits in LiteLLM to avoid repeated overflows.
 
 ## Running a worker
 

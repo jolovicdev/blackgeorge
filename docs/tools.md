@@ -168,6 +168,27 @@ from blackgeorge.tools import Toolbelt
 belt = Toolbelt()
 ```
 
+## Swarm Handoff Tool
+
+For `Workforce` running in `swarm` mode, workers can dynamically transfer control and pass context using the `transfer_to_agent_tool`.
+
+```python
+from blackgeorge.tools import transfer_to_agent_tool
+
+handoff_tool = transfer_to_agent_tool(available_agents=["researcher", "coder"])
+worker = Worker(name="router", tools=[handoff_tool])
+```
+
+When this tool is executed, it signals a `handoff` pending action that the orchestrator uses to transparently switch the active worker mid-run.
+
+`available_agents` is encoded into the tool schema and enforced by swarm routing. A handoff target
+must be both:
+
+- in the handoff tool allowlist
+- present in the workforce worker list
+
+The same enforcement applies when the handoff tool is provided through `Job.tools_override`.
+
 ## Subworker tools
 
 Use `create_subworker_tool` to let a worker delegate to bounded child workers with explicit
