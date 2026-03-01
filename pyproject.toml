@@ -1,6 +1,6 @@
 [project]
 name = "blackgeorge"
-version = "1.1.9"
+version = "1.2.0"
 description = "Agentic framework (runtime) with desk/worker/workforce primitives"
 readme = "README.md"
 license = { file = "LICENCE.md" }
