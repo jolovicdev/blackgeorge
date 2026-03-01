@@ -153,6 +153,72 @@ def _is_base_model_schema(response_schema: Any) -> bool:
     return isinstance(response_schema, type) and issubclass(response_schema, BaseModel)
 
 
+def _is_json_schema_unavailable_error(error: Exception) -> bool:
+    error_str = str(error).lower()
+    return "response_format type is unavailable" in error_str
+
+
+def _build_json_object_prompt(response_schema: Any) -> str:
+    schema = _build_json_schema(response_schema)
+    if schema is None:
+        return ""
+    import json
+
+    return f"Respond with valid JSON matching this schema: {json.dumps(schema, indent=2)}"
+
+
+def _try_json_object_fallback(
+    model: str,
+    payload: list[dict[str, Any]],
+    response_schema: Any,
+) -> Any | None:
+    schema_prompt = _build_json_object_prompt(response_schema)
+    if not schema_prompt:
+        return None
+
+    augmented_payload = list(payload)
+    augmented_payload.append({"role": "user", "content": schema_prompt})
+
+    try:
+        response = litellm.completion(
+            model=model,
+            messages=augmented_payload,
+            response_format={"type": "json_object"},
+        )
+        content = _response_content(response)
+        if content:
+            return _parse_structured_json(response_schema, content)
+    except Exception:
+        pass
+    return None
+
+
+async def _atry_json_object_fallback(
+    model: str,
+    payload: list[dict[str, Any]],
+    response_schema: Any,
+) -> Any | None:
+    schema_prompt = _build_json_object_prompt(response_schema)
+    if not schema_prompt:
+        return None
+
+    augmented_payload = list(payload)
+    augmented_payload.append({"role": "user", "content": schema_prompt})
+
+    try:
+        response = await litellm.acompletion(
+            model=model,
+            messages=augmented_payload,
+            response_format={"type": "json_object"},
+        )
+        content = _response_content(response)
+        if content:
+            return _parse_structured_json(response_schema, content)
+    except Exception:
+        pass
+    return None
+
+
 def _structured_json_retry(
     *,
     model: str,
@@ -576,7 +642,8 @@ class LiteLLMAdapter(BaseModelAdapter):
     ) -> Any:
         payload = list(messages)
         response_format = _response_format(response_schema)
-        response_format_accepted = False
+        json_schema_failed = False
+
         if response_format is not None:
             try:
                 response = litellm.completion(
@@ -584,21 +651,29 @@ class LiteLLMAdapter(BaseModelAdapter):
                     messages=payload,
                     response_format=response_format,
                 )
-                response_format_accepted = True
                 content = _response_content(response)
                 if content:
-                    return _parse_structured_json(response_schema, content)
-            except Exception:
-                response_format_accepted = False
+                    try:
+                        return _parse_structured_json(response_schema, content)
+                    except Exception:
+                        json_schema_failed = True
+            except Exception as e:
+                if _is_json_schema_unavailable_error(e):
+                    json_schema_failed = True
+
+        if json_schema_failed:
+            result = _try_json_object_fallback(model, payload, response_schema)
+            if result is not None:
+                return result
+
         retries = max(retries, 3)
         if not _is_base_model_schema(response_schema):
-            manual_response_format = response_format if response_format_accepted else None
             return _structured_json_retry(
                 model=model,
                 payload=payload,
                 response_schema=response_schema,
                 retries=retries,
-                response_format=manual_response_format,
+                response_format=None,
             )
         client = instructor_clients.get(model, async_client=False)
         attempts = 0
@@ -630,7 +705,8 @@ class LiteLLMAdapter(BaseModelAdapter):
     ) -> Any:
         payload = list(messages)
         response_format = _response_format(response_schema)
-        response_format_accepted = False
+        json_schema_failed = False
+
         if response_format is not None:
             try:
                 response = await litellm.acompletion(
@@ -638,21 +714,29 @@ class LiteLLMAdapter(BaseModelAdapter):
                     messages=payload,
                     response_format=response_format,
                 )
-                response_format_accepted = True
                 content = _response_content(response)
                 if content:
-                    return _parse_structured_json(response_schema, content)
-            except Exception:
-                response_format_accepted = False
+                    try:
+                        return _parse_structured_json(response_schema, content)
+                    except Exception:
+                        json_schema_failed = True
+            except Exception as e:
+                if _is_json_schema_unavailable_error(e):
+                    json_schema_failed = True
+
+        if json_schema_failed:
+            result = await _atry_json_object_fallback(model, payload, response_schema)
+            if result is not None:
+                return result
+
         retries = max(retries, 3)
         if not _is_base_model_schema(response_schema):
-            manual_response_format = response_format if response_format_accepted else None
             return await _astructured_json_retry(
                 model=model,
                 payload=payload,
                 response_schema=response_schema,
                 retries=retries,
-                response_format=manual_response_format,
+                response_format=None,
             )
         client = instructor_clients.get(model, async_client=True)
         attempts = 0
