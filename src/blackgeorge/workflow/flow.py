@@ -38,42 +38,30 @@ class Flow:
         runner: Worker | Workforce,
         job: Job,
     ) -> tuple[Report, RunState | None]:
+        from blackgeorge.config import RunConfig
+
+        config = RunConfig(
+            adapter=self.desk.adapter,
+            emit=self.emit,
+            run_id=self._run_id,
+            events=self._events,
+            temperature=self.desk.temperature,
+            max_tokens=self.desk.max_tokens,
+            stream=self._stream,
+            stream_options={"include_usage": True} if self._stream else None,
+            structured_output_retries=self.desk.structured_output_retries,
+            max_iterations=self.desk.max_iterations,
+            max_tool_calls=self.desk.max_tool_calls,
+            respect_context_window=self.desk.respect_context_window,
+            max_context_messages=self.desk.max_context_messages,
+            default_model=self.desk.model,
+        )
         if isinstance(runner, Worker):
             self.desk.register_worker(runner)
-            return await runner.arun(
-                adapter=self.desk.adapter,
-                job=job,
-                run_id=self._run_id,
-                events=self._events,
-                emit=self.emit,
-                temperature=self.desk.temperature,
-                max_tokens=self.desk.max_tokens,
-                stream=self._stream,
-                stream_options={"include_usage": True} if self._stream else None,
-                structured_output_retries=self.desk.structured_output_retries,
-                max_iterations=self.desk.max_iterations,
-                max_tool_calls=self.desk.max_tool_calls,
-                model_name=runner.model or self.desk.model,
-                respect_context_window=self.desk.respect_context_window,
-            )
+            return await runner.arun(config, job)
         if isinstance(runner, Workforce):
             self.desk.register_workforce(runner)
-            return await runner.arun(
-                adapter=self.desk.adapter,
-                job=job,
-                run_id=self._run_id,
-                events=self._events,
-                emit=self.emit,
-                temperature=self.desk.temperature,
-                max_tokens=self.desk.max_tokens,
-                stream=self._stream,
-                stream_options={"include_usage": True} if self._stream else None,
-                structured_output_retries=self.desk.structured_output_retries,
-                max_iterations=self.desk.max_iterations,
-                max_tool_calls=self.desk.max_tool_calls,
-                default_model=self.desk.model,
-                respect_context_window=self.desk.respect_context_window,
-            )
+            return await runner.arun(config, job)
         raise TypeError("Runner must be Worker or Workforce")
 
     async def _resume_runner(
@@ -83,6 +71,24 @@ class Flow:
         stream: bool,
     ) -> tuple[Report, RunState | None]:
         stream_options = {"include_usage": True} if stream else None
+        from blackgeorge.config import RunConfig
+
+        config = RunConfig(
+            adapter=self.desk.adapter,
+            emit=self.emit,
+            run_id=self._run_id,
+            events=self._events,
+            temperature=self.desk.temperature,
+            max_tokens=self.desk.max_tokens,
+            stream=stream,
+            stream_options=stream_options,
+            structured_output_retries=self.desk.structured_output_retries,
+            max_iterations=self.desk.max_iterations,
+            max_tool_calls=self.desk.max_tool_calls,
+            respect_context_window=self.desk.respect_context_window,
+            max_context_messages=self.desk.max_context_messages,
+            default_model=self.desk.model,
+        )
         if state.runner_type == "worker":
             worker = self.desk._workers.get(state.runner_name)
             if worker is None:
@@ -100,22 +106,7 @@ class Flow:
                 )
                 return report, None
             worker = cast(Worker, worker)
-            return await worker.aresume(
-                adapter=self.desk.adapter,
-                state=state,
-                decision_or_input=decision_or_input,
-                events=self._events,
-                emit=self.emit,
-                temperature=self.desk.temperature,
-                max_tokens=self.desk.max_tokens,
-                stream=stream,
-                stream_options=stream_options,
-                structured_output_retries=self.desk.structured_output_retries,
-                max_iterations=self.desk.max_iterations,
-                max_tool_calls=self.desk.max_tool_calls,
-                model_name=worker.model or self.desk.model,
-                respect_context_window=self.desk.respect_context_window,
-            )
+            return await worker.aresume(config, state, decision_or_input)
         if state.runner_type == "workforce":
             workforce = self.desk._workforces.get(state.runner_name)
             if workforce is None:
@@ -133,22 +124,7 @@ class Flow:
                 )
                 return report, None
             workforce = cast(Workforce, workforce)
-            return await workforce.aresume(
-                adapter=self.desk.adapter,
-                state=state,
-                decision_or_input=decision_or_input,
-                events=self._events,
-                emit=self.emit,
-                temperature=self.desk.temperature,
-                max_tokens=self.desk.max_tokens,
-                stream=stream,
-                stream_options=stream_options,
-                structured_output_retries=self.desk.structured_output_retries,
-                max_iterations=self.desk.max_iterations,
-                max_tool_calls=self.desk.max_tool_calls,
-                default_model=self.desk.model,
-                respect_context_window=self.desk.respect_context_window,
-            )
+            return await workforce.aresume(config, state, decision_or_input)
         report = Report(
             run_id=state.run_id,
             status="failed",

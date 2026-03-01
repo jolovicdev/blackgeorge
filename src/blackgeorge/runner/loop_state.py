@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from blackgeorge.adapters.base import BaseModelAdapter
+from blackgeorge.config import RunConfig
 from blackgeorge.core.event import Event
 from blackgeorge.core.event_types import EventType
 from blackgeorge.core.message import Message
@@ -61,22 +62,32 @@ class CompletionContext:
 
         return on_token
 
+    def run_config(self) -> RunConfig:
+        return RunConfig(
+            adapter=self.adapter,
+            emit=self.emit,
+            run_id=self.run_id,
+            events=self.state.events,
+            temperature=self.temperature,
+            max_tokens=self.max_tokens,
+            stream_options=self.stream_options,
+            respect_context_window=self.respect_context_window,
+        )
+
     async def handle_context_limit(
         self,
-        exc: Exception,
+        _exc: Exception,
         apply_summary: Callable[[], Any],
     ) -> Report | None:
+        config = self.run_config()
         decision = await _acontext_retry(
-            run_id=self.state.run_id,
+            config=config,
             worker_name=self.state.worker_name,
             messages=self.state.messages,
             tool_calls=self.state.tool_calls,
             metrics=self.state.metrics,
-            events=self.state.events,
             errors=self.state.errors,
-            emit=self.emit,
             model_registered=self.state.model_registered,
-            respect_context_window=self.respect_context_window,
             context_summaries=self.state.context_summaries,
             apply_summary=apply_summary,
         )
@@ -86,41 +97,38 @@ class CompletionContext:
         return None
 
     def fail(self, message: str) -> Report:
+        config = self.run_config()
         return _fail_report(
-            run_id=self.state.run_id,
+            config=config,
             worker_name=self.state.worker_name,
             message=message,
             messages=self.state.messages,
             tool_calls=self.state.tool_calls,
             metrics=self.state.metrics,
-            events=self.state.events,
             errors=self.state.errors,
-            emit=self.emit,
         )
 
     def finalize_structured(self, data: Any) -> Report:
+        config = self.run_config()
         return _finalize_structured_response(
-            run_id=self.state.run_id,
+            config=config,
             data=data,
             messages=self.state.messages,
             tool_calls=self.state.tool_calls,
             metrics=self.state.metrics,
-            events=self.state.events,
             errors=self.state.errors,
-            emit=self.emit,
             worker_name=self.state.worker_name,
         )
 
     def finalize_plain(self, response: Any) -> Report:
+        config = self.run_config()
         return _finalize_plain_response(
-            run_id=self.state.run_id,
+            config=config,
             response=response,
             messages=self.state.messages,
             tool_calls=self.state.tool_calls,
             metrics=self.state.metrics,
-            events=self.state.events,
             errors=self.state.errors,
-            emit=self.emit,
             worker_name=self.state.worker_name,
         )
 

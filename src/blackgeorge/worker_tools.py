@@ -7,6 +7,8 @@ from blackgeorge.tools.base import Tool
 
 
 def tool_prompt(tool: Tool, action_type: str, tool_call: ToolCall) -> str:
+    if action_type == "handoff":
+        return f"Handoff requested to agent: {tool_call.arguments.get('agent_name', 'unknown')}"
     if action_type == "user_input":
         question = tool_call.arguments.get("question")
         if isinstance(question, str) and question.strip():
@@ -20,6 +22,8 @@ def tool_prompt(tool: Tool, action_type: str, tool_call: ToolCall) -> str:
 
 
 def tool_action_type(tool: Tool) -> PendingActionType | None:
+    if getattr(tool, "requires_handoff", False):
+        return "handoff"
     if tool.requires_confirmation:
         return "confirmation"
     if tool.requires_user_input:

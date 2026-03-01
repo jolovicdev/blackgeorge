@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from blackgeorge.adapters.base import BaseModelAdapter
 from blackgeorge.adapters.litellm import LiteLLMAdapter
+from blackgeorge.config import RunConfig
 from blackgeorge.core.event import Event
 from blackgeorge.core.job import Job
 from blackgeorge.core.message import Message
@@ -36,6 +37,7 @@ class Desk:
         max_iterations: int = 10,
         max_tool_calls: int = 20,
         respect_context_window: bool = True,
+        max_context_messages: int | None = None,
         event_bus: EventBus | None = None,
         run_store: RunStore | None = None,
         memory_store: Any | None = None,
@@ -53,6 +55,7 @@ class Desk:
         self.max_iterations = max_iterations
         self.max_tool_calls = max_tool_calls
         self.respect_context_window = respect_context_window
+        self.max_context_messages = max_context_messages
         self.event_bus = event_bus or EventBus()
         self.adapter = adapter or LiteLLMAdapter()
         self.storage_dir = storage_dir or ".blackgeorge"
@@ -189,43 +192,29 @@ class Desk:
         async def drain_handlers() -> None:
             await self.event_bus.await_pending()
 
+        config = RunConfig(
+            adapter=self.adapter,
+            emit=emit,
+            run_id=run_id,
+            events=events,
+            temperature=self.temperature,
+            max_tokens=self.max_tokens,
+            stream=stream_enabled,
+            stream_options=stream_options,
+            structured_output_retries=self.structured_output_retries,
+            max_iterations=self.max_iterations,
+            max_tool_calls=self.max_tool_calls,
+            respect_context_window=self.respect_context_window,
+            max_context_messages=self.max_context_messages,
+            default_model=self.model,
+        )
+
         if isinstance(runner, Worker):
             self.register_worker(runner)
-            report, state = runner.run(
-                adapter=self.adapter,
-                job=job,
-                run_id=run_id,
-                events=events,
-                emit=emit,
-                temperature=self.temperature,
-                max_tokens=self.max_tokens,
-                stream=stream_enabled,
-                stream_options=stream_options,
-                structured_output_retries=self.structured_output_retries,
-                max_iterations=self.max_iterations,
-                max_tool_calls=self.max_tool_calls,
-                model_name=runner.model or self.model,
-                respect_context_window=self.respect_context_window,
-            )
+            report, state = runner.run(config, job)
         elif isinstance(runner, Workforce):
             self.register_workforce(runner)
-            report, state = runner.run(
-                adapter=self.adapter,
-                job=job,
-                run_id=run_id,
-                events=events,
-                emit=emit,
-                temperature=self.temperature,
-                max_tokens=self.max_tokens,
-                stream=stream_enabled,
-                stream_options=stream_options,
-                structured_output_retries=self.structured_output_retries,
-                max_iterations=self.max_iterations,
-                max_tool_calls=self.max_tool_calls,
-                default_model=self.model,
-                respect_context_window=self.respect_context_window,
-                drain_async_handlers=drain_handlers,
-            )
+            report, state = runner.run(config, job, drain_async_handlers=drain_handlers)
         else:
             raise TypeError("Runner must be Worker or Workforce")
 
@@ -277,42 +266,29 @@ class Desk:
         def emit(event_type: str, source: str, payload: dict[str, Any]) -> None:
             self._emit(events, run_id, event_type, source, payload)
 
+        config = RunConfig(
+            adapter=self.adapter,
+            emit=emit,
+            run_id=run_id,
+            events=events,
+            temperature=self.temperature,
+            max_tokens=self.max_tokens,
+            stream=stream_enabled,
+            stream_options=stream_options,
+            structured_output_retries=self.structured_output_retries,
+            max_iterations=self.max_iterations,
+            max_tool_calls=self.max_tool_calls,
+            respect_context_window=self.respect_context_window,
+            max_context_messages=self.max_context_messages,
+            default_model=self.model,
+        )
+
         if isinstance(runner, Worker):
             self.register_worker(runner)
-            report, state = await runner.arun(
-                adapter=self.adapter,
-                job=job,
-                run_id=run_id,
-                events=events,
-                emit=emit,
-                temperature=self.temperature,
-                max_tokens=self.max_tokens,
-                stream=stream_enabled,
-                stream_options=stream_options,
-                structured_output_retries=self.structured_output_retries,
-                max_iterations=self.max_iterations,
-                max_tool_calls=self.max_tool_calls,
-                model_name=runner.model or self.model,
-                respect_context_window=self.respect_context_window,
-            )
+            report, state = await runner.arun(config, job)
         elif isinstance(runner, Workforce):
             self.register_workforce(runner)
-            report, state = await runner.arun(
-                adapter=self.adapter,
-                job=job,
-                run_id=run_id,
-                events=events,
-                emit=emit,
-                temperature=self.temperature,
-                max_tokens=self.max_tokens,
-                stream=stream_enabled,
-                stream_options=stream_options,
-                structured_output_retries=self.structured_output_retries,
-                max_iterations=self.max_iterations,
-                max_tool_calls=self.max_tool_calls,
-                default_model=self.model,
-                respect_context_window=self.respect_context_window,
-            )
+            report, state = await runner.arun(config, job)
         else:
             raise TypeError("Runner must be Worker or Workforce")
 
@@ -414,47 +390,34 @@ class Desk:
 
         self._emit(events, report.run_id, "run.resumed", "desk", {})
 
+        config = RunConfig(
+            adapter=self.adapter,
+            emit=emit,
+            run_id=report.run_id,
+            events=events,
+            temperature=self.temperature,
+            max_tokens=self.max_tokens,
+            stream=stream_enabled,
+            stream_options=stream_options,
+            structured_output_retries=self.structured_output_retries,
+            max_iterations=self.max_iterations,
+            max_tool_calls=self.max_tool_calls,
+            respect_context_window=self.respect_context_window,
+            max_context_messages=self.max_context_messages,
+            default_model=self.model,
+        )
+
         worker: Worker | None = None
         if state.runner_type == "worker":
             worker = self._workers.get(state.runner_name)
             if worker is None:
                 return resume_failed("Worker not registered")
-            updated_report, updated_state = worker.resume(
-                adapter=self.adapter,
-                state=state,
-                decision_or_input=decision_or_input,
-                events=events,
-                emit=emit,
-                temperature=self.temperature,
-                max_tokens=self.max_tokens,
-                stream=stream_enabled,
-                stream_options=stream_options,
-                structured_output_retries=self.structured_output_retries,
-                max_iterations=self.max_iterations,
-                max_tool_calls=self.max_tool_calls,
-                model_name=worker.model or self.model,
-                respect_context_window=self.respect_context_window,
-            )
+            updated_report, updated_state = worker.resume(config, state, decision_or_input)
         elif state.runner_type == "workforce":
             workforce = self._workforces.get(state.runner_name)
             if workforce is None:
                 return resume_failed("Workforce not registered")
-            updated_report, updated_state = workforce.resume(
-                adapter=self.adapter,
-                state=state,
-                decision_or_input=decision_or_input,
-                events=events,
-                emit=emit,
-                temperature=self.temperature,
-                max_tokens=self.max_tokens,
-                stream=stream_enabled,
-                stream_options=stream_options,
-                structured_output_retries=self.structured_output_retries,
-                max_iterations=self.max_iterations,
-                max_tool_calls=self.max_tool_calls,
-                default_model=self.model,
-                respect_context_window=self.respect_context_window,
-            )
+            updated_report, updated_state = workforce.resume(config, state, decision_or_input)
         else:
             return resume_failed("Unknown runner type")
 
@@ -568,46 +531,35 @@ class Desk:
 
         self._emit(events, report.run_id, "run.resumed", "desk", {})
 
+        config = RunConfig(
+            adapter=self.adapter,
+            emit=emit,
+            run_id=report.run_id,
+            events=events,
+            temperature=self.temperature,
+            max_tokens=self.max_tokens,
+            stream=stream_enabled,
+            stream_options=stream_options,
+            structured_output_retries=self.structured_output_retries,
+            max_iterations=self.max_iterations,
+            max_tool_calls=self.max_tool_calls,
+            respect_context_window=self.respect_context_window,
+            max_context_messages=self.max_context_messages,
+            default_model=self.model,
+        )
+
         worker: Worker | None = None
         if state.runner_type == "worker":
             worker = self._workers.get(state.runner_name)
             if worker is None:
                 return resume_failed("Worker not registered")
-            updated_report, updated_state = await worker.aresume(
-                adapter=self.adapter,
-                state=state,
-                decision_or_input=decision_or_input,
-                events=events,
-                emit=emit,
-                temperature=self.temperature,
-                max_tokens=self.max_tokens,
-                stream=stream_enabled,
-                stream_options=stream_options,
-                structured_output_retries=self.structured_output_retries,
-                max_iterations=self.max_iterations,
-                max_tool_calls=self.max_tool_calls,
-                model_name=worker.model or self.model,
-                respect_context_window=self.respect_context_window,
-            )
+            updated_report, updated_state = await worker.aresume(config, state, decision_or_input)
         elif state.runner_type == "workforce":
             workforce = self._workforces.get(state.runner_name)
             if workforce is None:
                 return resume_failed("Workforce not registered")
             updated_report, updated_state = await workforce.aresume(
-                adapter=self.adapter,
-                state=state,
-                decision_or_input=decision_or_input,
-                events=events,
-                emit=emit,
-                temperature=self.temperature,
-                max_tokens=self.max_tokens,
-                stream=stream_enabled,
-                stream_options=stream_options,
-                structured_output_retries=self.structured_output_retries,
-                max_iterations=self.max_iterations,
-                max_tool_calls=self.max_tool_calls,
-                default_model=self.model,
-                respect_context_window=self.respect_context_window,
+                config, state, decision_or_input
             )
         else:
             return resume_failed("Unknown runner type")
