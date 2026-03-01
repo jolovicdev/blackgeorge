@@ -6,15 +6,17 @@ import pytest
 from pydantic import BaseModel
 
 from blackgeorge.adapters.base import BaseModelAdapter, ModelResponse
+from blackgeorge.config import RunConfig
 from blackgeorge.core.job import Job
 from blackgeorge.core.message import Message
+from blackgeorge.core.pending_action import PendingAction
 from blackgeorge.core.report import Report
 from blackgeorge.core.tool_call import ToolCall
 from blackgeorge.desk import Desk
 from blackgeorge.memory.base import MemoryScope, MemoryStore
 from blackgeorge.store.in_memory import InMemoryRunStore
 from blackgeorge.store.state import RunState
-from blackgeorge.tools import tool
+from blackgeorge.tools import tool, transfer_to_agent_tool
 from blackgeorge.worker import Worker
 from blackgeorge.worker_messages import replace_tool_call, structured_content
 from tests.utils import FakeAdapter
@@ -224,6 +226,56 @@ class StructuredStreamPreviewAdapter(BaseModelAdapter):
         return response_schema(answer=self._fallback_answer)
 
 
+class ProactiveSummaryBudgetAdapter(BaseModelAdapter):
+    def __init__(self) -> None:
+        self.turn_calls = 0
+        self.summary_calls = 0
+
+    def complete(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        tool_choice: str | dict[str, Any] | None,
+        temperature: float | None,
+        max_tokens: int | None,
+        stream: bool,
+        stream_options: dict[str, Any] | None,
+        thinking: dict[str, Any] | None = None,
+        drop_params: bool | None = None,
+        extra_body: dict[str, Any] | None = None,
+    ) -> ModelResponse:
+        raise RuntimeError("sync path not used")
+
+    async def acomplete(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        tool_choice: str | dict[str, Any] | None,
+        temperature: float | None,
+        max_tokens: int | None,
+        stream: bool,
+        stream_options: dict[str, Any] | None,
+        thinking: dict[str, Any] | None = None,
+        drop_params: bool | None = None,
+        extra_body: dict[str, Any] | None = None,
+    ) -> ModelResponse:
+        if (
+            len(messages) >= 1
+            and isinstance(messages[0].get("content"), str)
+            and str(messages[0]["content"]).startswith("You are a summarization assistant.")
+        ):
+            self.summary_calls += 1
+            return ModelResponse(content="summary", tool_calls=[], usage={}, raw={})
+        self.turn_calls += 1
+        if self.turn_calls <= 2:
+            raise RuntimeError("context length exceeded")
+        return ModelResponse(content="done", tool_calls=[], usage={}, raw={})
+
+
 class ToolThenStructuredContextAdapter(BaseModelAdapter):
     def __init__(self) -> None:
         self.acomplete_calls = 0
@@ -404,6 +456,58 @@ def test_pause_and_resume_confirmation() -> None:
     assert resumed.content == "finished"
 
 
+def test_worker_resume_preserves_paused_state_run_id() -> None:
+    @tool(requires_confirmation=True)
+    def risky(action: str) -> str:
+        return f"ok:{action}"
+
+    call = ToolCall(id="call-1", name="risky", arguments={"action": "go"})
+    pending_action = PendingAction(
+        action_id="pending-1",
+        type="confirmation",
+        tool_call=call,
+        prompt="confirm",
+        options=["yes", "no"],
+    )
+    state = RunState(
+        run_id="paused-run",
+        status="paused",
+        runner_type="worker",
+        runner_name="Worker",
+        job=Job(input="run"),
+        messages=[],
+        tool_calls=[call],
+        pending_action=pending_action,
+        metrics={},
+        iteration=0,
+        payload={},
+    )
+    events = []
+
+    def emit(event_type: str, source: str, payload: dict[str, Any]) -> None:
+        return None
+
+    config = RunConfig(
+        adapter=FakeAdapter([ModelResponse(content="done", tool_calls=[], usage={}, raw={})]),
+        emit=emit,
+        run_id="fresh-config-run",
+        events=events,
+        structured_output_retries=0,
+        max_iterations=5,
+        max_tool_calls=5,
+        respect_context_window=True,
+        default_model="fake",
+    )
+    worker = Worker(name="Worker", tools=[risky], model="fake")
+
+    report, next_state = worker.resume(config, state, True)
+
+    assert next_state is None
+    assert report.status == "completed"
+    assert report.run_id == "paused-run"
+    assert report.run_id != "fresh-config-run"
+
+
 def test_pause_emits_worker_paused_not_completed() -> None:
     @tool(requires_confirmation=True)
     def risky(action: str) -> str:
@@ -461,6 +565,45 @@ def test_confirmation_decline_emits_tool_failed() -> None:
     assert any(
         payload.get("error") == "Tool execution declined" for payload in tool_failed_payloads
     )
+
+
+def test_handoff_pause_does_not_emit_user_input_requested() -> None:
+    responses = [
+        ModelResponse(
+            content=None,
+            tool_calls=[
+                ToolCall(
+                    id="1",
+                    name="transfer_to_agent",
+                    arguments={"agent_name": "reviewer", "context": "route"},
+                )
+            ],
+            usage={},
+            raw={},
+        )
+    ]
+    desk = Desk(model="fake", adapter=FakeAdapter(responses), run_store=InMemoryRunStore())
+    handoff_tool = transfer_to_agent_tool(["reviewer"])
+    worker = Worker(name="Worker", tools=[handoff_tool], model="fake")
+    user_input_events: list[str] = []
+    paused_payloads: list[dict[str, Any]] = []
+
+    def on_user_input_requested(event: Any) -> None:
+        user_input_events.append(event.type)
+
+    def on_worker_paused(event: Any) -> None:
+        paused_payloads.append(event.payload)
+
+    desk.event_bus.subscribe("tool.user_input_requested", on_user_input_requested)
+    desk.event_bus.subscribe("worker.paused", on_worker_paused)
+    report = desk.run(worker, Job(input="route"))
+
+    assert report.status == "paused"
+    assert report.pending_action is not None
+    assert report.pending_action.type == "handoff"
+    assert user_input_events == []
+    assert paused_payloads
+    assert paused_payloads[0].get("pending_action_type") == "handoff"
 
 
 def test_unregister_worker_blocks_resume() -> None:
@@ -569,6 +712,24 @@ def test_context_window_respect_disabled() -> None:
     report = desk.run(worker, Job(input="run"))
     assert report.status == "failed"
     assert report.errors
+
+
+def test_proactive_summaries_do_not_consume_context_retry_budget() -> None:
+    adapter = ProactiveSummaryBudgetAdapter()
+    desk = Desk(
+        model="fake",
+        adapter=adapter,
+        run_store=InMemoryRunStore(),
+        max_context_messages=5,
+    )
+    worker = Worker(name="Worker", model="fake")
+    initial_messages = [Message(role="user", content=f"history-{index}") for index in range(6)]
+    report = desk.run(worker, Job(input="run", initial_messages=initial_messages))
+
+    assert report.status == "completed"
+    assert report.content == "done"
+    assert adapter.turn_calls == 3
+    assert adapter.summary_calls >= 3
 
 
 def test_max_tool_calls_limit_enforced() -> None:
@@ -1166,6 +1327,63 @@ def test_streaming_message_fallback_overrides_partial_delta_arguments() -> None:
     assert report.tool_calls[0].arguments == {"text": "hi"}
     assert report.tool_calls[0].error is None
     assert report.tool_calls[0].result is not None
+
+
+def test_streaming_tool_turn_rejects_unsupported_argument_types() -> None:
+    from tests.utils import StreamingAdapter
+
+    executions = 0
+
+    @tool()
+    async def dangerous() -> str:
+        nonlocal executions
+        executions += 1
+        return "ran"
+
+    streams = [
+        [
+            {
+                "choices": [
+                    {
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "index": 0,
+                                    "id": "call-danger",
+                                    "function": {"name": "dangerous", "arguments": 123},
+                                }
+                            ]
+                        }
+                    }
+                ]
+            },
+            {
+                "choices": [{"delta": {}, "finish_reason": "tool_calls"}],
+                "usage": {"total_tokens": 8},
+            },
+        ],
+        [
+            {"choices": [{"delta": {"content": "done"}}]},
+            {"choices": [{"delta": {}}], "usage": {"total_tokens": 3}},
+        ],
+    ]
+    desk = Desk(
+        model="fake",
+        adapter=StreamingAdapter(streams),
+        run_store=InMemoryRunStore(),
+        stream=True,
+    )
+    worker = Worker(name="Worker", model="fake", tools=[dangerous])
+    report = desk.run(worker, Job(input="run"), stream=True)
+
+    assert report.status == "completed"
+    assert report.content == "done"
+    assert len(report.tool_calls) == 1
+    assert report.tool_calls[0].name == "dangerous"
+    assert report.tool_calls[0].arguments == {}
+    assert report.tool_calls[0].error is not None
+    assert "Unsupported tool arguments type: int" in report.tool_calls[0].error
+    assert executions == 0
 
 
 def test_structured_stream_preview_validates_streamed_json() -> None:

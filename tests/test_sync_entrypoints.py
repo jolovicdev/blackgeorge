@@ -51,21 +51,25 @@ async def test_worker_resume_raises_in_running_loop() -> None:
         runner_name="AsyncGuard",
         job=Job(input="hi"),
     )
+    from blackgeorge.config import RunConfig
+    from tests.utils import FakeAdapter
+
+    config = RunConfig(
+        adapter=FakeAdapter([]),
+        emit=lambda *_: None,
+        run_id="run",
+        events=[],
+        structured_output_retries=1,
+        max_iterations=1,
+        max_tool_calls=1,
+        respect_context_window=True,
+        default_model="fake",
+    )
     with pytest.raises(RuntimeError, match="resume cannot be called from a running event loop"):
         runner.resume(
-            adapter=FakeAdapter([]),
+            config=config,
             state=state,
             decision_or_input=None,
-            events=[],
-            emit=lambda *_: None,
-            temperature=None,
-            max_tokens=None,
-            stream=False,
-            stream_options=None,
-            structured_output_retries=1,
-            max_iterations=1,
-            max_tool_calls=1,
-            model_name="fake",
         )
 
 
