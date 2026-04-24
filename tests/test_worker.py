@@ -1666,3 +1666,112 @@ def test_replace_tool_call_missing_id_raises() -> None:
     updated = ToolCall(id="missing", name="tool", arguments={})
     with pytest.raises(ValueError):
         replace_tool_call(tool_calls, updated)
+
+
+def test_multiple_confirmation_tool_calls_adds_error_results_for_remaining() -> None:
+    @tool(description="Write a file", requires_confirmation=True)
+    def write_file(path: str, content: str) -> str:
+        return f"Wrote {path}"
+
+    adapter = FakeAdapter(
+        [
+            ModelResponse(
+                content=None,
+                tool_calls=[
+                    ToolCall(
+                        id="call_1", name="write_file", arguments={"path": "a.py", "content": "1"}
+                    ),
+                    ToolCall(
+                        id="call_2", name="write_file", arguments={"path": "b.py", "content": "2"}
+                    ),
+                ],
+                usage={},
+                raw={},
+            ),
+            ModelResponse(content="done", tool_calls=[], usage={}, raw={}),
+        ]
+    )
+    desk = Desk(model="fake", adapter=adapter, run_store=InMemoryRunStore())
+    worker = Worker(name="Worker", model="fake", tools=[write_file])
+
+    report = desk.run(worker, Job(input="create two files"))
+    assert report.status == "paused"
+    assert report.pending_action is not None
+    assert report.pending_action.tool_call.id == "call_1"
+
+    tool_msgs = [m for m in report.messages if m.role == "tool"]
+    assert len(tool_msgs) == 1
+    assert tool_msgs[0].tool_call_id == "call_2"
+    assert "Skipped" in str(tool_msgs[0].content)
+
+    resumed = desk.resume(report, True)
+    assert resumed.status == "completed"
+
+
+def test_stream_token_events_include_type_field() -> None:
+    from tests.utils import StreamingAdapter
+
+    @tool()
+    async def echo(text: str) -> str:
+        return f"echo:{text}"
+
+    streams = [
+        [
+            {
+                "choices": [
+                    {
+                        "delta": {
+                            "content": "Hello",
+                            "tool_calls": [
+                                {
+                                    "index": 0,
+                                    "id": "call_1",
+                                    "function": {"name": "echo", "arguments": '{"text": '},
+                                }
+                            ],
+                        }
+                    }
+                ]
+            },
+            {
+                "choices": [
+                    {"delta": {"tool_calls": [{"index": 0, "function": {"arguments": '"hi"'}}]}}
+                ]
+            },
+            {
+                "choices": [{"delta": {}, "finish_reason": "tool_calls"}],
+                "usage": {"total_tokens": 9},
+            },
+        ],
+        [
+            {"choices": [{"delta": {"content": "done"}}]},
+            {"choices": [{"delta": {}}], "usage": {"total_tokens": 4}},
+        ],
+    ]
+    desk = Desk(
+        model="fake",
+        adapter=StreamingAdapter(streams),
+        run_store=InMemoryRunStore(),
+        stream=True,
+    )
+    worker = Worker(name="Worker", model="fake", tools=[echo])
+    token_events: list[tuple[str, str]] = []
+
+    def on_token(event: Any) -> None:
+        token = event.payload.get("token")
+        token_type = event.payload.get("type")
+        if isinstance(token, str) and isinstance(token_type, str):
+            token_events.append((token, token_type))
+
+    desk.event_bus.subscribe("stream.token", on_token)
+    report = desk.run(worker, Job(input="run"), stream=True)
+
+    assert report.status == "completed"
+    assert len(token_events) > 0
+
+    content_tokens = [t for t, ty in token_events if ty == "content"]
+    tool_tokens = [t for t, ty in token_events if ty == "tool_argument"]
+
+    assert "Hello" in content_tokens
+    assert '{"text": ' in tool_tokens
+    assert '"hi"' in tool_tokens

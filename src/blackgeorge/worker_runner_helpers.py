@@ -337,7 +337,7 @@ def _plan_tool_calls(
         None,
         False,
     )
-    for call in response.tool_calls:
+    for i, call in enumerate(response.tool_calls):
         if len(tool_calls) >= max_tool_calls:
             max_tool_calls_exceeded = True
             break
@@ -364,6 +364,12 @@ def _plan_tool_calls(
                 options=pending_options(action_type),
                 metadata=metadata,
             )
+            for remaining_call in response.tool_calls[i + 1 :]:
+                tool_calls.append(remaining_call)
+                ordered_calls.append(remaining_call)
+                immediate_results[remaining_call.id] = ToolResult(
+                    error="Skipped: another tool requires confirmation first"
+                )
             break
         ordered_calls.append(call)
         executable_calls.append((call, tool))
