@@ -21,6 +21,7 @@ class FakeAdapter(BaseModelAdapter):
         thinking: dict[str, Any] | None = None,
         drop_params: bool | None = None,
         extra_body: dict[str, Any] | None = None,
+        num_retries: int | None = None,
     ) -> ModelResponse:
         if not self._responses:
             return ModelResponse(content="", tool_calls=[], usage={}, raw={})
@@ -40,6 +41,7 @@ class FakeAdapter(BaseModelAdapter):
         thinking: dict[str, Any] | None = None,
         drop_params: bool | None = None,
         extra_body: dict[str, Any] | None = None,
+        num_retries: int | None = None,
     ) -> ModelResponse:
         if not self._responses:
             return ModelResponse(content="", tool_calls=[], usage={}, raw={})
@@ -64,6 +66,7 @@ class AsyncOnlyAdapter(BaseModelAdapter):
         thinking: dict[str, Any] | None = None,
         drop_params: bool | None = None,
         extra_body: dict[str, Any] | None = None,
+        num_retries: int | None = None,
     ) -> ModelResponse:
         raise RuntimeError("Sync completion not allowed")
 
@@ -81,6 +84,7 @@ class AsyncOnlyAdapter(BaseModelAdapter):
         thinking: dict[str, Any] | None = None,
         drop_params: bool | None = None,
         extra_body: dict[str, Any] | None = None,
+        num_retries: int | None = None,
     ) -> ModelResponse:
         if not self._responses:
             return ModelResponse(content="", tool_calls=[], usage={}, raw={})
@@ -106,6 +110,7 @@ class StreamingAdapter(BaseModelAdapter):
         thinking: dict[str, Any] | None = None,
         drop_params: bool | None = None,
         extra_body: dict[str, Any] | None = None,
+        num_retries: int | None = None,
     ) -> ModelResponse | Any:
         if stream and self._call_index < len(self._streams):
             chunks = self._streams[self._call_index]
@@ -127,6 +132,7 @@ class StreamingAdapter(BaseModelAdapter):
         thinking: dict[str, Any] | None = None,
         drop_params: bool | None = None,
         extra_body: dict[str, Any] | None = None,
+        num_retries: int | None = None,
     ) -> ModelResponse | Any:
         if stream and self._call_index < len(self._streams):
             chunks = self._streams[self._call_index]

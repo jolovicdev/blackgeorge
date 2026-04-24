@@ -17,7 +17,7 @@ if [[ "${subject}" == Merge\ * ]] || [[ "${subject}" == Revert\ * ]]; then
     exit 0
 fi
 
-pattern='^(feat|fix|refactor|docs|test|chore)(\([a-z0-9._/-]+\))?!?: [a-z0-9][a-z0-9 ,._:/-]*$'
+pattern='^(feat|fix|refactor|docs|test|chore)(\([a-z0-9._/-]+\))?!?: [a-zA-Z0-9][a-zA-Z0-9 ,._:/-]*$'
 if ! printf '%s' "${subject}" | grep -Eq "${pattern}"; then
     echo "commit-msg: expected Conventional Commit, e.g. fix: adjust retry handling" >&2
     exit 1

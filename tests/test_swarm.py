@@ -27,6 +27,7 @@ class ContextLimitFailingAdapter(BaseModelAdapter):
         thinking: dict[str, Any] | None = None,
         drop_params: bool | None = None,
         extra_body: dict[str, Any] | None = None,
+        num_retries: int | None = None,
     ) -> ModelResponse:
         raise RuntimeError("context length exceeded")
 
@@ -44,6 +45,7 @@ class ContextLimitFailingAdapter(BaseModelAdapter):
         thinking: dict[str, Any] | None = None,
         drop_params: bool | None = None,
         extra_body: dict[str, Any] | None = None,
+        num_retries: int | None = None,
     ) -> ModelResponse:
         raise RuntimeError("context length exceeded")
 
@@ -63,6 +65,7 @@ class RuntimeFailingAdapter(BaseModelAdapter):
         thinking: dict[str, Any] | None = None,
         drop_params: bool | None = None,
         extra_body: dict[str, Any] | None = None,
+        num_retries: int | None = None,
     ) -> ModelResponse:
         raise RuntimeError("adapter exploded")
 
@@ -80,6 +83,7 @@ class RuntimeFailingAdapter(BaseModelAdapter):
         thinking: dict[str, Any] | None = None,
         drop_params: bool | None = None,
         extra_body: dict[str, Any] | None = None,
+        num_retries: int | None = None,
     ) -> ModelResponse:
         raise RuntimeError("adapter exploded")
 
@@ -102,6 +106,7 @@ class FailThenSucceedAdapter(BaseModelAdapter):
         thinking: dict[str, Any] | None = None,
         drop_params: bool | None = None,
         extra_body: dict[str, Any] | None = None,
+        num_retries: int | None = None,
     ) -> ModelResponse:
         self.calls += 1
         if self.calls == 1:
@@ -122,6 +127,7 @@ class FailThenSucceedAdapter(BaseModelAdapter):
         thinking: dict[str, Any] | None = None,
         drop_params: bool | None = None,
         extra_body: dict[str, Any] | None = None,
+        num_retries: int | None = None,
     ) -> ModelResponse:
         return self.complete(
             model=model,

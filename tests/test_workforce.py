@@ -36,6 +36,7 @@ class FailingAdapter(BaseModelAdapter):
         thinking: dict[str, Any] | None = None,
         drop_params: bool | None = None,
         extra_body: dict[str, Any] | None = None,
+        num_retries: int | None = None,
     ) -> ModelResponse:
         self.calls += 1
         if self.calls == 1:
@@ -56,6 +57,7 @@ class FailingAdapter(BaseModelAdapter):
         thinking: dict[str, Any] | None = None,
         drop_params: bool | None = None,
         extra_body: dict[str, Any] | None = None,
+        num_retries: int | None = None,
     ) -> ModelResponse:
         return self.complete(
             model=model,
@@ -87,6 +89,7 @@ class StructuredFailAdapter(BaseModelAdapter):
         thinking: dict[str, Any] | None = None,
         drop_params: bool | None = None,
         extra_body: dict[str, Any] | None = None,
+        num_retries: int | None = None,
     ) -> ModelResponse:
         return ModelResponse(content="", tool_calls=[], usage={}, raw={})
 
@@ -104,6 +107,7 @@ class StructuredFailAdapter(BaseModelAdapter):
         thinking: dict[str, Any] | None = None,
         drop_params: bool | None = None,
         extra_body: dict[str, Any] | None = None,
+        num_retries: int | None = None,
     ) -> ModelResponse:
         return self.complete(
             model=model,
@@ -159,6 +163,7 @@ class SlowAsyncAdapter(BaseModelAdapter):
         thinking: dict[str, Any] | None = None,
         drop_params: bool | None = None,
         extra_body: dict[str, Any] | None = None,
+        num_retries: int | None = None,
     ) -> ModelResponse:
         raise RuntimeError("sync path not used in this test")
 
@@ -176,6 +181,7 @@ class SlowAsyncAdapter(BaseModelAdapter):
         thinking: dict[str, Any] | None = None,
         drop_params: bool | None = None,
         extra_body: dict[str, Any] | None = None,
+        num_retries: int | None = None,
     ) -> ModelResponse:
         self.calls += 1
         await asyncio.sleep(self.delay)
@@ -201,6 +207,7 @@ class SyncOnlyAdapter(BaseModelAdapter):
         thinking: dict[str, Any] | None = None,
         drop_params: bool | None = None,
         extra_body: dict[str, Any] | None = None,
+        num_retries: int | None = None,
     ) -> ModelResponse:
         with self._lock:
             self.calls += 1
@@ -226,6 +233,7 @@ class MessageCaptureAdapter(BaseModelAdapter):
         thinking: dict[str, Any] | None = None,
         drop_params: bool | None = None,
         extra_body: dict[str, Any] | None = None,
+        num_retries: int | None = None,
     ) -> ModelResponse:
         raise RuntimeError("sync path not used in this test")
 
@@ -243,6 +251,7 @@ class MessageCaptureAdapter(BaseModelAdapter):
         thinking: dict[str, Any] | None = None,
         drop_params: bool | None = None,
         extra_body: dict[str, Any] | None = None,
+        num_retries: int | None = None,
     ) -> ModelResponse:
         self.calls.append(list(messages))
         if not self._responses:

@@ -3,6 +3,8 @@ from typing import Any, cast
 
 from pydantic import BaseModel
 
+from blackgeorge.async_utils import ensure_not_running_loop
+from blackgeorge.config import RunConfig
 from blackgeorge.core.event import Event
 from blackgeorge.core.job import Job
 from blackgeorge.core.report import Report
@@ -33,29 +35,31 @@ class Flow:
             return report.data.model_dump(mode="json", warnings=False)
         return report.data
 
-    async def _run_runner(
-        self,
-        runner: Worker | Workforce,
-        job: Job,
-    ) -> tuple[Report, RunState | None]:
-        from blackgeorge.config import RunConfig
-
-        config = RunConfig(
+    def _make_run_config(self, stream: bool) -> RunConfig:
+        return RunConfig(
             adapter=self.desk.adapter,
             emit=self.emit,
             run_id=self._run_id,
             events=self._events,
             temperature=self.desk.temperature,
             max_tokens=self.desk.max_tokens,
-            stream=self._stream,
-            stream_options={"include_usage": True} if self._stream else None,
+            stream=stream,
+            stream_options={"include_usage": True} if stream else None,
             structured_output_retries=self.desk.structured_output_retries,
             max_iterations=self.desk.max_iterations,
             max_tool_calls=self.desk.max_tool_calls,
+            num_retries=self.desk.num_retries,
             respect_context_window=self.desk.respect_context_window,
             max_context_messages=self.desk.max_context_messages,
             default_model=self.desk.model,
         )
+
+    async def _run_runner(
+        self,
+        runner: Worker | Workforce,
+        job: Job,
+    ) -> tuple[Report, RunState | None]:
+        config = self._make_run_config(self._stream)
         if isinstance(runner, Worker):
             self.desk.register_worker(runner)
             return await runner.arun(config, job)
@@ -70,25 +74,7 @@ class Flow:
         decision_or_input: Any,
         stream: bool,
     ) -> tuple[Report, RunState | None]:
-        stream_options = {"include_usage": True} if stream else None
-        from blackgeorge.config import RunConfig
-
-        config = RunConfig(
-            adapter=self.desk.adapter,
-            emit=self.emit,
-            run_id=self._run_id,
-            events=self._events,
-            temperature=self.desk.temperature,
-            max_tokens=self.desk.max_tokens,
-            stream=stream,
-            stream_options=stream_options,
-            structured_output_retries=self.desk.structured_output_retries,
-            max_iterations=self.desk.max_iterations,
-            max_tool_calls=self.desk.max_tool_calls,
-            respect_context_window=self.desk.respect_context_window,
-            max_context_messages=self.desk.max_context_messages,
-            default_model=self.desk.model,
-        )
+        config = self._make_run_config(stream)
         if state.runner_type == "worker":
             worker = self.desk._workers.get(state.runner_name)
             if worker is None:
@@ -204,75 +190,100 @@ class Flow:
                 raise TypeError("Step must return Report or StepResult")
         return normalized
 
-    async def _run(self, job: Job) -> Report:
-        self._run_id = new_id()
-        self._events = []
-        self._stream = self.desk.stream
-        self.desk.run_store.create_run(self._run_id, job.model_dump(mode="json"))
-        self.desk.register_flow_run(self._run_id, self)
-        self.desk._emit(self._events, self._run_id, "run.started", self.name, {"job_id": job.id})
-        context = WorkflowContext(job=job)
-        all_reports: list[Report] = []
+    def _emit_run_failed(self, report: Report) -> None:
+        self.desk._emit(self._events, self._run_id, "run.failed", self.name, {})
+        self.desk.run_store.update_run(
+            self._run_id,
+            "failed",
+            report.content,
+            self._output_json(report),
+            None,
+        )
+        self.desk.unregister_flow_run(self._run_id)
 
-        for step_index, step in enumerate(self.steps):
-            results = await step.execute(self, context)
-            for result in self._normalize_results(results):
-                report = result.report
-                if report.status == "paused":
-                    if result.state is None:
-                        failed = Report(
-                            run_id=self._run_id,
-                            status="failed",
-                            content=None,
-                            data=None,
-                            messages=report.messages,
-                            tool_calls=report.tool_calls,
-                            metrics=report.metrics,
-                            events=self._events,
-                            pending_action=None,
-                            errors=["Missing runner state"],
-                        )
-                        self.desk._emit(self._events, self._run_id, "run.failed", self.name, {})
-                        self.desk.run_store.update_run(
-                            self._run_id,
-                            "failed",
-                            None,
-                            None,
-                            None,
-                        )
-                        self.desk.unregister_flow_run(self._run_id)
-                        return failed
-                    self.desk._emit(self._events, self._run_id, "run.paused", self.name, {})
-                    result.state.payload["stream"] = self._stream
-                    state = self._build_flow_state(
-                        job,
-                        step_index,
-                        all_reports,
-                        result.state,
-                        self._stream,
+    def _emit_run_completed(self, report: Report) -> None:
+        self.desk._emit(self._events, self._run_id, "run.completed", self.name, {})
+        self.desk.run_store.update_run(
+            self._run_id,
+            "completed",
+            report.content,
+            self._output_json(report),
+            None,
+        )
+        self.desk.unregister_flow_run(self._run_id)
+
+    async def _execute_step_results(
+        self,
+        results: list[StepOutput],
+        context: WorkflowContext,
+        all_reports: list[Report],
+        job: Job,
+        stream_enabled: bool,
+        step_index: int,
+    ) -> Report | None:
+        for result in self._normalize_results(results):
+            report = result.report
+            if report.status == "paused":
+                if result.state is None:
+                    failed = Report(
+                        run_id=self._run_id,
+                        status="failed",
+                        content=None,
+                        data=None,
+                        messages=report.messages,
+                        tool_calls=report.tool_calls,
+                        metrics=report.metrics,
+                        events=self._events,
+                        pending_action=None,
+                        errors=["Missing runner state"],
                     )
-                    self.desk.run_store.update_run(
-                        self._run_id,
-                        "paused",
-                        report.content,
-                        None,
-                        state,
-                    )
-                    return report
-                if report.status == "failed":
                     self.desk._emit(self._events, self._run_id, "run.failed", self.name, {})
-                    self.desk.run_store.update_run(
-                        self._run_id,
-                        "failed",
-                        report.content,
-                        self._output_json(report),
-                        None,
-                    )
+                    self.desk.run_store.update_run(self._run_id, "failed", None, None, None)
                     self.desk.unregister_flow_run(self._run_id)
-                    return report
-                all_reports.append(report)
-                context.outputs.append(report)
+                    return failed
+                self.desk._emit(self._events, self._run_id, "run.paused", self.name, {})
+                result.state.payload["stream"] = stream_enabled
+                state = self._build_flow_state(
+                    job,
+                    step_index,
+                    all_reports,
+                    result.state,
+                    stream_enabled,
+                )
+                self.desk.run_store.update_run(
+                    self._run_id,
+                    "paused",
+                    report.content,
+                    None,
+                    state,
+                )
+                return report
+            if report.status == "failed":
+                self._emit_run_failed(report)
+                return report
+            all_reports.append(report)
+            context.outputs.append(report)
+        return None
 
+    async def _run_steps(
+        self,
+        steps: list[Any],
+        context: WorkflowContext,
+        all_reports: list[Report],
+        job: Job,
+        stream_enabled: bool,
+        start_index: int = 0,
+    ) -> Report | None:
+        for step_index, step in enumerate(steps, start=start_index):
+            results = await step.execute(self, context)
+            report = await self._execute_step_results(
+                results, context, all_reports, job, stream_enabled, step_index
+            )
+            if report is not None:
+                return report
+        return None
+
+    def _finalize_flow_run(self, all_reports: list[Report]) -> Report:
         if not all_reports:
             empty_report = Report(
                 run_id=self._run_id,
@@ -295,16 +306,24 @@ class Flow:
             final_report = self._combine_reports(all_reports)
         else:
             final_report = all_reports[0]
-        self.desk._emit(self._events, self._run_id, "run.completed", self.name, {})
-        self.desk.run_store.update_run(
-            self._run_id,
-            "completed",
-            final_report.content,
-            self._output_json(final_report),
-            None,
-        )
-        self.desk.unregister_flow_run(self._run_id)
+        self._emit_run_completed(final_report)
         return final_report
+
+    async def _run(self, job: Job) -> Report:
+        self._run_id = new_id()
+        self._events = []
+        self._stream = self.desk.stream
+        self.desk.run_store.create_run(self._run_id, job.model_dump(mode="json"))
+        self.desk.register_flow_run(self._run_id, self)
+        self.desk._emit(self._events, self._run_id, "run.started", self.name, {"job_id": job.id})
+        context = WorkflowContext(job=job)
+        all_reports: list[Report] = []
+
+        report = await self._run_steps(self.steps, context, all_reports, job, self._stream)
+        if report is not None:
+            return report
+
+        return self._finalize_flow_run(all_reports)
 
     async def _resume(
         self,
@@ -407,117 +426,24 @@ class Flow:
             )
             return report
         if report.status == "failed":
-            self.desk._emit(self._events, self._run_id, "run.failed", self.name, {})
-            self.desk.run_store.update_run(
-                self._run_id,
-                "failed",
-                report.content,
-                self._output_json(report),
-                None,
-            )
-            self.desk.unregister_flow_run(self._run_id)
+            self._emit_run_failed(report)
             return report
 
         all_reports.append(report)
         context.outputs.append(report)
 
-        for next_index, step in enumerate(self.steps[step_index + 1 :], start=step_index + 1):
-            results = await step.execute(self, context)
-            for result in self._normalize_results(results):
-                report = result.report
-                if report.status == "paused":
-                    if result.state is None:
-                        failed = Report(
-                            run_id=self._run_id,
-                            status="failed",
-                            content=None,
-                            data=None,
-                            messages=report.messages,
-                            tool_calls=report.tool_calls,
-                            metrics=report.metrics,
-                            events=self._events,
-                            pending_action=None,
-                            errors=["Missing runner state"],
-                        )
-                        self.desk._emit(
-                            self._events,
-                            self._run_id,
-                            "run.failed",
-                            self.name,
-                            {},
-                        )
-                        self.desk.run_store.update_run(
-                            self._run_id,
-                            "failed",
-                            None,
-                            None,
-                            None,
-                        )
-                        self.desk.unregister_flow_run(self._run_id)
-                        return failed
-                    self.desk._emit(self._events, self._run_id, "run.paused", self.name, {})
-                    result.state.payload["stream"] = stream_enabled
-                    flow_state = self._build_flow_state(
-                        state.job,
-                        next_index,
-                        all_reports,
-                        result.state,
-                        stream_enabled,
-                    )
-                    self.desk.run_store.update_run(
-                        self._run_id,
-                        "paused",
-                        report.content,
-                        None,
-                        flow_state,
-                    )
-                    return report
-                if report.status == "failed":
-                    self.desk._emit(self._events, self._run_id, "run.failed", self.name, {})
-                    self.desk.run_store.update_run(
-                        self._run_id,
-                        "failed",
-                        report.content,
-                        self._output_json(report),
-                        None,
-                    )
-                    self.desk.unregister_flow_run(self._run_id)
-                    return report
-                all_reports.append(report)
-                context.outputs.append(report)
-
-        if not all_reports:
-            empty_report = Report(
-                run_id=self._run_id,
-                status="failed",
-                content=None,
-                data=None,
-                messages=[],
-                tool_calls=[],
-                metrics={},
-                events=self._events,
-                pending_action=None,
-                errors=["No steps executed"],
-            )
-            self.desk._emit(self._events, self._run_id, "run.failed", self.name, {})
-            self.desk.run_store.update_run(self._run_id, "failed", None, None, None)
-            self.desk.unregister_flow_run(self._run_id)
-            return empty_report
-
-        if len(all_reports) > 1:
-            final_report = self._combine_reports(all_reports)
-        else:
-            final_report = all_reports[0]
-        self.desk._emit(self._events, self._run_id, "run.completed", self.name, {})
-        self.desk.run_store.update_run(
-            self._run_id,
-            "completed",
-            final_report.content,
-            self._output_json(final_report),
-            None,
+        remaining_report = await self._run_steps(
+            self.steps[step_index + 1 :],
+            context,
+            all_reports,
+            state.job,
+            stream_enabled,
+            start_index=step_index + 1,
         )
-        self.desk.unregister_flow_run(self._run_id)
-        return final_report
+        if remaining_report is not None:
+            return remaining_report
+
+        return self._finalize_flow_run(all_reports)
 
     async def arun(self, job: Job) -> Report:
         return await self._run(job)
@@ -561,13 +487,8 @@ class Flow:
         return await self._resume(record.state, decision_or_input, stream=stream)
 
     def run(self, job: Job) -> Report:
-        try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            return asyncio.run(self._run(job))
-        raise RuntimeError(
-            "Flow.run cannot be called from a running event loop. Use Flow.arun instead."
-        )
+        ensure_not_running_loop("Flow.run", "Flow.arun")
+        return asyncio.run(self._run(job))
 
     def resume(
         self,
@@ -576,10 +497,5 @@ class Flow:
         *,
         stream: bool | None = None,
     ) -> Report:
-        try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            return asyncio.run(self.aresume(report, decision_or_input, stream=stream))
-        raise RuntimeError(
-            "Flow.resume cannot be called from a running event loop. Use Flow.aresume instead."
-        )
+        ensure_not_running_loop("Flow.resume", "Flow.aresume")
+        return asyncio.run(self.aresume(report, decision_or_input, stream=stream))

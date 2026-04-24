@@ -5,6 +5,16 @@ from collections.abc import Coroutine
 from typing import Any
 
 
+def ensure_not_running_loop(action: str, async_action: str) -> None:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    raise RuntimeError(
+        f"{action} cannot be called from a running event loop. Use {async_action} instead."
+    )
+
+
 def run_coroutine_in_thread[T](coro: Coroutine[Any, Any, T]) -> T:
     future: concurrent.futures.Future[T] = concurrent.futures.Future()
 

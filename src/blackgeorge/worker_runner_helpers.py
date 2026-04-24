@@ -113,16 +113,6 @@ def _report_error(
     )
 
 
-def _ensure_not_running_loop(action: str, async_action: str) -> None:
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return
-    raise RuntimeError(
-        f"{action} cannot be called from a running event loop. Use {async_action} instead."
-    )
-
-
 def _fail_report(
     *,
     config: "RunConfig",

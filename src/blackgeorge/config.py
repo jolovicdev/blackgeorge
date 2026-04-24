@@ -21,6 +21,7 @@ class RunConfig:
     structured_output_retries: int = 3
     max_iterations: int = 10
     max_tool_calls: int = 20
+    num_retries: int = 0
     respect_context_window: bool = True
     max_context_messages: int | None = None
     default_model: str | None = None

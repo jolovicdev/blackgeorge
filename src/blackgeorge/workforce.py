@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
 
+from blackgeorge.async_utils import ensure_not_running_loop
 from blackgeorge.collaboration.blackboard import Blackboard
 from blackgeorge.collaboration.channel import Channel
 from blackgeorge.core.event_types import EventType
@@ -40,16 +41,6 @@ from blackgeorge.workforce_helpers import (
 )
 
 Reducer = Callable[[list[Report]], Report]
-
-
-def _ensure_not_running_loop(action: str, async_action: str) -> None:
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return
-    raise RuntimeError(
-        f"{action} cannot be called from a running event loop. Use {async_action} instead."
-    )
 
 
 class WorkerDecision(BaseModel):
@@ -632,7 +623,7 @@ class Workforce:
         job: Job,
         drain_async_handlers: Callable[[], Awaitable[None]] | None = None,
     ) -> tuple[Report, RunState | None]:
-        _ensure_not_running_loop("run", "arun")
+        ensure_not_running_loop("run", "arun")
         return asyncio.run(self.arun(config, job, drain_async_handlers))
 
     async def arun(
@@ -654,7 +645,7 @@ class Workforce:
     def resume(
         self, config: "RunConfig", state: RunState, decision_or_input: Any
     ) -> tuple[Report, RunState | None]:
-        _ensure_not_running_loop("resume", "aresume")
+        ensure_not_running_loop("resume", "aresume")
         return asyncio.run(self.aresume(config, state, decision_or_input))
 
     async def aresume(

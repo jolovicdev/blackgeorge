@@ -29,6 +29,7 @@ class BaseModelAdapter:
         thinking: dict[str, Any] | None = None,
         drop_params: bool | None = None,
         extra_body: dict[str, Any] | None = None,
+        num_retries: int | None = None,
     ) -> ModelResponse | list[dict[str, Any]]:
         raise NotImplementedError
 
@@ -46,6 +47,7 @@ class BaseModelAdapter:
         thinking: dict[str, Any] | None = None,
         drop_params: bool | None = None,
         extra_body: dict[str, Any] | None = None,
+        num_retries: int | None = None,
     ) -> ModelResponse | Any:
         raise NotImplementedError
 
