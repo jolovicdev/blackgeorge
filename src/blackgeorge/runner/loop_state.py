@@ -2,17 +2,15 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from blackgeorge.adapters.base import BaseModelAdapter
 from blackgeorge.config import RunConfig
-from blackgeorge.core.event import Event
 from blackgeorge.core.event_types import EventType
 from blackgeorge.core.message import Message
 from blackgeorge.core.report import Report
 from blackgeorge.core.tool_call import ToolCall
-from blackgeorge.worker_context import aapply_context_summary
 from blackgeorge.worker_runner_helpers import (
-    EventEmitter,
     _acontext_retry,
+    _build_report,
+    _build_state,
     _fail_report,
     _finalize_plain_response,
     _finalize_structured_response,
@@ -29,7 +27,7 @@ class LoopState:
     messages: list[Message]
     tool_calls: list[ToolCall]
     metrics: dict[str, Any]
-    events: list[Event]
+    events: list[Any]
     errors: list[str]
     iteration: int = 0
     context_summaries: int = 0
@@ -46,42 +44,29 @@ class LoopState:
 
 @dataclass
 class CompletionContext:
-    adapter: BaseModelAdapter
+    config: RunConfig
     model_name: str
-    temperature: float | None
-    max_tokens: int | None
-    stream_options: dict[str, Any] | None
-    run_id: str
-    emit: EventEmitter
     state: LoopState
-    respect_context_window: bool = True
 
-    def make_on_token(self) -> Callable[[str], None]:
-        def on_token(token: str) -> None:
-            self.emit(EventType.STREAM_TOKEN, self.state.worker_name, {"token": token})
+    def make_on_token(self) -> Callable[[str, str], None]:
+        def on_token(token: str, token_type: str) -> None:
+            self.config.emit(
+                EventType.STREAM_TOKEN,
+                self.state.worker_name,
+                {"token": token, "type": token_type},
+            )
 
         return on_token
 
     def run_config(self) -> RunConfig:
-        return RunConfig(
-            adapter=self.adapter,
-            emit=self.emit,
-            run_id=self.run_id,
-            events=self.state.events,
-            temperature=self.temperature,
-            max_tokens=self.max_tokens,
-            stream_options=self.stream_options,
-            respect_context_window=self.respect_context_window,
-        )
+        return self.config
 
     async def handle_context_limit(
         self,
-        _exc: Exception,
         apply_summary: Callable[[], Any],
     ) -> Report | None:
-        config = self.run_config()
         decision = await _acontext_retry(
-            config=config,
+            config=self.config,
             worker_name=self.state.worker_name,
             messages=self.state.messages,
             tool_calls=self.state.tool_calls,
@@ -97,9 +82,8 @@ class CompletionContext:
         return None
 
     def fail(self, message: str) -> Report:
-        config = self.run_config()
         return _fail_report(
-            config=config,
+            config=self.config,
             worker_name=self.state.worker_name,
             message=message,
             messages=self.state.messages,
@@ -109,9 +93,8 @@ class CompletionContext:
         )
 
     def finalize_structured(self, data: Any) -> Report:
-        config = self.run_config()
         return _finalize_structured_response(
-            config=config,
+            config=self.config,
             data=data,
             messages=self.state.messages,
             tool_calls=self.state.tool_calls,
@@ -121,9 +104,8 @@ class CompletionContext:
         )
 
     def finalize_plain(self, response: Any) -> Report:
-        config = self.run_config()
         return _finalize_plain_response(
-            config=config,
+            config=self.config,
             response=response,
             messages=self.state.messages,
             tool_calls=self.state.tool_calls,
@@ -135,27 +117,30 @@ class CompletionContext:
     def record_usage(self, response: Any) -> None:
         _record_usage(self.state.metrics, response)
 
-
-def make_apply_summary(
-    adapter: BaseModelAdapter,
-    model_name: str,
-    messages: list[Message],
-    temperature: float | None,
-    metrics: dict[str, Any],
-    emit: EventEmitter,
-    worker_name: str,
-    model_registered: bool,
-) -> Callable[[], Any]:
-    async def apply_summary() -> Any:
-        return await aapply_context_summary(
-            adapter=adapter,
-            model_name=model_name,
-            messages=messages,
-            temperature=temperature,
-            metrics=metrics,
-            emit=emit,
-            worker_name=worker_name,
-            model_registered=model_registered,
+    def build_paused_report(self, pending: Any) -> Report:
+        return _build_report(
+            self.state.run_id,
+            "paused",
+            None,
+            None,
+            None,
+            self.state.messages,
+            self.state.tool_calls,
+            self.state.metrics,
+            self.config.events,
+            pending,
+            self.state.errors,
         )
 
-    return apply_summary
+    def build_paused_state(self, job: Any, pending: Any) -> Any:
+        return _build_state(
+            self.state.run_id,
+            "paused",
+            self.state.worker_name,
+            job,
+            self.state.messages,
+            self.state.tool_calls,
+            pending,
+            self.state.metrics,
+            self.state.iteration,
+        )

@@ -10,7 +10,7 @@ from blackgeorge.core.event_types import EventType
 from blackgeorge.core.job import Job
 from blackgeorge.core.message import Message
 from blackgeorge.core.report import Report
-from blackgeorge.core.tool_call import ToolCall
+from blackgeorge.runner.loop_state import CompletionContext, LoopState
 from blackgeorge.runner.streaming import (
     append_tool_error,
     chunk_tool_call_deltas,
@@ -44,16 +44,10 @@ from blackgeorge.worker_messages import (
     tool_schemas,
 )
 from blackgeorge.worker_runner_helpers import (
-    _acontext_retry,
     _build_report,
-    _build_state,
     _ensure_not_running_loop,
     _execute_tool_calls_async,
-    _fail_report,
-    _finalize_plain_response,
-    _finalize_structured_response,
     _plan_tool_calls,
-    _record_usage,
     _report_error,
     _should_stream,
     _tool_event_payload,
@@ -179,7 +173,7 @@ class WorkerRunner:
         model: str,
         messages: list[Message],
         tools: list[Tool],
-        on_token: Callable[[str], None],
+        on_token: Callable[[str, str], None],
         thinking: dict[str, Any] | None = None,
         drop_params: bool | None = None,
         extra_body: dict[str, Any] | None = None,
@@ -270,7 +264,7 @@ class WorkerRunner:
                 token = chunk_content(chunk)
                 if token:
                     content_parts.append(token)
-                    on_token(token)
+                    on_token(token, "content")
                 tool_deltas, from_message_payload = chunk_tool_call_deltas(chunk)
                 for position, tool_delta in enumerate(tool_deltas):
                     index_value = stream_value(tool_delta, "index")
@@ -318,18 +312,18 @@ class WorkerRunner:
                                 argument_parts.clear()
                                 argument_parts.append(arguments_value)
                                 if arguments_value:
-                                    on_token(arguments_value)
+                                    on_token(arguments_value, "tool_argument")
                         else:
                             argument_parts.append(arguments_value)
                             if arguments_value:
-                                on_token(arguments_value)
+                                on_token(arguments_value, "tool_argument")
                     elif isinstance(arguments_value, dict):
                         merged = dict(state.get("arguments_obj") or {})
                         merged.update(arguments_value)
                         state["arguments_obj"] = merged
                         serialized = json.dumps(arguments_value, ensure_ascii=True)
                         if serialized:
-                            on_token(serialized)
+                            on_token(serialized, "tool_argument")
                     elif arguments_value is not None:
                         state["error"] = append_tool_error(
                             cast(str | None, state.get("error")),
@@ -371,133 +365,61 @@ class WorkerRunner:
             if hasattr(config.adapter, "clear_callback_context"):
                 config.adapter.clear_callback_context()
 
-    def _stream_token_handler(self, config: RunConfig) -> Callable[[str], None]:
-        return lambda token: config.emit(EventType.STREAM_TOKEN, self.name, {"token": token})
-
-    async def _apply_context_summary(
-        self,
-        *,
-        config: RunConfig,
-        model_name: str,
-        messages: list[Message],
-        metrics: dict[str, Any],
-        model_registered: bool,
-    ) -> bool:
+    async def _apply_context_summary(self, ctx: CompletionContext) -> bool:
         return await aapply_context_summary(
-            adapter=config.adapter,
-            model_name=model_name,
-            messages=messages,
-            temperature=config.temperature,
-            metrics=metrics,
-            emit=config.emit,
-            worker_name=self.name,
-            model_registered=model_registered,
+            adapter=ctx.config.adapter,
+            model_name=ctx.model_name,
+            messages=ctx.state.messages,
+            temperature=ctx.config.temperature,
+            metrics=ctx.state.metrics,
+            emit=ctx.config.emit,
+            worker_name=ctx.state.worker_name,
+            model_registered=ctx.state.model_registered,
         )
 
-    async def _retry_context_or_report(
-        self,
-        *,
-        config: RunConfig,
-        model_name: str,
-        messages: list[Message],
-        tool_calls: list[ToolCall],
-        metrics: dict[str, Any],
-        errors: list[str],
-        model_registered: bool,
-        context_summaries: int,
-    ) -> tuple[Report | None, int]:
-        decision = await _acontext_retry(
-            config=config,
-            worker_name=self.name,
-            messages=messages,
-            tool_calls=tool_calls,
-            metrics=metrics,
-            errors=errors,
-            model_registered=model_registered,
-            context_summaries=context_summaries,
-            apply_summary=lambda: self._apply_context_summary(
-                config=config,
-                model_name=model_name,
-                messages=messages,
-                metrics=metrics,
-                model_registered=model_registered,
-            ),
-        )
-        if decision.report:
-            return decision.report, context_summaries
-        return None, context_summaries + 1
-
-    def _fail_report(
-        self,
-        *,
-        config: RunConfig,
-        message: str,
-        messages: list[Message],
-        tool_calls: list[ToolCall],
-        metrics: dict[str, Any],
-        errors: list[str],
-    ) -> Report:
-        return _fail_report(
-            config=config,
-            worker_name=self.name,
-            message=message,
-            messages=messages,
-            tool_calls=tool_calls,
-            metrics=metrics,
-            errors=errors,
-        )
+    async def _retry_context_or_report(self, ctx: CompletionContext) -> Report | None:
+        return await ctx.handle_context_limit(lambda: self._apply_context_summary(ctx))
 
     async def _acquire_turn_response(
         self,
         *,
-        config: RunConfig,
+        ctx: CompletionContext,
         job: Job,
-        model_name: str,
         tools: list[Tool],
         response_schema: Any,
         structured_stream_mode: str,
-        messages: list[Message],
-        tool_calls: list[ToolCall],
-        metrics: dict[str, Any],
-        errors: list[str],
-        model_registered: bool,
-        context_summaries: int,
-    ) -> tuple[ModelResponse | None, Report | None, int]:
-        on_token = self._stream_token_handler(config)
-        if _should_stream(config.stream, tools, response_schema):
+    ) -> tuple[ModelResponse | None, Report | None]:
+        on_token = ctx.make_on_token()
+        if _should_stream(ctx.config.stream, tools, response_schema):
             try:
                 response = await self._astream_completion(
-                    config=config,
-                    model=model_name,
-                    messages=messages,
+                    config=ctx.run_config(),
+                    model=ctx.model_name,
+                    messages=ctx.state.messages,
                     tools=tools,
                     on_token=on_token,
                     thinking=job.thinking,
                     drop_params=job.drop_params,
                     extra_body=job.extra_body,
                 )
-                return response, None, context_summaries
+                return response, None
             except Exception as exc:
                 if not is_context_limit_error(exc):
                     raise
-                report, context_summaries = await self._retry_context_or_report(
-                    config=config,
-                    model_name=model_name,
-                    messages=messages,
-                    tool_calls=tool_calls,
-                    metrics=metrics,
-                    errors=errors,
-                    model_registered=model_registered,
-                    context_summaries=context_summaries,
-                )
-                return None, report, context_summaries
+                report = await self._retry_context_or_report(ctx)
+                return None, report
 
-        if config.stream and response_schema and not tools and structured_stream_mode == "preview":
+        if (
+            ctx.config.stream
+            and response_schema
+            and not tools
+            and structured_stream_mode == "preview"
+        ):
             try:
                 streamed = await self._astream_completion(
-                    config=config,
-                    model=model_name,
-                    messages=messages,
+                    config=ctx.run_config(),
+                    model=ctx.model_name,
+                    messages=ctx.state.messages,
                     tools=[],
                     on_token=on_token,
                     thinking=job.thinking,
@@ -507,158 +429,68 @@ class WorkerRunner:
             except Exception as exc:
                 if not is_context_limit_error(exc):
                     raise
-                report, context_summaries = await self._retry_context_or_report(
-                    config=config,
-                    model_name=model_name,
-                    messages=messages,
-                    tool_calls=tool_calls,
-                    metrics=metrics,
-                    errors=errors,
-                    model_registered=model_registered,
-                    context_summaries=context_summaries,
-                )
-                return None, report, context_summaries
-            metrics["usage"] = streamed.usage
+                report = await self._retry_context_or_report(ctx)
+                return None, report
+            ctx.state.metrics["usage"] = streamed.usage
             try:
                 data = parse_structured_stream_json(response_schema, streamed.content or "")
             except Exception:
                 try:
                     data = await self._astructured_completion(
-                        config=config,
-                        model=model_name,
-                        messages=messages,
+                        config=ctx.run_config(),
+                        model=ctx.model_name,
+                        messages=ctx.state.messages,
                         response_schema=response_schema,
                     )
                 except Exception as exc:
                     if is_context_limit_error(exc):
-                        report, context_summaries = await self._retry_context_or_report(
-                            config=config,
-                            model_name=model_name,
-                            messages=messages,
-                            tool_calls=tool_calls,
-                            metrics=metrics,
-                            errors=errors,
-                            model_registered=model_registered,
-                            context_summaries=context_summaries,
-                        )
-                        return None, report, context_summaries
-                    return (
-                        None,
-                        self._fail_report(
-                            config=config,
-                            message=str(exc),
-                            messages=messages,
-                            tool_calls=tool_calls,
-                            metrics=metrics,
-                            errors=errors,
-                        ),
-                        context_summaries,
-                    )
-            return (
-                None,
-                _finalize_structured_response(
-                    config=config,
-                    data=data,
-                    messages=messages,
-                    tool_calls=tool_calls,
-                    metrics=metrics,
-                    errors=errors,
-                    worker_name=self.name,
-                ),
-                context_summaries,
-            )
+                        report = await self._retry_context_or_report(ctx)
+                        return None, report
+                    return None, ctx.fail(str(exc))
+            return None, ctx.finalize_structured(data)
 
         if response_schema and not tools:
             try:
                 data = await self._astructured_completion(
-                    config=config,
-                    model=model_name,
-                    messages=messages,
+                    config=ctx.run_config(),
+                    model=ctx.model_name,
+                    messages=ctx.state.messages,
                     response_schema=response_schema,
                 )
             except Exception as exc:
                 if is_context_limit_error(exc):
-                    report, context_summaries = await self._retry_context_or_report(
-                        config=config,
-                        model_name=model_name,
-                        messages=messages,
-                        tool_calls=tool_calls,
-                        metrics=metrics,
-                        errors=errors,
-                        model_registered=model_registered,
-                        context_summaries=context_summaries,
-                    )
-                    return None, report, context_summaries
-                return (
-                    None,
-                    self._fail_report(
-                        config=config,
-                        message=str(exc),
-                        messages=messages,
-                        tool_calls=tool_calls,
-                        metrics=metrics,
-                        errors=errors,
-                    ),
-                    context_summaries,
-                )
-            return (
-                None,
-                _finalize_structured_response(
-                    config=config,
-                    data=data,
-                    messages=messages,
-                    tool_calls=tool_calls,
-                    metrics=metrics,
-                    errors=errors,
-                    worker_name=self.name,
-                ),
-                context_summaries,
-            )
+                    report = await self._retry_context_or_report(ctx)
+                    return None, report
+                return None, ctx.fail(str(exc))
+            return None, ctx.finalize_structured(data)
 
         try:
             response = await self._acompletion(
-                config=config,
-                model=model_name,
-                messages=messages,
+                config=ctx.run_config(),
+                model=ctx.model_name,
+                messages=ctx.state.messages,
                 tools=tools,
                 thinking=job.thinking,
                 drop_params=job.drop_params,
                 extra_body=job.extra_body,
             )
-            return response, None, context_summaries
+            return response, None
         except Exception as exc:
             if not is_context_limit_error(exc):
                 raise
-            report, context_summaries = await self._retry_context_or_report(
-                config=config,
-                model_name=model_name,
-                messages=messages,
-                tool_calls=tool_calls,
-                metrics=metrics,
-                errors=errors,
-                model_registered=model_registered,
-                context_summaries=context_summaries,
-            )
-            return None, report, context_summaries
+            report = await self._retry_context_or_report(ctx)
+            return None, report
 
     async def _process_turn_response(
         self,
         *,
-        config: RunConfig,
+        ctx: CompletionContext,
         job: Job,
-        model_name: str,
         response: ModelResponse,
         response_schema: Any,
-        messages: list[Message],
-        tool_calls: list[ToolCall],
-        metrics: dict[str, Any],
-        errors: list[str],
-        iteration: int,
         allowed_tools: dict[str, Tool],
-        model_registered: bool,
-        context_summaries: int,
-    ) -> tuple[Report | None, RunState | None, int, bool]:
-        _record_usage(metrics, response)
+    ) -> tuple[Report | None, RunState | None, bool]:
+        ctx.record_usage(response)
         if response.tool_calls:
             assistant_message = Message(
                 role="assistant",
@@ -667,230 +499,107 @@ class WorkerRunner:
                 thinking_blocks=response.thinking_blocks,
                 tool_calls=response.tool_calls,
             )
-            messages.append(assistant_message)
-            emit_assistant_message(config.emit, self.name, assistant_message)
+            ctx.state.messages.append(assistant_message)
+            emit_assistant_message(ctx.config.emit, self.name, assistant_message)
             plan = _plan_tool_calls(
                 response=response,
                 allowed_tools=allowed_tools,
-                tool_calls=tool_calls,
-                max_tool_calls=config.max_tool_calls,
+                tool_calls=ctx.state.tool_calls,
+                max_tool_calls=ctx.config.max_tool_calls,
             )
             await _execute_tool_calls_async(
-                config,
+                ctx.run_config(),
                 plan.ordered_calls,
                 plan.executable_calls,
                 plan.immediate_results,
-                messages,
-                tool_calls,
+                ctx.state.messages,
+                ctx.state.tool_calls,
             )
             if plan.max_tool_calls_exceeded:
-                return (
-                    self._fail_report(
-                        config=config,
-                        message="Max tool calls exceeded",
-                        messages=messages,
-                        tool_calls=tool_calls,
-                        metrics=metrics,
-                        errors=errors,
-                    ),
-                    None,
-                    context_summaries,
-                    False,
-                )
+                return ctx.fail("Max tool calls exceeded"), None, False
             if plan.pending:
                 if plan.pending.type == "confirmation":
-                    config.emit(
+                    ctx.config.emit(
                         EventType.TOOL_CONFIRMATION_REQUESTED,
                         plan.pending.tool_call.name,
                         {"tool_call_id": plan.pending.tool_call.id},
                     )
                 elif plan.pending.type == "user_input":
-                    config.emit(
+                    ctx.config.emit(
                         EventType.TOOL_USER_INPUT_REQUESTED,
                         plan.pending.tool_call.name,
                         {"tool_call_id": plan.pending.tool_call.id},
                     )
-                config.emit(
+                ctx.config.emit(
                     EventType.WORKER_PAUSED,
                     self.name,
                     {"pending_action_type": plan.pending.type},
                 )
-                paused_report = _build_report(
-                    config.run_id,
-                    "paused",
-                    None,
-                    None,
-                    None,
-                    messages,
-                    tool_calls,
-                    metrics,
-                    config.events,
-                    plan.pending,
-                    errors,
+                return (
+                    ctx.build_paused_report(plan.pending),
+                    ctx.build_paused_state(job, plan.pending),
+                    False,
                 )
-                state = _build_state(
-                    config.run_id,
-                    "paused",
-                    self.name,
-                    job,
-                    messages,
-                    tool_calls,
-                    plan.pending,
-                    metrics,
-                    iteration,
-                )
-                return paused_report, state, context_summaries, False
-            return None, None, context_summaries, True
+            return None, None, True
 
         if response_schema:
             try:
                 data = await self._astructured_completion(
-                    config=config,
-                    model=model_name,
-                    messages=messages,
+                    config=ctx.run_config(),
+                    model=ctx.model_name,
+                    messages=ctx.state.messages,
                     response_schema=response_schema,
                 )
             except Exception as exc:
                 if is_context_limit_error(exc):
-                    retry_report, context_summaries = await self._retry_context_or_report(
-                        config=config,
-                        model_name=model_name,
-                        messages=messages,
-                        tool_calls=tool_calls,
-                        metrics=metrics,
-                        errors=errors,
-                        model_registered=model_registered,
-                        context_summaries=context_summaries,
-                    )
+                    retry_report = await self._retry_context_or_report(ctx)
                     if retry_report:
-                        return retry_report, None, context_summaries, False
-                    return None, None, context_summaries, True
-                return (
-                    self._fail_report(
-                        config=config,
-                        message=str(exc),
-                        messages=messages,
-                        tool_calls=tool_calls,
-                        metrics=metrics,
-                        errors=errors,
-                    ),
-                    None,
-                    context_summaries,
-                    False,
-                )
-            return (
-                _finalize_structured_response(
-                    config=config,
-                    data=data,
-                    messages=messages,
-                    tool_calls=tool_calls,
-                    metrics=metrics,
-                    errors=errors,
-                    worker_name=self.name,
-                ),
-                None,
-                context_summaries,
-                False,
-            )
+                        return retry_report, None, False
+                    return None, None, True
+                return ctx.fail(str(exc)), None, False
+            return ctx.finalize_structured(data), None, False
 
-        return (
-            _finalize_plain_response(
-                config=config,
-                response=response,
-                messages=messages,
-                tool_calls=tool_calls,
-                metrics=metrics,
-                errors=errors,
-                worker_name=self.name,
-            ),
-            None,
-            context_summaries,
-            False,
-        )
+        return ctx.finalize_plain(response), None, False
 
     async def _arun_loop(
-        self,
-        *,
-        config: RunConfig,
-        job: Job,
-        messages: list[Message],
-        tool_calls: list[ToolCall],
-        metrics: dict[str, Any],
-        errors: list[str],
-        iteration: int,
-        model_name: str,
+        self, *, ctx: CompletionContext, job: Job
     ) -> tuple[Report, RunState | None]:
         tools = self._resolve_tools(job)
         allowed_tools = {t.name: t for t in tools}
         response_schema = job.response_schema
         structured_stream_mode = job.structured_stream_mode or "off"
-        context_retry_summaries = 0
-        model_registered = litellm_model_registered(model_name)
 
-        while iteration < config.max_iterations:
-            iteration += 1
+        while ctx.state.iteration < ctx.config.max_iterations:
+            ctx.state.increment_iteration()
             if (
-                config.max_context_messages is not None
-                and len(messages) > config.max_context_messages
+                ctx.config.max_context_messages is not None
+                and len(ctx.state.messages) > ctx.config.max_context_messages
             ):
-                await self._apply_context_summary(
-                    config=config,
-                    model_name=model_name,
-                    messages=messages,
-                    metrics=metrics,
-                    model_registered=model_registered,
-                )
+                await self._apply_context_summary(ctx)
 
-            response, report, context_retry_summaries = await self._acquire_turn_response(
-                config=config,
+            response, report = await self._acquire_turn_response(
+                ctx=ctx,
                 job=job,
-                model_name=model_name,
                 tools=tools,
                 response_schema=response_schema,
                 structured_stream_mode=structured_stream_mode,
-                messages=messages,
-                tool_calls=tool_calls,
-                metrics=metrics,
-                errors=errors,
-                model_registered=model_registered,
-                context_summaries=context_retry_summaries,
             )
             if report:
                 return report, None
             if response is None:
                 continue
-            (
-                report,
-                state,
-                context_retry_summaries,
-                should_continue,
-            ) = await self._process_turn_response(
-                config=config,
+            report, state, should_continue = await self._process_turn_response(
+                ctx=ctx,
                 job=job,
-                model_name=model_name,
                 response=response,
                 response_schema=response_schema,
-                messages=messages,
-                tool_calls=tool_calls,
-                metrics=metrics,
-                errors=errors,
-                iteration=iteration,
                 allowed_tools=allowed_tools,
-                model_registered=model_registered,
-                context_summaries=context_retry_summaries,
             )
             if report:
                 return report, state
             if should_continue:
                 continue
-        return self._fail_report(
-            config=config,
-            message="Max iterations exceeded",
-            messages=messages,
-            tool_calls=tool_calls,
-            metrics=metrics,
-            errors=errors,
-        ), None
+        return ctx.fail("Max iterations exceeded"), None
 
     def run(
         self, config: RunConfig, job: Job, worker_model: str | None = None
@@ -903,25 +612,25 @@ class WorkerRunner:
     ) -> tuple[Report, RunState | None]:
         model_name = config.model_name(worker_model)
         messages = self._build_messages(job)
-        tool_calls: list[ToolCall] = []
-        metrics: dict[str, Any] = {}
-        errors: list[str] = []
-        iteration = 0
         if not model_name:
-            errors.append("Worker model not set")
+            errors = ["Worker model not set"]
             config.emit(EventType.WORKER_FAILED, self.name, {"error": errors[-1]})
             return _report_error(config.run_id, messages, errors, config.events), None
-        config.emit(EventType.WORKER_STARTED, self.name, {})
-        return await self._arun_loop(
-            config=config,
-            job=job,
+        state = LoopState(
+            run_id=config.run_id,
+            worker_name=self.name,
             messages=messages,
-            tool_calls=tool_calls,
-            metrics=metrics,
-            errors=errors,
-            iteration=iteration,
-            model_name=model_name,
+            tool_calls=[],
+            metrics={},
+            events=config.events,
+            errors=[],
+            iteration=0,
+            context_summaries=0,
+            model_registered=litellm_model_registered(model_name),
         )
+        ctx = CompletionContext(config=config, model_name=model_name, state=state)
+        config.emit(EventType.WORKER_STARTED, self.name, {})
+        return await self._arun_loop(ctx=ctx, job=job)
 
     def resume(
         self,
@@ -957,13 +666,8 @@ class WorkerRunner:
                 None,
                 ["No pending action"],
             ), None
-        messages, tool_calls, iteration, metrics, errors = (
-            list(state.messages),
-            list(state.tool_calls),
-            state.iteration,
-            dict(state.metrics),
-            [],
-        )
+        messages = list(state.messages)
+        tool_calls = list(state.tool_calls)
         tool = self.toolbelt.resolve(pending.tool_call.name)
         if tool is None:
             result = ToolResult(error=f"Tool not found: {pending.tool_call.name}")
@@ -1001,17 +705,21 @@ class WorkerRunner:
             replace_tool_call(tool_calls, tool_call_with_result(call, result))
         model_name = config.model_name(worker_model)
         if not model_name:
-            errors.append("Worker model not set")
+            errors = ["Worker model not set"]
             config.emit(EventType.WORKER_FAILED, self.name, {"error": errors[-1]})
             return _report_error(state.run_id, messages, errors, config.events), None
-        config.emit(EventType.WORKER_STARTED, self.name, {})
-        return await self._arun_loop(
-            config=config,
-            job=state.job,
+        loop_state = LoopState(
+            run_id=config.run_id,
+            worker_name=self.name,
             messages=messages,
             tool_calls=tool_calls,
-            metrics=metrics,
-            errors=errors,
-            iteration=iteration,
-            model_name=model_name,
+            metrics=dict(state.metrics),
+            events=config.events,
+            errors=[],
+            iteration=state.iteration,
+            context_summaries=0,
+            model_registered=litellm_model_registered(model_name),
         )
+        ctx = CompletionContext(config=config, model_name=model_name, state=loop_state)
+        config.emit(EventType.WORKER_STARTED, self.name, {})
+        return await self._arun_loop(ctx=ctx, job=state.job)
