@@ -42,7 +42,9 @@ Paused turns emit `worker.paused` events instead of `worker.completed`.
 
 When a model response includes multiple tool calls in the same turn, the worker executes them in
 parallel and records tool results in the original call order. If a tool requires confirmation or
-user input, the worker executes prior tool calls and then pauses before that tool.
+user input, the worker executes prior tool calls and then pauses before that tool. Any remaining
+tool calls after the pending one receive an error result so the conversation history stays valid
+for strict providers.
 
 ## Structured output
 

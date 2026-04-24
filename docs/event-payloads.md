@@ -71,7 +71,10 @@ payload = ToolFailedPayload(
 from blackgeorge import StreamTokenPayload, AssistantMessagePayload
 
 # stream.token
-payload = StreamTokenPayload(token="Hello")
+payload = StreamTokenPayload(token="Hello", type="content")
+
+# tool argument delta
+payload = StreamTokenPayload(token='{"path":', type="tool_argument")
 
 # assistant.message
 payload = AssistantMessagePayload(
@@ -158,7 +161,7 @@ desk.event_bus.subscribe(EventType.TOOL_COMPLETED, handle_tool_completed)
 | `ToolStartedPayload` | `tool.started` | `tool_call_id` |
 | `ToolCompletedPayload` | `tool.completed` | `tool_call_id`, `result_preview`, `result_truncated`, `timed_out`, `cancelled` |
 | `ToolFailedPayload` | `tool.failed` | `tool_call_id`, `error` |
-| `StreamTokenPayload` | `stream.token` | `token` |
+| `StreamTokenPayload` | `stream.token` | `token`, `type` (`"content"` or `"tool_argument"`)
 | `AssistantMessagePayload` | `assistant.message` | `content`, `tool_calls` |
 | `LLMCompletedPayload` | `llm.completed` | `model`, `latency_ms`, `total_tokens`, `cost` |
 | `LLMFailedPayload` | `llm.failed` | `model`, `latency_ms`, `error_type`, `error_message` |

@@ -54,6 +54,7 @@ class ToolFailedPayload:
 @dataclass(frozen=True)
 class StreamTokenPayload:
     token: str
+    type: str = "content"
 
 
 @dataclass(frozen=True)

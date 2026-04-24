@@ -207,7 +207,7 @@ Tool/workforce/worker names are exposed via `event.source`.
 
 | Event Type | Description | Payload Fields |
 |------------|-------------|----------------|
-| `stream.token` | Stream token delta | `token` |
+| `stream.token` | Stream token delta | `token`, `type` (`"content"` or `"tool_argument"`)
 | `assistant.message` | Assistant message appended | `content`, optional `tool_calls` |
 
 ## Subscribing from a desk
@@ -276,10 +276,14 @@ await bus.aemit(event)
 - streaming enabled on desk/run
 - no response schema for that turn, or `structured_stream_mode="preview"`
 
-On tool turns, `stream.token` payloads carry streamed tool argument deltas.
+On tool turns, `stream.token` payloads carry streamed tool argument deltas. The `type`
+field distinguishes content tokens from tool argument deltas:
 
 ```python
 def on_token(event):
+    token_type = event.payload.get("type")
+    if token_type == "tool_argument":
+        return  # skip rendering raw JSON deltas
     print(event.payload.get("token", ""), end="", flush=True)
 
 desk.event_bus.subscribe("stream.token", on_token)
