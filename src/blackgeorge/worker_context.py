@@ -1,5 +1,5 @@
 import json
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from blackgeorge.adapters.base import BaseModelAdapter, ModelResponse
@@ -108,28 +108,33 @@ def message_summary_text(message: Message) -> str:
     return f"{message.role}: " + " ".join(parts)
 
 
+def _do_summarize_chunk(response: ModelResponse | Any) -> str:
+    if isinstance(response, ModelResponse):
+        return response.content or ""
+    return ""
+
+
 def summarize_chunk(
     adapter: BaseModelAdapter,
     model_name: str,
     chunk: str,
     temperature: float | None,
 ) -> str:
-    response = adapter.complete(
-        model=model_name,
-        messages=[
-            {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
-            {"role": "user", "content": SUMMARY_INSTRUCTION.format(content=chunk)},
-        ],
-        tools=None,
-        tool_choice=None,
-        temperature=temperature,
-        max_tokens=SUMMARY_MAX_OUTPUT_TOKENS,
-        stream=False,
-        stream_options=None,
+    return _do_summarize_chunk(
+        adapter.complete(
+            model=model_name,
+            messages=[
+                {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
+                {"role": "user", "content": SUMMARY_INSTRUCTION.format(content=chunk)},
+            ],
+            tools=None,
+            tool_choice=None,
+            temperature=temperature,
+            max_tokens=SUMMARY_MAX_OUTPUT_TOKENS,
+            stream=False,
+            stream_options=None,
+        )
     )
-    if isinstance(response, ModelResponse):
-        return response.content or ""
-    return ""
 
 
 async def asummarize_chunk(
@@ -138,22 +143,95 @@ async def asummarize_chunk(
     chunk: str,
     temperature: float | None,
 ) -> str:
-    response = await adapter.acomplete(
-        model=model_name,
-        messages=[
-            {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
-            {"role": "user", "content": SUMMARY_INSTRUCTION.format(content=chunk)},
-        ],
-        tools=None,
-        tool_choice=None,
-        temperature=temperature,
-        max_tokens=SUMMARY_MAX_OUTPUT_TOKENS,
-        stream=False,
-        stream_options=None,
+    return _do_summarize_chunk(
+        await adapter.acomplete(
+            model=model_name,
+            messages=[
+                {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
+                {"role": "user", "content": SUMMARY_INSTRUCTION.format(content=chunk)},
+            ],
+            tools=None,
+            tool_choice=None,
+            temperature=temperature,
+            max_tokens=SUMMARY_MAX_OUTPUT_TOKENS,
+            stream=False,
+            stream_options=None,
+        )
     )
-    if isinstance(response, ModelResponse):
-        return response.content or ""
-    return ""
+
+
+def _summarize_messages_impl(
+    adapter: BaseModelAdapter,
+    model_name: str,
+    messages: list[Message],
+    temperature: float | None,
+    summarize_chunk_fn: Callable[[BaseModelAdapter, str, str, float | None], str],
+) -> str | None:
+    lines = [message_summary_text(message) for message in messages]
+    lines = [line for line in lines if line]
+    if not lines:
+        return ""
+    text = "\n".join(lines)
+    target_tokens = SUMMARY_CHUNK_TOKENS
+    attempts = 0
+    while attempts < SUMMARY_ATTEMPT_LIMIT:
+        try:
+            chunks = chunk_text(model_name, text, target_tokens)
+            summaries: list[str] = []
+            for chunk in chunks:
+                summary = summarize_chunk_fn(adapter, model_name, chunk, temperature)
+                if summary:
+                    summaries.append(summary)
+            if not summaries:
+                return None
+            merged = "\n".join(summaries)
+            if len(summaries) > 1:
+                merged = summarize_chunk_fn(adapter, model_name, merged, temperature) or merged
+            return merged
+        except Exception as exc:
+            if not is_context_limit_error(exc):
+                raise
+            attempts += 1
+            target_tokens = max(200, target_tokens // 2)
+    return None
+
+
+async def _asummarize_messages_impl(
+    adapter: BaseModelAdapter,
+    model_name: str,
+    messages: list[Message],
+    temperature: float | None,
+    summarize_chunk_fn: Callable[[BaseModelAdapter, str, str, float | None], Awaitable[str]],
+) -> str | None:
+    lines = [message_summary_text(message) for message in messages]
+    lines = [line for line in lines if line]
+    if not lines:
+        return ""
+    text = "\n".join(lines)
+    target_tokens = SUMMARY_CHUNK_TOKENS
+    attempts = 0
+    while attempts < SUMMARY_ATTEMPT_LIMIT:
+        try:
+            chunks = chunk_text(model_name, text, target_tokens)
+            summaries: list[str] = []
+            for chunk in chunks:
+                summary = await summarize_chunk_fn(adapter, model_name, chunk, temperature)
+                if summary:
+                    summaries.append(summary)
+            if not summaries:
+                return None
+            merged = "\n".join(summaries)
+            if len(summaries) > 1:
+                merged = (
+                    await summarize_chunk_fn(adapter, model_name, merged, temperature)
+                ) or merged
+            return merged
+        except Exception as exc:
+            if not is_context_limit_error(exc):
+                raise
+            attempts += 1
+            target_tokens = max(200, target_tokens // 2)
+    return None
 
 
 def summarize_messages(
@@ -162,33 +240,7 @@ def summarize_messages(
     messages: list[Message],
     temperature: float | None,
 ) -> str | None:
-    lines = [message_summary_text(message) for message in messages]
-    lines = [line for line in lines if line]
-    if not lines:
-        return ""
-    text = "\n".join(lines)
-    target_tokens = SUMMARY_CHUNK_TOKENS
-    attempts = 0
-    while attempts < SUMMARY_ATTEMPT_LIMIT:
-        try:
-            chunks = chunk_text(model_name, text, target_tokens)
-            summaries: list[str] = []
-            for chunk in chunks:
-                summary = summarize_chunk(adapter, model_name, chunk, temperature)
-                if summary:
-                    summaries.append(summary)
-            if not summaries:
-                return None
-            merged = "\n".join(summaries)
-            if len(summaries) > 1:
-                merged = summarize_chunk(adapter, model_name, merged, temperature) or merged
-            return merged
-        except Exception as exc:
-            if not is_context_limit_error(exc):
-                raise
-            attempts += 1
-            target_tokens = max(200, target_tokens // 2)
-    return None
+    return _summarize_messages_impl(adapter, model_name, messages, temperature, summarize_chunk)
 
 
 async def asummarize_messages(
@@ -197,33 +249,115 @@ async def asummarize_messages(
     messages: list[Message],
     temperature: float | None,
 ) -> str | None:
-    lines = [message_summary_text(message) for message in messages]
-    lines = [line for line in lines if line]
-    if not lines:
-        return ""
-    text = "\n".join(lines)
-    target_tokens = SUMMARY_CHUNK_TOKENS
-    attempts = 0
-    while attempts < SUMMARY_ATTEMPT_LIMIT:
-        try:
-            chunks = chunk_text(model_name, text, target_tokens)
-            summaries: list[str] = []
-            for chunk in chunks:
-                summary = await asummarize_chunk(adapter, model_name, chunk, temperature)
-                if summary:
-                    summaries.append(summary)
-            if not summaries:
-                return None
-            merged = "\n".join(summaries)
-            if len(summaries) > 1:
-                merged = await asummarize_chunk(adapter, model_name, merged, temperature) or merged
-            return merged
-        except Exception as exc:
-            if not is_context_limit_error(exc):
-                raise
-            attempts += 1
-            target_tokens = max(200, target_tokens // 2)
-    return None
+    return await _asummarize_messages_impl(
+        adapter, model_name, messages, temperature, asummarize_chunk
+    )
+
+
+def _apply_context_summary_impl(
+    *,
+    adapter: BaseModelAdapter,
+    model_name: str,
+    messages: list[Message],
+    temperature: float | None,
+    metrics: dict[str, Any],
+    emit: Callable[[str, str, dict[str, Any]], None],
+    worker_name: str,
+    model_registered: bool,
+    summarize_messages_fn: Callable[
+        [BaseModelAdapter, str, list[Message], float | None], str | None
+    ],
+) -> bool:
+    system_messages = [message for message in messages if message.role == "system"]
+    non_system = [message for message in messages if message.role != "system"]
+    if not non_system:
+        return False
+    tail_count = SUMMARY_TAIL_MESSAGES
+    if len(non_system) <= tail_count:
+        tail_count = 0
+    head = non_system if tail_count == 0 else non_system[:-tail_count]
+    tail = [] if tail_count == 0 else non_system[-tail_count:]
+    try:
+        summary = summarize_messages_fn(adapter, model_name, head, temperature)
+    except Exception:
+        return False
+    if summary is None:
+        return False
+    summary_message = Message(
+        role="user",
+        content=f"Summary of previous context:\n{summary}",
+        metadata={"summary": True},
+    )
+    messages[:] = system_messages + [summary_message] + tail
+    info = {
+        "model": model_name,
+        "summarized_messages": len(head),
+        "kept_messages": len(tail),
+    }
+    if not model_registered:
+        info["unregistered_model"] = True
+        info["registration_hint"] = MODEL_REGISTRATION_HINT
+        warnings = metrics.setdefault("warnings", [])
+        if isinstance(warnings, list) and MODEL_REGISTRATION_HINT not in warnings:
+            warnings.append(MODEL_REGISTRATION_HINT)
+    summaries = metrics.setdefault("context_summaries", [])
+    if isinstance(summaries, list):
+        summaries.append(info)
+    emit(EventType.WORKER_CONTEXT_SUMMARIZED, worker_name, info)
+    return True
+
+
+async def _aapply_context_summary_impl(
+    *,
+    adapter: BaseModelAdapter,
+    model_name: str,
+    messages: list[Message],
+    temperature: float | None,
+    metrics: dict[str, Any],
+    emit: Callable[[str, str, dict[str, Any]], None],
+    worker_name: str,
+    model_registered: bool,
+    summarize_messages_fn: Callable[
+        [BaseModelAdapter, str, list[Message], float | None], Awaitable[str | None]
+    ],
+) -> bool:
+    system_messages = [message for message in messages if message.role == "system"]
+    non_system = [message for message in messages if message.role != "system"]
+    if not non_system:
+        return False
+    tail_count = SUMMARY_TAIL_MESSAGES
+    if len(non_system) <= tail_count:
+        tail_count = 0
+    head = non_system if tail_count == 0 else non_system[:-tail_count]
+    tail = [] if tail_count == 0 else non_system[-tail_count:]
+    try:
+        summary = await summarize_messages_fn(adapter, model_name, head, temperature)
+    except Exception:
+        return False
+    if summary is None:
+        return False
+    summary_message = Message(
+        role="user",
+        content=f"Summary of previous context:\n{summary}",
+        metadata={"summary": True},
+    )
+    messages[:] = system_messages + [summary_message] + tail
+    info = {
+        "model": model_name,
+        "summarized_messages": len(head),
+        "kept_messages": len(tail),
+    }
+    if not model_registered:
+        info["unregistered_model"] = True
+        info["registration_hint"] = MODEL_REGISTRATION_HINT
+        warnings = metrics.setdefault("warnings", [])
+        if isinstance(warnings, list) and MODEL_REGISTRATION_HINT not in warnings:
+            warnings.append(MODEL_REGISTRATION_HINT)
+    summaries = metrics.setdefault("context_summaries", [])
+    if isinstance(summaries, list):
+        summaries.append(info)
+    emit(EventType.WORKER_CONTEXT_SUMMARIZED, worker_name, info)
+    return True
 
 
 def apply_context_summary(
@@ -237,43 +371,17 @@ def apply_context_summary(
     worker_name: str,
     model_registered: bool,
 ) -> bool:
-    system_messages = [message for message in messages if message.role == "system"]
-    non_system = [message for message in messages if message.role != "system"]
-    if not non_system:
-        return False
-    tail_count = SUMMARY_TAIL_MESSAGES
-    if len(non_system) <= tail_count:
-        tail_count = 0
-    head = non_system if tail_count == 0 else non_system[:-tail_count]
-    tail = [] if tail_count == 0 else non_system[-tail_count:]
-    try:
-        summary = summarize_messages(adapter, model_name, head, temperature)
-    except Exception:
-        return False
-    if summary is None:
-        return False
-    summary_message = Message(
-        role="user",
-        content=f"Summary of previous context:\n{summary}",
-        metadata={"summary": True},
+    return _apply_context_summary_impl(
+        adapter=adapter,
+        model_name=model_name,
+        messages=messages,
+        temperature=temperature,
+        metrics=metrics,
+        emit=emit,
+        worker_name=worker_name,
+        model_registered=model_registered,
+        summarize_messages_fn=summarize_messages,
     )
-    messages[:] = system_messages + [summary_message] + tail
-    info = {
-        "model": model_name,
-        "summarized_messages": len(head),
-        "kept_messages": len(tail),
-    }
-    if not model_registered:
-        info["unregistered_model"] = True
-        info["registration_hint"] = MODEL_REGISTRATION_HINT
-        warnings = metrics.setdefault("warnings", [])
-        if isinstance(warnings, list) and MODEL_REGISTRATION_HINT not in warnings:
-            warnings.append(MODEL_REGISTRATION_HINT)
-    summaries = metrics.setdefault("context_summaries", [])
-    if isinstance(summaries, list):
-        summaries.append(info)
-    emit(EventType.WORKER_CONTEXT_SUMMARIZED, worker_name, info)
-    return True
 
 
 async def aapply_context_summary(
@@ -287,43 +395,17 @@ async def aapply_context_summary(
     worker_name: str,
     model_registered: bool,
 ) -> bool:
-    system_messages = [message for message in messages if message.role == "system"]
-    non_system = [message for message in messages if message.role != "system"]
-    if not non_system:
-        return False
-    tail_count = SUMMARY_TAIL_MESSAGES
-    if len(non_system) <= tail_count:
-        tail_count = 0
-    head = non_system if tail_count == 0 else non_system[:-tail_count]
-    tail = [] if tail_count == 0 else non_system[-tail_count:]
-    try:
-        summary = await asummarize_messages(adapter, model_name, head, temperature)
-    except Exception:
-        return False
-    if summary is None:
-        return False
-    summary_message = Message(
-        role="user",
-        content=f"Summary of previous context:\n{summary}",
-        metadata={"summary": True},
+    return await _aapply_context_summary_impl(
+        adapter=adapter,
+        model_name=model_name,
+        messages=messages,
+        temperature=temperature,
+        metrics=metrics,
+        emit=emit,
+        worker_name=worker_name,
+        model_registered=model_registered,
+        summarize_messages_fn=asummarize_messages,
     )
-    messages[:] = system_messages + [summary_message] + tail
-    info = {
-        "model": model_name,
-        "summarized_messages": len(head),
-        "kept_messages": len(tail),
-    }
-    if not model_registered:
-        info["unregistered_model"] = True
-        info["registration_hint"] = MODEL_REGISTRATION_HINT
-        warnings = metrics.setdefault("warnings", [])
-        if isinstance(warnings, list) and MODEL_REGISTRATION_HINT not in warnings:
-            warnings.append(MODEL_REGISTRATION_HINT)
-    summaries = metrics.setdefault("context_summaries", [])
-    if isinstance(summaries, list):
-        summaries.append(info)
-    emit(EventType.WORKER_CONTEXT_SUMMARIZED, worker_name, info)
-    return True
 
 
 def context_error_message(model_registered: bool, allow_summary: bool) -> str:

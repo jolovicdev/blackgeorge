@@ -106,7 +106,7 @@ type: subject
 ```
 
 Types: `feat`, `fix`, `refactor`, `docs`, `test`, `chore`
-Subject: imperative, lowercase, no trailing period
+Subject: imperative, no trailing period (type prefix lowercase, body may contain capitals)
 Example: `feat: add vector memory chunking`
 
 Pre-commit checklist:

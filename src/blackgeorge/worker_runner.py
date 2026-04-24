@@ -5,6 +5,7 @@ from collections.abc import Callable, Iterable
 from typing import Any, cast
 
 from blackgeorge.adapters.base import ModelResponse
+from blackgeorge.async_utils import ensure_not_running_loop
 from blackgeorge.config import RunConfig
 from blackgeorge.core.event_types import EventType
 from blackgeorge.core.job import Job
@@ -45,7 +46,6 @@ from blackgeorge.worker_messages import (
 )
 from blackgeorge.worker_runner_helpers import (
     _build_report,
-    _ensure_not_running_loop,
     _execute_tool_calls_async,
     _plan_tool_calls,
     _report_error,
@@ -143,6 +143,7 @@ class WorkerRunner:
                     thinking=thinking,
                     drop_params=drop_params,
                     extra_body=extra_body,
+                    num_retries=config.num_retries,
                 )
             except NotImplementedError:
                 response = await asyncio.to_thread(
@@ -158,6 +159,7 @@ class WorkerRunner:
                     thinking=thinking,
                     drop_params=drop_params,
                     extra_body=extra_body,
+                    num_retries=config.num_retries,
                 )
             if isinstance(response, ModelResponse):
                 return response
@@ -194,6 +196,7 @@ class WorkerRunner:
                     thinking=thinking,
                     drop_params=drop_params,
                     extra_body=extra_body,
+                    num_retries=config.num_retries,
                 )
             except NotImplementedError:
                 try:
@@ -210,6 +213,7 @@ class WorkerRunner:
                         thinking=thinking,
                         drop_params=drop_params,
                         extra_body=extra_body,
+                        num_retries=config.num_retries,
                     )
                 except Exception as exc:
                     if is_stream_unsupported_error(exc):
@@ -604,7 +608,7 @@ class WorkerRunner:
     def run(
         self, config: RunConfig, job: Job, worker_model: str | None = None
     ) -> tuple[Report, RunState | None]:
-        _ensure_not_running_loop("run", "arun")
+        ensure_not_running_loop("run", "arun")
         return asyncio.run(self.arun(config, job, worker_model))
 
     async def arun(
@@ -639,7 +643,7 @@ class WorkerRunner:
         decision_or_input: Any,
         worker_model: str | None = None,
     ) -> tuple[Report, RunState | None]:
-        _ensure_not_running_loop("resume", "aresume")
+        ensure_not_running_loop("resume", "aresume")
         return asyncio.run(self.aresume(config, state, decision_or_input, worker_model))
 
     async def aresume(

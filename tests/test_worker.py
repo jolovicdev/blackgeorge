@@ -40,6 +40,7 @@ class ContextLimitAdapter(BaseModelAdapter):
         thinking: dict[str, Any] | None = None,
         drop_params: bool | None = None,
         extra_body: dict[str, Any] | None = None,
+        num_retries: int | None = None,
     ) -> ModelResponse:
         self.calls += 1
         if self.calls == 1:
@@ -62,6 +63,7 @@ class ContextLimitAdapter(BaseModelAdapter):
         thinking: dict[str, Any] | None = None,
         drop_params: bool | None = None,
         extra_body: dict[str, Any] | None = None,
+        num_retries: int | None = None,
     ) -> ModelResponse:
         return self.complete(
             model=model,
@@ -90,6 +92,7 @@ class ContextLimitFailingAdapter(BaseModelAdapter):
         thinking: dict[str, Any] | None = None,
         drop_params: bool | None = None,
         extra_body: dict[str, Any] | None = None,
+        num_retries: int | None = None,
     ) -> ModelResponse:
         raise RuntimeError("context length exceeded")
 
@@ -107,6 +110,7 @@ class ContextLimitFailingAdapter(BaseModelAdapter):
         thinking: dict[str, Any] | None = None,
         drop_params: bool | None = None,
         extra_body: dict[str, Any] | None = None,
+        num_retries: int | None = None,
     ) -> ModelResponse:
         return self.complete(
             model=model,
@@ -138,6 +142,7 @@ class StructuredAdapter(BaseModelAdapter):
         thinking: dict[str, Any] | None = None,
         drop_params: bool | None = None,
         extra_body: dict[str, Any] | None = None,
+        num_retries: int | None = None,
     ) -> ModelResponse:
         raise RuntimeError("complete should not be used")
 
@@ -155,6 +160,7 @@ class StructuredAdapter(BaseModelAdapter):
         thinking: dict[str, Any] | None = None,
         drop_params: bool | None = None,
         extra_body: dict[str, Any] | None = None,
+        num_retries: int | None = None,
     ) -> ModelResponse:
         raise RuntimeError("acomplete should not be used")
 
@@ -191,6 +197,7 @@ class StructuredStreamPreviewAdapter(BaseModelAdapter):
         thinking: dict[str, Any] | None = None,
         drop_params: bool | None = None,
         extra_body: dict[str, Any] | None = None,
+        num_retries: int | None = None,
     ) -> ModelResponse:
         raise RuntimeError("sync path not used")
 
@@ -208,6 +215,7 @@ class StructuredStreamPreviewAdapter(BaseModelAdapter):
         thinking: dict[str, Any] | None = None,
         drop_params: bool | None = None,
         extra_body: dict[str, Any] | None = None,
+        num_retries: int | None = None,
     ) -> ModelResponse | Any:
         if not stream:
             raise RuntimeError("non-stream completion should not be used")
@@ -245,6 +253,7 @@ class ProactiveSummaryBudgetAdapter(BaseModelAdapter):
         thinking: dict[str, Any] | None = None,
         drop_params: bool | None = None,
         extra_body: dict[str, Any] | None = None,
+        num_retries: int | None = None,
     ) -> ModelResponse:
         raise RuntimeError("sync path not used")
 
@@ -262,6 +271,7 @@ class ProactiveSummaryBudgetAdapter(BaseModelAdapter):
         thinking: dict[str, Any] | None = None,
         drop_params: bool | None = None,
         extra_body: dict[str, Any] | None = None,
+        num_retries: int | None = None,
     ) -> ModelResponse:
         if (
             len(messages) >= 1
@@ -295,6 +305,7 @@ class ToolThenStructuredContextAdapter(BaseModelAdapter):
         thinking: dict[str, Any] | None = None,
         drop_params: bool | None = None,
         extra_body: dict[str, Any] | None = None,
+        num_retries: int | None = None,
     ) -> ModelResponse:
         raise RuntimeError("sync path not used")
 
@@ -312,6 +323,7 @@ class ToolThenStructuredContextAdapter(BaseModelAdapter):
         thinking: dict[str, Any] | None = None,
         drop_params: bool | None = None,
         extra_body: dict[str, Any] | None = None,
+        num_retries: int | None = None,
     ) -> ModelResponse:
         self.acomplete_calls += 1
         if self.acomplete_calls == 1:
@@ -1000,6 +1012,7 @@ def test_streaming_falls_back_when_adapter_returns_non_iterable() -> None:
             thinking: dict[str, Any] | None = None,
             drop_params: bool | None = None,
             extra_body: dict[str, Any] | None = None,
+            num_retries: int | None = None,
         ) -> ModelResponse:
             raise RuntimeError("sync path not used")
 
@@ -1017,6 +1030,7 @@ def test_streaming_falls_back_when_adapter_returns_non_iterable() -> None:
             thinking: dict[str, Any] | None = None,
             drop_params: bool | None = None,
             extra_body: dict[str, Any] | None = None,
+            num_retries: int | None = None,
         ) -> ModelResponse | Any:
             self.calls.append(stream)
             if stream:
@@ -1053,6 +1067,7 @@ def test_streaming_tool_turn_falls_back_when_streaming_unsupported() -> None:
             thinking: dict[str, Any] | None = None,
             drop_params: bool | None = None,
             extra_body: dict[str, Any] | None = None,
+            num_retries: int | None = None,
         ) -> ModelResponse:
             raise RuntimeError("sync path not used")
 
@@ -1070,6 +1085,7 @@ def test_streaming_tool_turn_falls_back_when_streaming_unsupported() -> None:
             thinking: dict[str, Any] | None = None,
             drop_params: bool | None = None,
             extra_body: dict[str, Any] | None = None,
+            num_retries: int | None = None,
         ) -> ModelResponse:
             if stream:
                 self.stream_calls += 1

@@ -16,6 +16,7 @@ desk = Desk(
     structured_output_retries=3,
     max_iterations=10,
     max_tool_calls=20,
+    num_retries=0,
     respect_context_window=True,
     max_context_messages=10,
 )
@@ -31,6 +32,7 @@ desk = Desk(
 - structured_output_retries: retries for structured output validation
 - max_iterations: max model turns per worker run
 - max_tool_calls: max tool calls per worker run
+- num_retries: LiteLLM-level retry count for failed calls (0 disables retries)
 - respect_context_window: when True, auto-summarize and retry on context length errors (Reactive)
 - max_context_messages: auto-summarize when message count exceeds this limit (Proactive)
 - event_bus: custom event bus implementation

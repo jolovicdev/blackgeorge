@@ -37,6 +37,7 @@ class SlowAdapter(BaseModelAdapter):
         thinking: dict[str, Any] | None = None,
         drop_params: bool | None = None,
         extra_body: dict[str, Any] | None = None,
+        num_retries: int | None = None,
     ) -> ModelResponse:
         return self._get_response()
 
@@ -54,6 +55,7 @@ class SlowAdapter(BaseModelAdapter):
         thinking: dict[str, Any] | None = None,
         drop_params: bool | None = None,
         extra_body: dict[str, Any] | None = None,
+        num_retries: int | None = None,
     ) -> ModelResponse:
         await asyncio.sleep(self.delay)
         return self._get_response()
@@ -85,6 +87,7 @@ class FailingOnSecondCallAdapter(BaseModelAdapter):
         thinking: dict[str, Any] | None = None,
         drop_params: bool | None = None,
         extra_body: dict[str, Any] | None = None,
+        num_retries: int | None = None,
     ) -> ModelResponse:
         return self._get_response()
 
@@ -102,6 +105,7 @@ class FailingOnSecondCallAdapter(BaseModelAdapter):
         thinking: dict[str, Any] | None = None,
         drop_params: bool | None = None,
         extra_body: dict[str, Any] | None = None,
+        num_retries: int | None = None,
     ) -> ModelResponse:
         return self._get_response()
 
@@ -125,6 +129,7 @@ class ImmediateAdapter(BaseModelAdapter):
         thinking: dict[str, Any] | None = None,
         drop_params: bool | None = None,
         extra_body: dict[str, Any] | None = None,
+        num_retries: int | None = None,
     ) -> ModelResponse:
         self.call_count += 1
         return ModelResponse(content=self.response, tool_calls=[], usage={}, raw={})
@@ -152,6 +157,7 @@ class CancellationTrackingAdapter(BaseModelAdapter):
         thinking: dict[str, Any] | None = None,
         drop_params: bool | None = None,
         extra_body: dict[str, Any] | None = None,
+        num_retries: int | None = None,
     ) -> ModelResponse:
         raise RuntimeError("sync path not used in this test")
 
@@ -169,6 +175,7 @@ class CancellationTrackingAdapter(BaseModelAdapter):
         thinking: dict[str, Any] | None = None,
         drop_params: bool | None = None,
         extra_body: dict[str, Any] | None = None,
+        num_retries: int | None = None,
     ) -> ModelResponse:
         self.started += 1
         try:

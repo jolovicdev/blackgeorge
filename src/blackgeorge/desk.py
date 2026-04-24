@@ -15,6 +15,7 @@ from blackgeorge.event_bus import EventBus
 from blackgeorge.memory.in_memory import InMemoryMemoryStore
 from blackgeorge.store.base import RunStore
 from blackgeorge.store.sqlite import SQLiteRunStore
+from blackgeorge.store.state import RunState
 from blackgeorge.utils import new_id, utc_now
 from blackgeorge.worker import Worker
 from blackgeorge.workflow.flow import Flow
@@ -36,6 +37,7 @@ class Desk:
         structured_output_retries: int = 3,
         max_iterations: int = 10,
         max_tool_calls: int = 20,
+        num_retries: int = 0,
         respect_context_window: bool = True,
         max_context_messages: int | None = None,
         event_bus: EventBus | None = None,
@@ -54,14 +56,19 @@ class Desk:
         self.structured_output_retries = structured_output_retries
         self.max_iterations = max_iterations
         self.max_tool_calls = max_tool_calls
+        self.num_retries = num_retries
         self.respect_context_window = respect_context_window
         self.max_context_messages = max_context_messages
         self.event_bus = event_bus or EventBus()
         self.adapter = adapter or LiteLLMAdapter()
         self.storage_dir = storage_dir or ".blackgeorge"
-        os.makedirs(self.storage_dir, exist_ok=True)
         self.db_path = os.path.join(self.storage_dir, "blackgeorge.db")
-        self.run_store = run_store or SQLiteRunStore(self.db_path)
+        self.run_store: RunStore
+        if run_store is None:
+            os.makedirs(self.storage_dir, exist_ok=True)
+            self.run_store = SQLiteRunStore(self.db_path)
+        else:
+            self.run_store = run_store
         self.memory_store = memory_store or InMemoryMemoryStore()
         self._workers: dict[str, Worker] = {}
         self._workforces: dict[str, Workforce] = {}
@@ -168,31 +175,13 @@ class Desk:
             value = value.model_dump(mode="json", warnings=False)
         self.memory_store.write("last_output", value, worker.memory_scope)
 
-    def run(
-        self,
-        runner: Worker | Workforce,
-        job: Job,
-        *,
-        stream: bool | None = None,
-        run_id: str | None = None,
-    ) -> Report:
-        run_id = run_id or new_id()
-        events: list[Event] = []
-        stream_enabled = self.stream if stream is None else stream
+    def _make_run_config(self, run_id: str, events: list[Event], stream_enabled: bool) -> RunConfig:
         stream_options = {"include_usage": True} if stream_enabled else None
-        job = self._resolve_structured_stream_mode(job)
-        if isinstance(runner, Worker):
-            job = self._apply_memory(runner, job)
-        self.run_store.create_run(run_id, job.model_dump(mode="json"))
-        self._emit(events, run_id, "run.started", "desk", {"job_id": job.id})
 
         def emit(event_type: str, source: str, payload: dict[str, Any]) -> None:
             self._emit(events, run_id, event_type, source, payload)
 
-        async def drain_handlers() -> None:
-            await self.event_bus.await_pending()
-
-        config = RunConfig(
+        return RunConfig(
             adapter=self.adapter,
             emit=emit,
             run_id=run_id,
@@ -204,20 +193,21 @@ class Desk:
             structured_output_retries=self.structured_output_retries,
             max_iterations=self.max_iterations,
             max_tool_calls=self.max_tool_calls,
+            num_retries=self.num_retries,
             respect_context_window=self.respect_context_window,
             max_context_messages=self.max_context_messages,
             default_model=self.model,
         )
 
-        if isinstance(runner, Worker):
-            self.register_worker(runner)
-            report, state = runner.run(config, job)
-        elif isinstance(runner, Workforce):
-            self.register_workforce(runner)
-            report, state = runner.run(config, job, drain_async_handlers=drain_handlers)
-        else:
-            raise TypeError("Runner must be Worker or Workforce")
-
+    def _finalize_run(
+        self,
+        runner: Worker | Workforce | None,
+        report: Report,
+        state: RunState | None,
+        run_id: str,
+        events: list[Event],
+        stream_enabled: bool,
+    ) -> Report:
         if state is not None and report.status == "paused":
             state.payload["stream"] = stream_enabled
             self._emit(events, run_id, "run.paused", "desk", {})
@@ -242,8 +232,40 @@ class Desk:
                 self._output_json(report),
                 None,
             )
-
         return report
+
+    def run(
+        self,
+        runner: Worker | Workforce,
+        job: Job,
+        *,
+        stream: bool | None = None,
+        run_id: str | None = None,
+    ) -> Report:
+        run_id = run_id or new_id()
+        events: list[Event] = []
+        stream_enabled = self.stream if stream is None else stream
+        job = self._resolve_structured_stream_mode(job)
+        if isinstance(runner, Worker):
+            job = self._apply_memory(runner, job)
+        self.run_store.create_run(run_id, job.model_dump(mode="json"))
+        self._emit(events, run_id, "run.started", "desk", {"job_id": job.id})
+
+        async def drain_handlers() -> None:
+            await self.event_bus.await_pending()
+
+        config = self._make_run_config(run_id, events, stream_enabled)
+
+        if isinstance(runner, Worker):
+            self.register_worker(runner)
+            report, state = runner.run(config, job)
+        elif isinstance(runner, Workforce):
+            self.register_workforce(runner)
+            report, state = runner.run(config, job, drain_async_handlers=drain_handlers)
+        else:
+            raise TypeError("Runner must be Worker or Workforce")
+
+        return self._finalize_run(runner, report, state, run_id, events, stream_enabled)
 
     async def arun(
         self,
@@ -256,68 +278,27 @@ class Desk:
         run_id = run_id or new_id()
         events: list[Event] = []
         stream_enabled = self.stream if stream is None else stream
-        stream_options = {"include_usage": True} if stream_enabled else None
         job = self._resolve_structured_stream_mode(job)
         if isinstance(runner, Worker):
             job = self._apply_memory(runner, job)
         self.run_store.create_run(run_id, job.model_dump(mode="json"))
         self._emit(events, run_id, "run.started", "desk", {"job_id": job.id})
 
-        def emit(event_type: str, source: str, payload: dict[str, Any]) -> None:
-            self._emit(events, run_id, event_type, source, payload)
+        async def drain_handlers() -> None:
+            await self.event_bus.await_pending()
 
-        config = RunConfig(
-            adapter=self.adapter,
-            emit=emit,
-            run_id=run_id,
-            events=events,
-            temperature=self.temperature,
-            max_tokens=self.max_tokens,
-            stream=stream_enabled,
-            stream_options=stream_options,
-            structured_output_retries=self.structured_output_retries,
-            max_iterations=self.max_iterations,
-            max_tool_calls=self.max_tool_calls,
-            respect_context_window=self.respect_context_window,
-            max_context_messages=self.max_context_messages,
-            default_model=self.model,
-        )
+        config = self._make_run_config(run_id, events, stream_enabled)
 
         if isinstance(runner, Worker):
             self.register_worker(runner)
             report, state = await runner.arun(config, job)
         elif isinstance(runner, Workforce):
             self.register_workforce(runner)
-            report, state = await runner.arun(config, job)
+            report, state = await runner.arun(config, job, drain_async_handlers=drain_handlers)
         else:
             raise TypeError("Runner must be Worker or Workforce")
 
-        if state is not None and report.status == "paused":
-            state.payload["stream"] = stream_enabled
-            self._emit(events, run_id, "run.paused", "desk", {})
-            self.run_store.update_run(run_id, "paused", report.content, None, state)
-        elif report.status == "completed":
-            self._emit(events, run_id, "run.completed", "desk", {})
-            self.run_store.update_run(
-                run_id,
-                "completed",
-                report.content,
-                self._output_json(report),
-                None,
-            )
-            if isinstance(runner, Worker):
-                self._write_memory(runner, report)
-        else:
-            self._emit(events, run_id, "run.failed", "desk", {"errors": report.errors})
-            self.run_store.update_run(
-                run_id,
-                "failed",
-                report.content,
-                self._output_json(report),
-                None,
-            )
-
-        return report
+        return self._finalize_run(runner, report, state, run_id, events, stream_enabled)
 
     def resume(
         self,
@@ -383,29 +364,10 @@ class Desk:
                 return resume_failed("Flow not registered")
             return flow.resume(report, decision_or_input, stream=stream)
         stream_enabled = stream if stream is not None else state.payload.get("stream", self.stream)
-        stream_options = {"include_usage": True} if stream_enabled else None
-
-        def emit(event_type: str, source: str, payload: dict[str, Any]) -> None:
-            self._emit(events, report.run_id, event_type, source, payload)
 
         self._emit(events, report.run_id, "run.resumed", "desk", {})
 
-        config = RunConfig(
-            adapter=self.adapter,
-            emit=emit,
-            run_id=report.run_id,
-            events=events,
-            temperature=self.temperature,
-            max_tokens=self.max_tokens,
-            stream=stream_enabled,
-            stream_options=stream_options,
-            structured_output_retries=self.structured_output_retries,
-            max_iterations=self.max_iterations,
-            max_tool_calls=self.max_tool_calls,
-            respect_context_window=self.respect_context_window,
-            max_context_messages=self.max_context_messages,
-            default_model=self.model,
-        )
+        config = self._make_run_config(report.run_id, events, stream_enabled)
 
         worker: Worker | None = None
         if state.runner_type == "worker":
@@ -421,44 +383,9 @@ class Desk:
         else:
             return resume_failed("Unknown runner type")
 
-        if updated_state is not None and updated_report.status == "paused":
-            updated_state.payload["stream"] = stream_enabled
-            self._emit(events, report.run_id, "run.paused", "desk", {})
-            self.run_store.update_run(
-                report.run_id,
-                "paused",
-                updated_report.content,
-                None,
-                updated_state,
-            )
-        elif updated_report.status == "completed":
-            self._emit(events, report.run_id, "run.completed", "desk", {})
-            self.run_store.update_run(
-                report.run_id,
-                "completed",
-                updated_report.content,
-                self._output_json(updated_report),
-                None,
-            )
-            if worker is not None:
-                self._write_memory(worker, updated_report)
-        else:
-            self._emit(
-                events,
-                report.run_id,
-                "run.failed",
-                "desk",
-                {"errors": updated_report.errors},
-            )
-            self.run_store.update_run(
-                report.run_id,
-                "failed",
-                updated_report.content,
-                self._output_json(updated_report),
-                None,
-            )
-
-        return updated_report
+        return self._finalize_run(
+            worker, updated_report, updated_state, report.run_id, events, stream_enabled
+        )
 
     async def aresume(
         self,
@@ -524,29 +451,10 @@ class Desk:
                 return resume_failed("Flow not registered")
             return await flow.aresume(report, decision_or_input, stream=stream)
         stream_enabled = stream if stream is not None else state.payload.get("stream", self.stream)
-        stream_options = {"include_usage": True} if stream_enabled else None
-
-        def emit(event_type: str, source: str, payload: dict[str, Any]) -> None:
-            self._emit(events, report.run_id, event_type, source, payload)
 
         self._emit(events, report.run_id, "run.resumed", "desk", {})
 
-        config = RunConfig(
-            adapter=self.adapter,
-            emit=emit,
-            run_id=report.run_id,
-            events=events,
-            temperature=self.temperature,
-            max_tokens=self.max_tokens,
-            stream=stream_enabled,
-            stream_options=stream_options,
-            structured_output_retries=self.structured_output_retries,
-            max_iterations=self.max_iterations,
-            max_tool_calls=self.max_tool_calls,
-            respect_context_window=self.respect_context_window,
-            max_context_messages=self.max_context_messages,
-            default_model=self.model,
-        )
+        config = self._make_run_config(report.run_id, events, stream_enabled)
 
         worker: Worker | None = None
         if state.runner_type == "worker":
@@ -564,41 +472,6 @@ class Desk:
         else:
             return resume_failed("Unknown runner type")
 
-        if updated_state is not None and updated_report.status == "paused":
-            updated_state.payload["stream"] = stream_enabled
-            self._emit(events, report.run_id, "run.paused", "desk", {})
-            self.run_store.update_run(
-                report.run_id,
-                "paused",
-                updated_report.content,
-                None,
-                updated_state,
-            )
-        elif updated_report.status == "completed":
-            self._emit(events, report.run_id, "run.completed", "desk", {})
-            self.run_store.update_run(
-                report.run_id,
-                "completed",
-                updated_report.content,
-                self._output_json(updated_report),
-                None,
-            )
-            if worker is not None:
-                self._write_memory(worker, updated_report)
-        else:
-            self._emit(
-                events,
-                report.run_id,
-                "run.failed",
-                "desk",
-                {"errors": updated_report.errors},
-            )
-            self.run_store.update_run(
-                report.run_id,
-                "failed",
-                updated_report.content,
-                self._output_json(updated_report),
-                None,
-            )
-
-        return updated_report
+        return self._finalize_run(
+            worker, updated_report, updated_state, report.run_id, events, stream_enabled
+        )

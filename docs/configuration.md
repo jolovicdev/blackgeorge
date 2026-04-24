@@ -56,6 +56,7 @@ desk = Desk(
     # Limits
     max_iterations=10,
     max_tool_calls=20,
+    num_retries=0,
 
     # Context window handling
     respect_context_window=True,
@@ -115,6 +116,7 @@ report, state = await worker.arun(config, job)
 | `structured_output_retries` | int | 3 | Structured output retry count |
 | `max_iterations` | int | 10 | Maximum model turns |
 | `max_tool_calls` | int | 20 | Maximum tool calls |
+| `num_retries` | int | 0 | LiteLLM-level retry count for failed calls |
 | `respect_context_window` | bool | True | Auto-summarize on context errors (Reactive) |
 | `max_context_messages` | int \| None | None | Auto-summarize when message count exceeds this limit (Proactive) |
 | `default_model` | str | None | Default model name |
@@ -168,6 +170,7 @@ On tool turns, streamed `stream.token` events contain tool argument deltas.
 |-----------|------|---------|-------------|
 | `max_iterations` | int | 10 | Maximum model turns per worker run |
 | `max_tool_calls` | int | 20 | Maximum tool calls per worker run |
+| `num_retries` | int | 0 | LiteLLM retry count for failed LLM calls (0 disables) |
 
 When these limits are exceeded, the run fails with an error in `Report.errors`.
 
@@ -511,6 +514,7 @@ class CustomAdapter(BaseModelAdapter):
         thinking: dict[str, Any] | None = None,
         drop_params: bool | None = None,
         extra_body: dict[str, Any] | None = None,
+        num_retries: int | None = None,
     ) -> ModelResponse:
         # Implementation
         pass
@@ -529,6 +533,7 @@ class CustomAdapter(BaseModelAdapter):
         thinking: dict[str, Any] | None = None,
         drop_params: bool | None = None,
         extra_body: dict[str, Any] | None = None,
+        num_retries: int | None = None,
     ) -> ModelResponse:
         # Implementation
         pass
