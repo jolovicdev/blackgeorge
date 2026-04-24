@@ -63,9 +63,9 @@ class Desk:
         self.adapter = adapter or LiteLLMAdapter()
         self.storage_dir = storage_dir or ".blackgeorge"
         self.db_path = os.path.join(self.storage_dir, "blackgeorge.db")
+        os.makedirs(self.storage_dir, exist_ok=True)
         self.run_store: RunStore
         if run_store is None:
-            os.makedirs(self.storage_dir, exist_ok=True)
             self.run_store = SQLiteRunStore(self.db_path)
         else:
             self.run_store = run_store

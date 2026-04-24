@@ -1,10 +1,10 @@
 [project]
 name = "blackgeorge"
-version = "1.2.3"
+version = "1.2.4"
 description = "Agentic framework (runtime) with desk/worker/workforce primitives"
 readme = "README.md"
 license = { file = "LICENCE.md" }
-authors = [{ name = "Dušsan Jolović", email = "jolovic@pm.me" }]
+authors = [{ name = "Dušan Jolović", email = "jolovic@pm.me" }]
 urls = { Repository = "https://github.com/jolovicdev/blackgeorge" }
 requires-python = ">=3.12"
 dependencies = [
