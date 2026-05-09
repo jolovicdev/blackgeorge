@@ -23,6 +23,26 @@ from blackgeorge.worker_messages import replace_tool_call, structured_content
 from tests.utils import FakeAdapter
 
 
+class CapturingToolsAdapter(FakeAdapter):
+    def __init__(self, responses: list[ModelResponse]) -> None:
+        super().__init__(responses)
+        self.tool_names_by_call: list[list[str]] = []
+
+    def _capture_tool_names(self, tools: list[dict[str, Any]] | None) -> None:
+        if tools is None:
+            self.tool_names_by_call.append([])
+            return
+        self.tool_names_by_call.append([schema["function"]["name"] for schema in tools])
+
+    def complete(self, **kwargs: Any) -> ModelResponse:
+        self._capture_tool_names(kwargs.get("tools"))
+        return super().complete(**kwargs)
+
+    async def acomplete(self, **kwargs: Any) -> ModelResponse:
+        self._capture_tool_names(kwargs.get("tools"))
+        return await super().acomplete(**kwargs)
+
+
 class ContextLimitAdapter(BaseModelAdapter):
     def __init__(self) -> None:
         self.calls = 0
@@ -806,6 +826,32 @@ def test_resume_uses_tools_override_tool_instance_with_default_store() -> None:
     assert resumed.tool_calls[0].error is None
     assert resumed.tool_calls[0].result is not None
     assert resumed.tool_calls[0].result.content == "ok:go"
+
+
+def test_resume_does_not_duplicate_in_memory_tools_override() -> None:
+    @tool(requires_confirmation=True)
+    def temporary(action: str) -> str:
+        return f"ok:{action}"
+
+    responses = [
+        ModelResponse(
+            content=None,
+            tool_calls=[ToolCall(id="1", name="temporary", arguments={"action": "go"})],
+            usage={},
+            raw={},
+        ),
+        ModelResponse(content="done", tool_calls=[], usage={}, raw={}),
+    ]
+    adapter = CapturingToolsAdapter(responses)
+    desk = Desk(model="fake", adapter=adapter, run_store=InMemoryRunStore())
+    worker = Worker(name="Worker", model="fake")
+    report = desk.run(worker, Job(input="run", tools_override=[temporary]))
+    assert report.status == "paused"
+
+    resumed = desk.resume(report, True)
+
+    assert resumed.status == "completed"
+    assert adapter.tool_names_by_call == [["temporary"], ["temporary"]]
 
 
 def test_missing_tool_call_marks_error() -> None:

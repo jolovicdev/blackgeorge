@@ -228,6 +228,9 @@ class Desk:
         for item in state.job.tools_override:
             if isinstance(item, str) and item in runtime_by_name:
                 restored_override.append(runtime_by_name.pop(item))
+            elif isinstance(item, Tool) and item.name in runtime_by_name:
+                runtime_by_name.pop(item.name)
+                restored_override.append(item)
             else:
                 restored_override.append(item)
         restored_override.extend(runtime_by_name.values())

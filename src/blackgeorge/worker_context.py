@@ -314,7 +314,7 @@ def _apply_context_summary_impl(
     ],
 ) -> bool:
     system_messages, head, tail = _summary_split(messages)
-    if not head and not tail:
+    if not head:
         return False
     try:
         summary = summarize_messages_fn(adapter, model_name, head, temperature)
@@ -361,7 +361,7 @@ async def _aapply_context_summary_impl(
     ],
 ) -> bool:
     system_messages, head, tail = _summary_split(messages)
-    if not head and not tail:
+    if not head:
         return False
     try:
         summary = await summarize_messages_fn(adapter, model_name, head, temperature)
