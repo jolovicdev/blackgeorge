@@ -52,7 +52,9 @@ def delete_record(record_id: str) -> str:
     return f"deleted:{record_id}"
 ```
 
-When the model requests this tool, the worker pauses and returns a pending action. Resume the run with a boolean decision.
+When the model requests this tool, the worker pauses and returns a pending action. Resume the run
+with `True` or an approval string such as `yes`, `approve`, or `confirm`. Use `False`, `None`, or
+a decline string such as `no`, `decline`, `deny`, or `cancel` to skip execution.
 
 ## User input tools
 
@@ -156,7 +158,8 @@ This enables type-safe tool outputs and automatic schema validation.
 
 ## Hooks
 
-Each tool can define pre and post hooks. Pre hooks receive the `ToolCall`. Post hooks receive the `ToolCall` and the `ToolResult`.
+Each tool can define pre and post hooks. Pre hooks receive the `ToolCall`. Post hooks receive the
+`ToolCall` and the `ToolResult`. Hook exceptions are captured as tool execution errors.
 
 ## Toolbelt
 
@@ -268,11 +271,12 @@ async with MCPToolProvider() as provider:
 
 The worker executes tools using `execute_tool`:
 
+- run pre hooks
 - validate input with the tool input model
 - call the function
 - convert output to `ToolResult`
 - run post hooks
 
-If validation or execution fails, the error is captured in the tool result and the run continues.
+If hooks, validation, or execution fail, the error is captured in the tool result and the run continues.
 When multiple tool calls are returned in the same model response, the worker executes them in
 parallel and then appends tool results in call order.

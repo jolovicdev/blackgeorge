@@ -24,7 +24,8 @@ worker = Worker(name="Assistant", instructions="You are helpful")
 session = desk.session(worker)
 ```
 
-The session ID is auto-generated, or you can provide your own:
+The session ID is auto-generated, or you can provide your own. If the ID does not exist yet, a
+new session is created with that ID:
 
 ```python
 session = desk.session(
@@ -59,7 +60,8 @@ if restored:
     report = restored.run("Continue our conversation")
 ```
 
-Returns `None` if the session doesn't exist or belongs to a different worker.
+If the session does not exist, `desk.session(...)` creates it. It returns `None` only when the ID
+already exists for a different worker.
 
 ## Session history
 
@@ -132,8 +134,8 @@ while user_input := get_user_input():
 
 ```python
 session = desk.session(support_worker, session_id=f"ticket:{ticket_id}")
-if not session:
-    session = desk.session(support_worker, session_id=f"ticket:{ticket_id}")
+if session is None:
+    raise ValueError("Ticket session belongs to a different worker")
 ```
 
 **Multi-step task**: Track progress across multiple interactions
