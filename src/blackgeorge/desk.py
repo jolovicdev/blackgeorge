@@ -107,7 +107,17 @@ class Desk:
         from blackgeorge.session import WorkerSession
 
         if session_id:
-            return WorkerSession.resume(session_id=session_id, worker=worker, desk=self)
+            session = WorkerSession.resume(session_id=session_id, worker=worker, desk=self)
+            if session is not None:
+                return session
+            from blackgeorge.store.sqlite_session_store import SQLiteSessionStore
+
+            store = SQLiteSessionStore(self.db_path)
+            try:
+                if store.get_session(session_id) is not None:
+                    return None
+            finally:
+                store.close()
         return WorkerSession.start(
             worker=worker, desk=self, session_id=session_id, metadata=metadata
         )
@@ -234,6 +244,24 @@ class Desk:
             )
         return report
 
+    def _record_unexpected_failure(
+        self,
+        run_id: str,
+        events: list[Event],
+        exc: Exception,
+    ) -> None:
+        errors = [str(exc)]
+        try:
+            self._emit(events, run_id, "run.failed", "desk", {"errors": errors})
+        finally:
+            self.run_store.update_run(
+                run_id,
+                "failed",
+                None,
+                {"error": str(exc), "error_type": type(exc).__name__},
+                None,
+            )
+
     def run(
         self,
         runner: Worker | Workforce,
@@ -256,14 +284,18 @@ class Desk:
 
         config = self._make_run_config(run_id, events, stream_enabled)
 
-        if isinstance(runner, Worker):
-            self.register_worker(runner)
-            report, state = runner.run(config, job)
-        elif isinstance(runner, Workforce):
-            self.register_workforce(runner)
-            report, state = runner.run(config, job, drain_async_handlers=drain_handlers)
-        else:
-            raise TypeError("Runner must be Worker or Workforce")
+        try:
+            if isinstance(runner, Worker):
+                self.register_worker(runner)
+                report, state = runner.run(config, job)
+            elif isinstance(runner, Workforce):
+                self.register_workforce(runner)
+                report, state = runner.run(config, job, drain_async_handlers=drain_handlers)
+            else:
+                raise TypeError("Runner must be Worker or Workforce")
+        except Exception as exc:
+            self._record_unexpected_failure(run_id, events, exc)
+            raise
 
         return self._finalize_run(runner, report, state, run_id, events, stream_enabled)
 
@@ -289,14 +321,18 @@ class Desk:
 
         config = self._make_run_config(run_id, events, stream_enabled)
 
-        if isinstance(runner, Worker):
-            self.register_worker(runner)
-            report, state = await runner.arun(config, job)
-        elif isinstance(runner, Workforce):
-            self.register_workforce(runner)
-            report, state = await runner.arun(config, job, drain_async_handlers=drain_handlers)
-        else:
-            raise TypeError("Runner must be Worker or Workforce")
+        try:
+            if isinstance(runner, Worker):
+                self.register_worker(runner)
+                report, state = await runner.arun(config, job)
+            elif isinstance(runner, Workforce):
+                self.register_workforce(runner)
+                report, state = await runner.arun(config, job, drain_async_handlers=drain_handlers)
+            else:
+                raise TypeError("Runner must be Worker or Workforce")
+        except Exception as exc:
+            self._record_unexpected_failure(run_id, events, exc)
+            raise
 
         return self._finalize_run(runner, report, state, run_id, events, stream_enabled)
 

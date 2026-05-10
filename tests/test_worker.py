@@ -520,6 +520,58 @@ def test_worker_resume_preserves_paused_state_run_id() -> None:
     assert report.run_id != "fresh-config-run"
 
 
+def test_unexpected_worker_exception_marks_run_failed() -> None:
+    class BrokenAdapter(BaseModelAdapter):
+        def complete(
+            self,
+            *,
+            model: str,
+            messages: list[dict[str, Any]],
+            tools: list[dict[str, Any]] | None,
+            tool_choice: str | dict[str, Any] | None,
+            temperature: float | None,
+            max_tokens: int | None,
+            stream: bool,
+            stream_options: dict[str, Any] | None,
+            thinking: dict[str, Any] | None = None,
+            drop_params: bool | None = None,
+            extra_body: dict[str, Any] | None = None,
+            num_retries: int | None = None,
+        ) -> ModelResponse:
+            raise RuntimeError("provider down")
+
+        async def acomplete(
+            self,
+            *,
+            model: str,
+            messages: list[dict[str, Any]],
+            tools: list[dict[str, Any]] | None,
+            tool_choice: str | dict[str, Any] | None,
+            temperature: float | None,
+            max_tokens: int | None,
+            stream: bool,
+            stream_options: dict[str, Any] | None,
+            thinking: dict[str, Any] | None = None,
+            drop_params: bool | None = None,
+            extra_body: dict[str, Any] | None = None,
+            num_retries: int | None = None,
+        ) -> ModelResponse:
+            raise RuntimeError("provider down")
+
+    run_store = InMemoryRunStore()
+    desk = Desk(model="fake", adapter=BrokenAdapter(), run_store=run_store)
+    run_id = "broken-run"
+
+    with pytest.raises(RuntimeError, match="provider down"):
+        desk.run(Worker(name="Worker", model="fake"), Job(input="run"), run_id=run_id)
+
+    record = run_store.get_run(run_id)
+    assert record is not None
+    assert record.status == "failed"
+    assert record.output_json == {"error": "provider down", "error_type": "RuntimeError"}
+    assert any(event.type == "run.failed" for event in run_store.get_events(run_id))
+
+
 def test_pause_emits_worker_paused_not_completed() -> None:
     @tool(requires_confirmation=True)
     def risky(action: str) -> str:
@@ -549,8 +601,11 @@ def test_pause_emits_worker_paused_not_completed() -> None:
 
 
 def test_confirmation_decline_emits_tool_failed() -> None:
+    executed: list[str] = []
+
     @tool(requires_confirmation=True)
     def risky(action: str) -> str:
+        executed.append(action)
         return f"ok:{action}"
 
     responses = [
@@ -572,8 +627,9 @@ def test_confirmation_decline_emits_tool_failed() -> None:
     desk.event_bus.subscribe("tool.failed", on_tool_failed)
     report = desk.run(worker, Job(input="run"))
     assert report.status == "paused"
-    resumed = desk.resume(report, False)
+    resumed = desk.resume(report, "no")
     assert resumed.status == "completed"
+    assert executed == []
     assert any(
         payload.get("error") == "Tool execution declined" for payload in tool_failed_payloads
     )
@@ -665,6 +721,33 @@ def test_tools_override_resolves_by_name() -> None:
     report = desk.run(worker, job)
     assert report.status == "completed"
     assert report.tool_calls[0].error is None
+
+
+def test_resume_uses_tools_override_tool_instance() -> None:
+    @tool(requires_confirmation=True)
+    def temporary(action: str) -> str:
+        return f"ok:{action}"
+
+    responses = [
+        ModelResponse(
+            content=None,
+            tool_calls=[ToolCall(id="1", name="temporary", arguments={"action": "go"})],
+            usage={},
+            raw={},
+        ),
+        ModelResponse(content="done", tool_calls=[], usage={}, raw={}),
+    ]
+    desk = Desk(model="fake", adapter=FakeAdapter(responses), run_store=InMemoryRunStore())
+    worker = Worker(name="Worker", model="fake")
+    report = desk.run(worker, Job(input="run", tools_override=[temporary]))
+    assert report.status == "paused"
+
+    resumed = desk.resume(report, True)
+
+    assert resumed.status == "completed"
+    assert resumed.tool_calls[0].error is None
+    assert resumed.tool_calls[0].result is not None
+    assert resumed.tool_calls[0].result.content == "ok:go"
 
 
 def test_missing_tool_call_marks_error() -> None:
