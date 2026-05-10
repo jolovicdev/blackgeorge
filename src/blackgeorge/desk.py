@@ -16,6 +16,7 @@ from blackgeorge.memory.in_memory import InMemoryMemoryStore
 from blackgeorge.store.base import RunStore
 from blackgeorge.store.sqlite import SQLiteRunStore
 from blackgeorge.store.state import RunState
+from blackgeorge.tools.base import Tool
 from blackgeorge.utils import new_id, utc_now
 from blackgeorge.worker import Worker
 from blackgeorge.workflow.flow import Flow
@@ -73,6 +74,7 @@ class Desk:
         self._workers: dict[str, Worker] = {}
         self._workforces: dict[str, Workforce] = {}
         self._flow_runs: dict[str, Flow] = {}
+        self._runtime_tools_overrides: dict[str, list[Tool]] = {}
 
     def register_worker(self, worker: Worker) -> None:
         self._workers[worker.name] = worker
@@ -209,6 +211,29 @@ class Desk:
             default_model=self.model,
         )
 
+    def _remember_runtime_tools_override(self, run_id: str, state: RunState) -> None:
+        if state.job.tools_override is None:
+            self._runtime_tools_overrides.pop(run_id, None)
+            return
+        runtime_tools = [item for item in state.job.tools_override if isinstance(item, Tool)]
+        if runtime_tools:
+            self._runtime_tools_overrides[run_id] = runtime_tools
+
+    def _restore_runtime_tools_override(self, run_id: str, state: RunState) -> RunState:
+        runtime_tools = self._runtime_tools_overrides.get(run_id)
+        if not runtime_tools or state.job.tools_override is None:
+            return state
+        runtime_by_name = {tool.name: tool for tool in runtime_tools}
+        restored_override: list[Any] = []
+        for item in state.job.tools_override:
+            if isinstance(item, str) and item in runtime_by_name:
+                restored_override.append(runtime_by_name.pop(item))
+            else:
+                restored_override.append(item)
+        restored_override.extend(runtime_by_name.values())
+        job = state.job.model_copy(update={"tools_override": restored_override})
+        return state.model_copy(update={"job": job})
+
     def _finalize_run(
         self,
         runner: Worker | Workforce | None,
@@ -220,9 +245,11 @@ class Desk:
     ) -> Report:
         if state is not None and report.status == "paused":
             state.payload["stream"] = stream_enabled
+            self._remember_runtime_tools_override(run_id, state)
             self._emit(events, run_id, "run.paused", "desk", {})
             self.run_store.update_run(run_id, "paused", report.content, None, state)
         elif report.status == "completed":
+            self._runtime_tools_overrides.pop(run_id, None)
             self._emit(events, run_id, "run.completed", "desk", {})
             self.run_store.update_run(
                 run_id,
@@ -234,6 +261,7 @@ class Desk:
             if isinstance(runner, Worker):
                 self._write_memory(runner, report)
         else:
+            self._runtime_tools_overrides.pop(run_id, None)
             self._emit(events, run_id, "run.failed", "desk", {"errors": report.errors})
             self.run_store.update_run(
                 run_id,
@@ -254,6 +282,7 @@ class Desk:
         try:
             self._emit(events, run_id, "run.failed", "desk", {"errors": errors})
         finally:
+            self._runtime_tools_overrides.pop(run_id, None)
             self.run_store.update_run(
                 run_id,
                 "failed",
@@ -388,12 +417,13 @@ class Desk:
                 self._output_json(failed),
                 None,
             )
+            self._runtime_tools_overrides.pop(report.run_id, None)
             return failed
 
         if record.state is None:
             return resume_failed("No stored state")
 
-        state = record.state
+        state = self._restore_runtime_tools_override(report.run_id, record.state)
         if state.runner_type == "flow":
             flow = self._flow_runs.get(report.run_id)
             if flow is None:
@@ -475,12 +505,13 @@ class Desk:
                 self._output_json(failed),
                 None,
             )
+            self._runtime_tools_overrides.pop(report.run_id, None)
             return failed
 
         if record.state is None:
             return resume_failed("No stored state")
 
-        state = record.state
+        state = self._restore_runtime_tools_override(report.run_id, record.state)
         if state.runner_type == "flow":
             flow = self._flow_runs.get(report.run_id)
             if flow is None:

@@ -1,4 +1,5 @@
 import json
+import tempfile
 import threading
 from typing import Any
 
@@ -635,6 +636,35 @@ def test_confirmation_decline_emits_tool_failed() -> None:
     )
 
 
+def test_confirmation_unknown_truthy_string_keeps_approving() -> None:
+    executed: list[str] = []
+
+    @tool(requires_confirmation=True)
+    def risky(action: str) -> str:
+        executed.append(action)
+        return f"ok:{action}"
+
+    responses = [
+        ModelResponse(
+            content=None,
+            tool_calls=[ToolCall(id="1", name="risky", arguments={"action": "go"})],
+            usage={},
+            raw={},
+        ),
+        ModelResponse(content="done", tool_calls=[], usage={}, raw={}),
+    ]
+    desk = Desk(model="fake", adapter=FakeAdapter(responses), run_store=InMemoryRunStore())
+    worker = Worker(name="Worker", tools=[risky], model="fake")
+
+    report = desk.run(worker, Job(input="run"))
+    assert report.status == "paused"
+    resumed = desk.resume(report, "ship it")
+
+    assert resumed.status == "completed"
+    assert executed == ["go"]
+    assert resumed.tool_calls[0].error is None
+
+
 def test_handoff_pause_does_not_emit_user_input_requested() -> None:
     responses = [
         ModelResponse(
@@ -743,6 +773,34 @@ def test_resume_uses_tools_override_tool_instance() -> None:
     assert report.status == "paused"
 
     resumed = desk.resume(report, True)
+
+    assert resumed.status == "completed"
+    assert resumed.tool_calls[0].error is None
+    assert resumed.tool_calls[0].result is not None
+    assert resumed.tool_calls[0].result.content == "ok:go"
+
+
+def test_resume_uses_tools_override_tool_instance_with_default_store() -> None:
+    @tool(requires_confirmation=True)
+    def temporary(action: str) -> str:
+        return f"ok:{action}"
+
+    responses = [
+        ModelResponse(
+            content=None,
+            tool_calls=[ToolCall(id="1", name="temporary", arguments={"action": "go"})],
+            usage={},
+            raw={},
+        ),
+        ModelResponse(content="done", tool_calls=[], usage={}, raw={}),
+    ]
+    with tempfile.TemporaryDirectory() as tmpdir:
+        desk = Desk(model="fake", adapter=FakeAdapter(responses), storage_dir=tmpdir)
+        worker = Worker(name="Worker", model="fake")
+        report = desk.run(worker, Job(input="run", tools_override=[temporary]))
+        assert report.status == "paused"
+
+        resumed = desk.resume(report, True)
 
     assert resumed.status == "completed"
     assert resumed.tool_calls[0].error is None

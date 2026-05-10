@@ -114,6 +114,7 @@ if report.status == "paused":
 
 Confirmation actions accept `True` or strings such as `yes`, `approve`, or `confirm`.
 They decline `False`, `None`, blank strings, or strings such as `no`, `decline`, `deny`, or `cancel`.
+Other non-empty strings still approve the tool for compatibility with earlier truthy resume values.
 Declined confirmations produce a tool result error with message "Tool execution declined".
 Declined confirmations emit a `tool.failed` event with that error.
 

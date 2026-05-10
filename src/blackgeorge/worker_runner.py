@@ -93,7 +93,7 @@ def _confirmation_approved(decision: Any) -> bool:
             return True
         if normalized in CONFIRMATION_DECLINES:
             return False
-        return False
+        return bool(normalized)
     return bool(decision)
 
 

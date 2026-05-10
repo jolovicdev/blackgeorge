@@ -54,7 +54,8 @@ def delete_record(record_id: str) -> str:
 
 When the model requests this tool, the worker pauses and returns a pending action. Resume the run
 with `True` or an approval string such as `yes`, `approve`, or `confirm`. Use `False`, `None`, or
-a decline string such as `no`, `decline`, `deny`, or `cancel` to skip execution.
+a decline string such as `no`, `decline`, `deny`, or `cancel` to skip execution. Other non-empty
+strings continue to approve the tool for compatibility with earlier truthy resume values.
 
 ## User input tools
 
