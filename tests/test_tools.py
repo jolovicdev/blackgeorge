@@ -78,6 +78,24 @@ def test_sync_pre_hook_failure_returns_tool_result() -> None:
     assert result.exception_type == "ToolExecutionError"
 
 
+def test_sync_validation_error_survives_post_hook_failure() -> None:
+    def post_hook(_call: ToolCall, _result) -> None:
+        raise RuntimeError("post hook failed")
+
+    @tool(post=(post_hook,))
+    def add(a: int) -> int:
+        return a
+
+    call = ToolCall(id="validation-post-hook", name="add", arguments={"a": "bad"})
+    result = execute_tool(add, call)
+
+    assert result.error is not None
+    assert "validation failed" in result.error
+    assert "Post-hook error" in result.error
+    assert "post hook failed" in result.error
+    assert result.exception_type == "ToolValidationError"
+
+
 def test_transfer_to_agent_tool_snapshots_allowlist_for_runtime_validation() -> None:
     available_agents = ["alpha"]
     handoff_tool = transfer_to_agent_tool(available_agents)
@@ -181,6 +199,25 @@ async def test_async_pre_hook_failure_returns_tool_result() -> None:
     assert result.error is not None
     assert "not allowed" in result.error
     assert result.exception_type == "ToolExecutionError"
+
+
+@pytest.mark.asyncio
+async def test_async_validation_error_survives_post_hook_failure() -> None:
+    async def post_hook(_call: ToolCall, _result) -> None:
+        raise RuntimeError("post hook failed")
+
+    @tool(post=(post_hook,))
+    async def async_add(a: int) -> int:
+        return a
+
+    call = ToolCall(id="async-validation-post-hook", name="async_add", arguments={"a": "bad"})
+    result = await aexecute_tool(async_add, call)
+
+    assert result.error is not None
+    assert "validation failed" in result.error
+    assert "Post-hook error" in result.error
+    assert "post hook failed" in result.error
+    assert result.exception_type == "ToolValidationError"
 
 
 @pytest.mark.asyncio

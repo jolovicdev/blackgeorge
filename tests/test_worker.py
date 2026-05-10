@@ -559,7 +559,7 @@ def test_unexpected_worker_exception_marks_run_failed() -> None:
             extra_body: dict[str, Any] | None = None,
             num_retries: int | None = None,
         ) -> ModelResponse:
-            raise RuntimeError("provider down")
+            raise RuntimeError("provider down sk-live-secret")
 
         async def acomplete(
             self,
@@ -577,7 +577,7 @@ def test_unexpected_worker_exception_marks_run_failed() -> None:
             extra_body: dict[str, Any] | None = None,
             num_retries: int | None = None,
         ) -> ModelResponse:
-            raise RuntimeError("provider down")
+            raise RuntimeError("provider down sk-live-secret")
 
     run_store = InMemoryRunStore()
     desk = Desk(model="fake", adapter=BrokenAdapter(), run_store=run_store)
@@ -589,8 +589,19 @@ def test_unexpected_worker_exception_marks_run_failed() -> None:
     record = run_store.get_run(run_id)
     assert record is not None
     assert record.status == "failed"
-    assert record.output_json == {"error": "provider down", "error_type": "RuntimeError"}
-    assert any(event.type == "run.failed" for event in run_store.get_events(run_id))
+    assert record.output_json == {
+        "error": "An unexpected error occurred",
+        "error_type": "RuntimeError",
+    }
+    failed_event = next(
+        event for event in run_store.get_events(run_id) if event.type == "run.failed"
+    )
+    assert failed_event.payload == {
+        "errors": ["An unexpected error occurred"],
+        "error_type": "RuntimeError",
+    }
+    assert "sk-live-secret" not in str(record.output_json)
+    assert "sk-live-secret" not in str(failed_event.payload)
 
 
 def test_pause_emits_worker_paused_not_completed() -> None:

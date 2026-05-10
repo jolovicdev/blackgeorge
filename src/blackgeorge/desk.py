@@ -26,6 +26,9 @@ if TYPE_CHECKING:
     from blackgeorge.session import WorkerSession
 
 
+UNEXPECTED_FAILURE_MESSAGE = "An unexpected error occurred"
+
+
 class Desk:
     def __init__(
         self,
@@ -281,16 +284,23 @@ class Desk:
         events: list[Event],
         exc: Exception,
     ) -> None:
-        errors = [str(exc)]
+        errors = [UNEXPECTED_FAILURE_MESSAGE]
+        error_type = type(exc).__name__
         try:
-            self._emit(events, run_id, "run.failed", "desk", {"errors": errors})
+            self._emit(
+                events,
+                run_id,
+                "run.failed",
+                "desk",
+                {"errors": errors, "error_type": error_type},
+            )
         finally:
             self._runtime_tools_overrides.pop(run_id, None)
             self.run_store.update_run(
                 run_id,
                 "failed",
                 None,
-                {"error": str(exc), "error_type": type(exc).__name__},
+                {"error": UNEXPECTED_FAILURE_MESSAGE, "error_type": error_type},
                 None,
             )
 

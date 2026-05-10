@@ -87,6 +87,20 @@ def _execution_error_result(tool: Tool, exc: Exception) -> ToolResult:
     return ToolResult(error=str(tool_exc), exception_type=type(tool_exc).__name__)
 
 
+def _post_hook_error_result(tool: Tool, result: ToolResult, exc: Exception) -> ToolResult:
+    hook_result = _execution_error_result(tool, exc)
+    if result.error is None:
+        return hook_result
+    return ToolResult(
+        content=result.content,
+        data=result.data,
+        error=f"{result.error}. Post-hook error: {hook_result.error}",
+        timed_out=result.timed_out,
+        cancelled=result.cancelled,
+        exception_type=result.exception_type or hook_result.exception_type,
+    )
+
+
 def _sync_invoke_hook(hook: Any, *args: Any) -> None:
     result = hook(*args)
     if isawaitable(result):
@@ -197,7 +211,7 @@ def execute_tool(tool: Tool, call: ToolCall) -> ToolResult:
         try:
             _sync_post_hooks(tool, call, tool_result)
         except Exception as hook_exc:
-            return _execution_error_result(tool, hook_exc)
+            return _post_hook_error_result(tool, tool_result, hook_exc)
         return tool_result
 
     tool_result = _execute_sync_with_retries(tool, args)
@@ -308,7 +322,7 @@ async def aexecute_tool(
         try:
             await _async_post_hooks(tool, call, tool_result)
         except Exception as hook_exc:
-            return _execution_error_result(tool, hook_exc)
+            return _post_hook_error_result(tool, tool_result, hook_exc)
         return tool_result
 
     retries = tool.retries
