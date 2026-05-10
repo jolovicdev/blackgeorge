@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel
@@ -27,6 +28,25 @@ if TYPE_CHECKING:
 
 
 UNEXPECTED_FAILURE_MESSAGE = "An unexpected error occurred"
+SECRET_PATTERNS = (
+    re.compile(r"sk-[A-Za-z0-9_-]+"),
+    re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._~+/-]+=*"),
+    re.compile(r"(?i)((?:api[_-]?key|token|secret|password|authorization)\s*[=:]\s*)\S+"),
+)
+ABSOLUTE_PATH_PATTERN = re.compile(r"(?<!\w)/(?:[^\s:/]+/)+[^\s:]+")
+
+
+def _sanitize_exception_message(exc: Exception) -> str:
+    message = str(exc).strip()
+    if not message:
+        return UNEXPECTED_FAILURE_MESSAGE
+    for pattern in SECRET_PATTERNS:
+        message = pattern.sub(
+            lambda match: f"{match.group(1)}[redacted]" if match.lastindex else "[redacted]",
+            message,
+        )
+    message = ABSOLUTE_PATH_PATTERN.sub("[path]", message)
+    return message or UNEXPECTED_FAILURE_MESSAGE
 
 
 class Desk:
@@ -112,17 +132,7 @@ class Desk:
         from blackgeorge.session import WorkerSession
 
         if session_id:
-            session = WorkerSession.resume(session_id=session_id, worker=worker, desk=self)
-            if session is not None:
-                return session
-            from blackgeorge.store.sqlite_session_store import SQLiteSessionStore
-
-            store = SQLiteSessionStore(self.db_path)
-            try:
-                if store.get_session(session_id) is not None:
-                    return None
-            finally:
-                store.close()
+            return WorkerSession.resume(session_id=session_id, worker=worker, desk=self)
         return WorkerSession.start(
             worker=worker, desk=self, session_id=session_id, metadata=metadata
         )
@@ -284,7 +294,8 @@ class Desk:
         events: list[Event],
         exc: Exception,
     ) -> None:
-        errors = [UNEXPECTED_FAILURE_MESSAGE]
+        error_message = _sanitize_exception_message(exc)
+        errors = [error_message]
         error_type = type(exc).__name__
         try:
             self._emit(
@@ -300,7 +311,7 @@ class Desk:
                 run_id,
                 "failed",
                 None,
-                {"error": UNEXPECTED_FAILURE_MESSAGE, "error_type": error_type},
+                {"error": error_message, "error_type": error_type},
                 None,
             )
 

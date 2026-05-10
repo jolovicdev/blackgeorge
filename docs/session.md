@@ -60,8 +60,7 @@ if restored:
     report = restored.run("Continue our conversation")
 ```
 
-If the session does not exist, `desk.session(...)` creates it. It returns `None` only when the ID
-already exists for a different worker.
+Returns `None` if the session doesn't exist or belongs to a different worker.
 
 ## Session history
 

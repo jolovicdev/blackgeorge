@@ -62,6 +62,7 @@ class WorkerSession(BaseModel):
 
         record = store.get_session(session_id)
         if record is None or record.worker_name != worker.name:
+            store.close()
             return None
 
         return cls(

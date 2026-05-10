@@ -111,7 +111,7 @@ def test_session_persistence_sqlite() -> None:
         assert report2.content == "Fourth"
 
 
-def test_session_can_start_with_explicit_session_id() -> None:
+def test_missing_explicit_session_id_returns_none() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         worker = Worker(name="Assistant", model="fake")
         desk = Desk(
@@ -121,17 +121,7 @@ def test_session_can_start_with_explicit_session_id() -> None:
             storage_dir=str(tmpdir),
         )
 
-        session = desk.session(worker, session_id="custom-session")
-
-        assert session is not None
-        assert session.session_id == "custom-session"
-        report = session.run("hello")
-        assert report.status == "completed"
-
-        resumed = desk.session(worker, session_id="custom-session")
-        assert resumed is not None
-        assert resumed.session_id == "custom-session"
-        assert len(resumed.history()) == 2
+        assert desk.session(worker, session_id="missing-session") is None
 
 
 def test_session_with_tools() -> None:
@@ -243,9 +233,7 @@ def test_session_close() -> None:
     session.close()
 
     loaded = desk.session(worker, session_id=session_id)
-    assert loaded is not None
-    assert loaded.session_id == session_id
-    assert loaded.history() == []
+    assert loaded is None
 
 
 def test_session_list() -> None:

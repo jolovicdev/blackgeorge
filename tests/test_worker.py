@@ -590,14 +590,14 @@ def test_unexpected_worker_exception_marks_run_failed() -> None:
     assert record is not None
     assert record.status == "failed"
     assert record.output_json == {
-        "error": "An unexpected error occurred",
+        "error": "provider down [redacted]",
         "error_type": "RuntimeError",
     }
     failed_event = next(
         event for event in run_store.get_events(run_id) if event.type == "run.failed"
     )
     assert failed_event.payload == {
-        "errors": ["An unexpected error occurred"],
+        "errors": ["provider down [redacted]"],
         "error_type": "RuntimeError",
     }
     assert "sk-live-secret" not in str(record.output_json)

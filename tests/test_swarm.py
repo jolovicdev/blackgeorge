@@ -289,7 +289,7 @@ async def test_subworker_runtime_exception_marks_child_run_failed() -> None:
     assert event_types.count("run.failed") == 1
     failed_event = next(event for event in events if event.type == "run.failed")
     assert failed_event.payload == {
-        "errors": ["An unexpected error occurred"],
+        "errors": ["adapter exploded"],
         "error_type": "RuntimeError",
     }
 

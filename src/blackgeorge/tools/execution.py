@@ -89,12 +89,13 @@ def _execution_error_result(tool: Tool, exc: Exception) -> ToolResult:
 
 def _post_hook_error_result(tool: Tool, result: ToolResult, exc: Exception) -> ToolResult:
     hook_result = _execution_error_result(tool, exc)
-    if result.error is None:
-        return hook_result
+    error = hook_result.error
+    if result.error is not None:
+        error = f"{result.error}. Post-hook error: {hook_result.error}"
     return ToolResult(
         content=result.content,
         data=result.data,
-        error=f"{result.error}. Post-hook error: {hook_result.error}",
+        error=error,
         timed_out=result.timed_out,
         cancelled=result.cancelled,
         exception_type=result.exception_type or hook_result.exception_type,
@@ -218,7 +219,7 @@ def execute_tool(tool: Tool, call: ToolCall) -> ToolResult:
     try:
         _sync_post_hooks(tool, call, tool_result)
     except Exception as exc:
-        return _execution_error_result(tool, exc)
+        return _post_hook_error_result(tool, tool_result, exc)
 
     return tool_result
 
@@ -355,6 +356,6 @@ async def aexecute_tool(
     try:
         await _async_post_hooks(tool, call, tool_result)
     except Exception as exc:
-        return _execution_error_result(tool, exc)
+        return _post_hook_error_result(tool, tool_result, exc)
 
     return tool_result
