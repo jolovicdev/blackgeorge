@@ -62,6 +62,22 @@ def test_tool_decorator_accepts_hooks() -> None:
     assert executed == ["pre:hook-call", "post:hook-call"]
 
 
+def test_sync_pre_hook_failure_returns_tool_result() -> None:
+    def pre_hook(call: ToolCall) -> None:
+        raise PermissionError("not allowed")
+
+    @tool(pre=(pre_hook,))
+    def add(a: int, b: int) -> int:
+        return a + b
+
+    call = ToolCall(id="hook-fail", name="add", arguments={"a": 1, "b": 2})
+    result = execute_tool(add, call)
+
+    assert result.error is not None
+    assert "not allowed" in result.error
+    assert result.exception_type == "ToolExecutionError"
+
+
 def test_transfer_to_agent_tool_snapshots_allowlist_for_runtime_validation() -> None:
     available_agents = ["alpha"]
     handoff_tool = transfer_to_agent_tool(available_agents)
@@ -148,6 +164,23 @@ async def test_async_hooks_with_decorator() -> None:
     assert result.error is None
     assert result.content == "3"
     assert executed == ["pre:ahook-call", "post:ahook-call"]
+
+
+@pytest.mark.asyncio
+async def test_async_pre_hook_failure_returns_tool_result() -> None:
+    async def pre_hook(call: ToolCall) -> None:
+        raise PermissionError("not allowed")
+
+    @tool(pre=(pre_hook,))
+    async def async_add(a: int, b: int) -> int:
+        return a + b
+
+    call = ToolCall(id="async-hook-fail", name="async_add", arguments={"a": 1, "b": 2})
+    result = await aexecute_tool(async_add, call)
+
+    assert result.error is not None
+    assert "not allowed" in result.error
+    assert result.exception_type == "ToolExecutionError"
 
 
 @pytest.mark.asyncio

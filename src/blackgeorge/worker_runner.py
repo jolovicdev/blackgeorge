@@ -54,6 +54,48 @@ from blackgeorge.worker_runner_helpers import (
 )
 from blackgeorge.worker_tools import resume_argument_key, update_arguments
 
+CONFIRMATION_APPROVALS = {
+    "1",
+    "approve",
+    "approved",
+    "confirm",
+    "confirmed",
+    "ok",
+    "okay",
+    "y",
+    "yes",
+}
+CONFIRMATION_DECLINES = {
+    "",
+    "0",
+    "cancel",
+    "cancelled",
+    "decline",
+    "declined",
+    "deny",
+    "denied",
+    "false",
+    "n",
+    "no",
+    "reject",
+    "rejected",
+}
+
+
+def _confirmation_approved(decision: Any) -> bool:
+    if isinstance(decision, bool):
+        return decision
+    if decision is None:
+        return False
+    if isinstance(decision, str):
+        normalized = decision.strip().lower()
+        if normalized in CONFIRMATION_APPROVALS:
+            return True
+        if normalized in CONFIRMATION_DECLINES:
+            return False
+        return False
+    return bool(decision)
+
 
 class WorkerRunner:
     def __init__(self, name: str, toolbelt: Toolbelt, instructions: str | None) -> None:
@@ -90,6 +132,16 @@ class WorkerRunner:
                         resolved.append(tool)
             return resolved
         return self.toolbelt.list()
+
+    def _resolve_resume_tool(self, state: RunState, tool_name: str) -> Tool | None:
+        if state.job.tools_override is not None:
+            for item in state.job.tools_override:
+                if isinstance(item, Tool) and item.name == tool_name:
+                    return item
+                if isinstance(item, str) and item == tool_name:
+                    return self.toolbelt.resolve(item)
+            return None
+        return self.toolbelt.resolve(tool_name)
 
     async def _astructured_completion(
         self,
@@ -672,7 +724,7 @@ class WorkerRunner:
             ), None
         messages = list(state.messages)
         tool_calls = list(state.tool_calls)
-        tool = self.toolbelt.resolve(pending.tool_call.name)
+        tool = self._resolve_resume_tool(state, pending.tool_call.name)
         if tool is None:
             result = ToolResult(error=f"Tool not found: {pending.tool_call.name}")
             config.emit(
@@ -682,7 +734,7 @@ class WorkerRunner:
             )
             messages.append(tool_message(result, pending.tool_call))
             replace_tool_call(tool_calls, tool_call_with_result(pending.tool_call, result))
-        elif pending.type == "confirmation" and not decision_or_input:
+        elif pending.type == "confirmation" and not _confirmation_approved(decision_or_input):
             result = ToolResult(error="Tool execution declined")
             config.emit(
                 EventType.TOOL_FAILED,
