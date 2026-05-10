@@ -44,7 +44,15 @@ def litellm_model_registered(model_name: str) -> bool:
     try:
         import litellm
 
-        return model_name in getattr(litellm, "model_cost", {})
+        model_cost = getattr(litellm, "model_cost", {})
+        if not isinstance(model_cost, dict):
+            return False
+        candidates = [model_name]
+        model_parts = model_name.split("/")
+        if len(model_parts) > 1:
+            for index in range(1, len(model_parts)):
+                candidates.append("/".join(model_parts[index:]))
+        return any(candidate in model_cost for candidate in candidates)
     except Exception:
         return False
 
@@ -196,6 +204,43 @@ def _summarize_messages_impl(
     return None
 
 
+def _summary_split(messages: list[Message]) -> tuple[list[Message], list[Message], list[Message]]:
+    system_messages = [message for message in messages if message.role == "system"]
+    non_system = [message for message in messages if message.role != "system"]
+    if not non_system:
+        return system_messages, [], []
+    tail_count = SUMMARY_TAIL_MESSAGES
+    if len(non_system) <= tail_count:
+        tail_count = 0
+    boundary = len(non_system) if tail_count == 0 else len(non_system) - tail_count
+    boundary = _preserve_tool_call_boundary(non_system, boundary)
+    return system_messages, non_system[:boundary], non_system[boundary:]
+
+
+def _preserve_tool_call_boundary(messages: list[Message], boundary: int) -> int:
+    boundary = min(max(boundary, 0), len(messages))
+    while boundary > 0:
+        tail_tool_call_ids = {
+            message.tool_call_id
+            for message in messages[boundary:]
+            if message.role == "tool" and message.tool_call_id
+        }
+        if not tail_tool_call_ids:
+            return boundary
+        matching_assistant_index: int | None = None
+        for index in range(boundary - 1, -1, -1):
+            message = messages[index]
+            if message.role != "assistant" or not message.tool_calls:
+                continue
+            if any(call.id in tail_tool_call_ids for call in message.tool_calls):
+                matching_assistant_index = index
+                break
+        if matching_assistant_index is None:
+            return boundary
+        boundary = matching_assistant_index
+    return boundary
+
+
 async def _asummarize_messages_impl(
     adapter: BaseModelAdapter,
     model_name: str,
@@ -268,15 +313,9 @@ def _apply_context_summary_impl(
         [BaseModelAdapter, str, list[Message], float | None], str | None
     ],
 ) -> bool:
-    system_messages = [message for message in messages if message.role == "system"]
-    non_system = [message for message in messages if message.role != "system"]
-    if not non_system:
+    system_messages, head, tail = _summary_split(messages)
+    if not head and not tail:
         return False
-    tail_count = SUMMARY_TAIL_MESSAGES
-    if len(non_system) <= tail_count:
-        tail_count = 0
-    head = non_system if tail_count == 0 else non_system[:-tail_count]
-    tail = [] if tail_count == 0 else non_system[-tail_count:]
     try:
         summary = summarize_messages_fn(adapter, model_name, head, temperature)
     except Exception:
@@ -321,15 +360,9 @@ async def _aapply_context_summary_impl(
         [BaseModelAdapter, str, list[Message], float | None], Awaitable[str | None]
     ],
 ) -> bool:
-    system_messages = [message for message in messages if message.role == "system"]
-    non_system = [message for message in messages if message.role != "system"]
-    if not non_system:
+    system_messages, head, tail = _summary_split(messages)
+    if not head and not tail:
         return False
-    tail_count = SUMMARY_TAIL_MESSAGES
-    if len(non_system) <= tail_count:
-        tail_count = 0
-    head = non_system if tail_count == 0 else non_system[:-tail_count]
-    tail = [] if tail_count == 0 else non_system[-tail_count:]
     try:
         summary = await summarize_messages_fn(adapter, model_name, head, temperature)
     except Exception:
