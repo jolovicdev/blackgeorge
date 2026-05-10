@@ -1,4 +1,5 @@
 import json
+import tempfile
 import threading
 from typing import Any
 
@@ -20,6 +21,26 @@ from blackgeorge.tools import tool, transfer_to_agent_tool
 from blackgeorge.worker import Worker
 from blackgeorge.worker_messages import replace_tool_call, structured_content
 from tests.utils import FakeAdapter
+
+
+class CapturingToolsAdapter(FakeAdapter):
+    def __init__(self, responses: list[ModelResponse]) -> None:
+        super().__init__(responses)
+        self.tool_names_by_call: list[list[str]] = []
+
+    def _capture_tool_names(self, tools: list[dict[str, Any]] | None) -> None:
+        if tools is None:
+            self.tool_names_by_call.append([])
+            return
+        self.tool_names_by_call.append([schema["function"]["name"] for schema in tools])
+
+    def complete(self, **kwargs: Any) -> ModelResponse:
+        self._capture_tool_names(kwargs.get("tools"))
+        return super().complete(**kwargs)
+
+    async def acomplete(self, **kwargs: Any) -> ModelResponse:
+        self._capture_tool_names(kwargs.get("tools"))
+        return await super().acomplete(**kwargs)
 
 
 class ContextLimitAdapter(BaseModelAdapter):
@@ -520,6 +541,69 @@ def test_worker_resume_preserves_paused_state_run_id() -> None:
     assert report.run_id != "fresh-config-run"
 
 
+def test_unexpected_worker_exception_marks_run_failed() -> None:
+    class BrokenAdapter(BaseModelAdapter):
+        def complete(
+            self,
+            *,
+            model: str,
+            messages: list[dict[str, Any]],
+            tools: list[dict[str, Any]] | None,
+            tool_choice: str | dict[str, Any] | None,
+            temperature: float | None,
+            max_tokens: int | None,
+            stream: bool,
+            stream_options: dict[str, Any] | None,
+            thinking: dict[str, Any] | None = None,
+            drop_params: bool | None = None,
+            extra_body: dict[str, Any] | None = None,
+            num_retries: int | None = None,
+        ) -> ModelResponse:
+            raise RuntimeError("provider down sk-live-secret")
+
+        async def acomplete(
+            self,
+            *,
+            model: str,
+            messages: list[dict[str, Any]],
+            tools: list[dict[str, Any]] | None,
+            tool_choice: str | dict[str, Any] | None,
+            temperature: float | None,
+            max_tokens: int | None,
+            stream: bool,
+            stream_options: dict[str, Any] | None,
+            thinking: dict[str, Any] | None = None,
+            drop_params: bool | None = None,
+            extra_body: dict[str, Any] | None = None,
+            num_retries: int | None = None,
+        ) -> ModelResponse:
+            raise RuntimeError("provider down sk-live-secret")
+
+    run_store = InMemoryRunStore()
+    desk = Desk(model="fake", adapter=BrokenAdapter(), run_store=run_store)
+    run_id = "broken-run"
+
+    with pytest.raises(RuntimeError, match="provider down"):
+        desk.run(Worker(name="Worker", model="fake"), Job(input="run"), run_id=run_id)
+
+    record = run_store.get_run(run_id)
+    assert record is not None
+    assert record.status == "failed"
+    assert record.output_json == {
+        "error": "provider down [redacted]",
+        "error_type": "RuntimeError",
+    }
+    failed_event = next(
+        event for event in run_store.get_events(run_id) if event.type == "run.failed"
+    )
+    assert failed_event.payload == {
+        "errors": ["provider down [redacted]"],
+        "error_type": "RuntimeError",
+    }
+    assert "sk-live-secret" not in str(record.output_json)
+    assert "sk-live-secret" not in str(failed_event.payload)
+
+
 def test_pause_emits_worker_paused_not_completed() -> None:
     @tool(requires_confirmation=True)
     def risky(action: str) -> str:
@@ -549,8 +633,11 @@ def test_pause_emits_worker_paused_not_completed() -> None:
 
 
 def test_confirmation_decline_emits_tool_failed() -> None:
+    executed: list[str] = []
+
     @tool(requires_confirmation=True)
     def risky(action: str) -> str:
+        executed.append(action)
         return f"ok:{action}"
 
     responses = [
@@ -572,11 +659,41 @@ def test_confirmation_decline_emits_tool_failed() -> None:
     desk.event_bus.subscribe("tool.failed", on_tool_failed)
     report = desk.run(worker, Job(input="run"))
     assert report.status == "paused"
-    resumed = desk.resume(report, False)
+    resumed = desk.resume(report, "no")
     assert resumed.status == "completed"
+    assert executed == []
     assert any(
         payload.get("error") == "Tool execution declined" for payload in tool_failed_payloads
     )
+
+
+def test_confirmation_unknown_truthy_string_keeps_approving() -> None:
+    executed: list[str] = []
+
+    @tool(requires_confirmation=True)
+    def risky(action: str) -> str:
+        executed.append(action)
+        return f"ok:{action}"
+
+    responses = [
+        ModelResponse(
+            content=None,
+            tool_calls=[ToolCall(id="1", name="risky", arguments={"action": "go"})],
+            usage={},
+            raw={},
+        ),
+        ModelResponse(content="done", tool_calls=[], usage={}, raw={}),
+    ]
+    desk = Desk(model="fake", adapter=FakeAdapter(responses), run_store=InMemoryRunStore())
+    worker = Worker(name="Worker", tools=[risky], model="fake")
+
+    report = desk.run(worker, Job(input="run"))
+    assert report.status == "paused"
+    resumed = desk.resume(report, "ship it")
+
+    assert resumed.status == "completed"
+    assert executed == ["go"]
+    assert resumed.tool_calls[0].error is None
 
 
 def test_handoff_pause_does_not_emit_user_input_requested() -> None:
@@ -665,6 +782,87 @@ def test_tools_override_resolves_by_name() -> None:
     report = desk.run(worker, job)
     assert report.status == "completed"
     assert report.tool_calls[0].error is None
+
+
+def test_resume_uses_tools_override_tool_instance() -> None:
+    @tool(requires_confirmation=True)
+    def temporary(action: str) -> str:
+        return f"ok:{action}"
+
+    responses = [
+        ModelResponse(
+            content=None,
+            tool_calls=[ToolCall(id="1", name="temporary", arguments={"action": "go"})],
+            usage={},
+            raw={},
+        ),
+        ModelResponse(content="done", tool_calls=[], usage={}, raw={}),
+    ]
+    desk = Desk(model="fake", adapter=FakeAdapter(responses), run_store=InMemoryRunStore())
+    worker = Worker(name="Worker", model="fake")
+    report = desk.run(worker, Job(input="run", tools_override=[temporary]))
+    assert report.status == "paused"
+
+    resumed = desk.resume(report, True)
+
+    assert resumed.status == "completed"
+    assert resumed.tool_calls[0].error is None
+    assert resumed.tool_calls[0].result is not None
+    assert resumed.tool_calls[0].result.content == "ok:go"
+
+
+def test_resume_uses_tools_override_tool_instance_with_default_store() -> None:
+    @tool(requires_confirmation=True)
+    def temporary(action: str) -> str:
+        return f"ok:{action}"
+
+    responses = [
+        ModelResponse(
+            content=None,
+            tool_calls=[ToolCall(id="1", name="temporary", arguments={"action": "go"})],
+            usage={},
+            raw={},
+        ),
+        ModelResponse(content="done", tool_calls=[], usage={}, raw={}),
+    ]
+    with tempfile.TemporaryDirectory() as tmpdir:
+        desk = Desk(model="fake", adapter=FakeAdapter(responses), storage_dir=tmpdir)
+        worker = Worker(name="Worker", model="fake")
+        report = desk.run(worker, Job(input="run", tools_override=[temporary]))
+        assert report.status == "paused"
+
+        resumed = desk.resume(report, True)
+
+    assert resumed.status == "completed"
+    assert resumed.tool_calls[0].error is None
+    assert resumed.tool_calls[0].result is not None
+    assert resumed.tool_calls[0].result.content == "ok:go"
+
+
+def test_resume_does_not_duplicate_in_memory_tools_override() -> None:
+    @tool(requires_confirmation=True)
+    def temporary(action: str) -> str:
+        return f"ok:{action}"
+
+    responses = [
+        ModelResponse(
+            content=None,
+            tool_calls=[ToolCall(id="1", name="temporary", arguments={"action": "go"})],
+            usage={},
+            raw={},
+        ),
+        ModelResponse(content="done", tool_calls=[], usage={}, raw={}),
+    ]
+    adapter = CapturingToolsAdapter(responses)
+    desk = Desk(model="fake", adapter=adapter, run_store=InMemoryRunStore())
+    worker = Worker(name="Worker", model="fake")
+    report = desk.run(worker, Job(input="run", tools_override=[temporary]))
+    assert report.status == "paused"
+
+    resumed = desk.resume(report, True)
+
+    assert resumed.status == "completed"
+    assert adapter.tool_names_by_call == [["temporary"], ["temporary"]]
 
 
 def test_missing_tool_call_marks_error() -> None:

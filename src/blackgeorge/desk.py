@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel
@@ -16,6 +17,7 @@ from blackgeorge.memory.in_memory import InMemoryMemoryStore
 from blackgeorge.store.base import RunStore
 from blackgeorge.store.sqlite import SQLiteRunStore
 from blackgeorge.store.state import RunState
+from blackgeorge.tools.base import Tool
 from blackgeorge.utils import new_id, utc_now
 from blackgeorge.worker import Worker
 from blackgeorge.workflow.flow import Flow
@@ -23,6 +25,28 @@ from blackgeorge.workforce import Workforce
 
 if TYPE_CHECKING:
     from blackgeorge.session import WorkerSession
+
+
+UNEXPECTED_FAILURE_MESSAGE = "An unexpected error occurred"
+SECRET_PATTERNS = (
+    re.compile(r"sk-[A-Za-z0-9_-]+"),
+    re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._~+/-]+=*"),
+    re.compile(r"(?i)((?:api[_-]?key|token|secret|password|authorization)\s*[=:]\s*)\S+"),
+)
+ABSOLUTE_PATH_PATTERN = re.compile(r"(?<!\w)/(?:[^\s:/]+/)+[^\s:]+")
+
+
+def _sanitize_exception_message(exc: Exception) -> str:
+    message = str(exc).strip()
+    if not message:
+        return UNEXPECTED_FAILURE_MESSAGE
+    for pattern in SECRET_PATTERNS:
+        message = pattern.sub(
+            lambda match: f"{match.group(1)}[redacted]" if match.lastindex else "[redacted]",
+            message,
+        )
+    message = ABSOLUTE_PATH_PATTERN.sub("[path]", message)
+    return message or UNEXPECTED_FAILURE_MESSAGE
 
 
 class Desk:
@@ -73,6 +97,7 @@ class Desk:
         self._workers: dict[str, Worker] = {}
         self._workforces: dict[str, Workforce] = {}
         self._flow_runs: dict[str, Flow] = {}
+        self._runtime_tools_overrides: dict[str, list[Tool]] = {}
 
     def register_worker(self, worker: Worker) -> None:
         self._workers[worker.name] = worker
@@ -199,6 +224,32 @@ class Desk:
             default_model=self.model,
         )
 
+    def _remember_runtime_tools_override(self, run_id: str, state: RunState) -> None:
+        if state.job.tools_override is None:
+            self._runtime_tools_overrides.pop(run_id, None)
+            return
+        runtime_tools = [item for item in state.job.tools_override if isinstance(item, Tool)]
+        if runtime_tools:
+            self._runtime_tools_overrides[run_id] = runtime_tools
+
+    def _restore_runtime_tools_override(self, run_id: str, state: RunState) -> RunState:
+        runtime_tools = self._runtime_tools_overrides.get(run_id)
+        if not runtime_tools or state.job.tools_override is None:
+            return state
+        runtime_by_name = {tool.name: tool for tool in runtime_tools}
+        restored_override: list[Any] = []
+        for item in state.job.tools_override:
+            if isinstance(item, str) and item in runtime_by_name:
+                restored_override.append(runtime_by_name.pop(item))
+            elif isinstance(item, Tool) and item.name in runtime_by_name:
+                runtime_by_name.pop(item.name)
+                restored_override.append(item)
+            else:
+                restored_override.append(item)
+        restored_override.extend(runtime_by_name.values())
+        job = state.job.model_copy(update={"tools_override": restored_override})
+        return state.model_copy(update={"job": job})
+
     def _finalize_run(
         self,
         runner: Worker | Workforce | None,
@@ -210,9 +261,11 @@ class Desk:
     ) -> Report:
         if state is not None and report.status == "paused":
             state.payload["stream"] = stream_enabled
+            self._remember_runtime_tools_override(run_id, state)
             self._emit(events, run_id, "run.paused", "desk", {})
             self.run_store.update_run(run_id, "paused", report.content, None, state)
         elif report.status == "completed":
+            self._runtime_tools_overrides.pop(run_id, None)
             self._emit(events, run_id, "run.completed", "desk", {})
             self.run_store.update_run(
                 run_id,
@@ -224,6 +277,7 @@ class Desk:
             if isinstance(runner, Worker):
                 self._write_memory(runner, report)
         else:
+            self._runtime_tools_overrides.pop(run_id, None)
             self._emit(events, run_id, "run.failed", "desk", {"errors": report.errors})
             self.run_store.update_run(
                 run_id,
@@ -233,6 +287,33 @@ class Desk:
                 None,
             )
         return report
+
+    def _record_unexpected_failure(
+        self,
+        run_id: str,
+        events: list[Event],
+        exc: Exception,
+    ) -> None:
+        error_message = _sanitize_exception_message(exc)
+        errors = [error_message]
+        error_type = type(exc).__name__
+        try:
+            self._emit(
+                events,
+                run_id,
+                "run.failed",
+                "desk",
+                {"errors": errors, "error_type": error_type},
+            )
+        finally:
+            self._runtime_tools_overrides.pop(run_id, None)
+            self.run_store.update_run(
+                run_id,
+                "failed",
+                None,
+                {"error": error_message, "error_type": error_type},
+                None,
+            )
 
     def run(
         self,
@@ -256,14 +337,18 @@ class Desk:
 
         config = self._make_run_config(run_id, events, stream_enabled)
 
-        if isinstance(runner, Worker):
-            self.register_worker(runner)
-            report, state = runner.run(config, job)
-        elif isinstance(runner, Workforce):
-            self.register_workforce(runner)
-            report, state = runner.run(config, job, drain_async_handlers=drain_handlers)
-        else:
-            raise TypeError("Runner must be Worker or Workforce")
+        try:
+            if isinstance(runner, Worker):
+                self.register_worker(runner)
+                report, state = runner.run(config, job)
+            elif isinstance(runner, Workforce):
+                self.register_workforce(runner)
+                report, state = runner.run(config, job, drain_async_handlers=drain_handlers)
+            else:
+                raise TypeError("Runner must be Worker or Workforce")
+        except Exception as exc:
+            self._record_unexpected_failure(run_id, events, exc)
+            raise
 
         return self._finalize_run(runner, report, state, run_id, events, stream_enabled)
 
@@ -289,14 +374,18 @@ class Desk:
 
         config = self._make_run_config(run_id, events, stream_enabled)
 
-        if isinstance(runner, Worker):
-            self.register_worker(runner)
-            report, state = await runner.arun(config, job)
-        elif isinstance(runner, Workforce):
-            self.register_workforce(runner)
-            report, state = await runner.arun(config, job, drain_async_handlers=drain_handlers)
-        else:
-            raise TypeError("Runner must be Worker or Workforce")
+        try:
+            if isinstance(runner, Worker):
+                self.register_worker(runner)
+                report, state = await runner.arun(config, job)
+            elif isinstance(runner, Workforce):
+                self.register_workforce(runner)
+                report, state = await runner.arun(config, job, drain_async_handlers=drain_handlers)
+            else:
+                raise TypeError("Runner must be Worker or Workforce")
+        except Exception as exc:
+            self._record_unexpected_failure(run_id, events, exc)
+            raise
 
         return self._finalize_run(runner, report, state, run_id, events, stream_enabled)
 
@@ -352,12 +441,13 @@ class Desk:
                 self._output_json(failed),
                 None,
             )
+            self._runtime_tools_overrides.pop(report.run_id, None)
             return failed
 
         if record.state is None:
             return resume_failed("No stored state")
 
-        state = record.state
+        state = self._restore_runtime_tools_override(report.run_id, record.state)
         if state.runner_type == "flow":
             flow = self._flow_runs.get(report.run_id)
             if flow is None:
@@ -439,12 +529,13 @@ class Desk:
                 self._output_json(failed),
                 None,
             )
+            self._runtime_tools_overrides.pop(report.run_id, None)
             return failed
 
         if record.state is None:
             return resume_failed("No stored state")
 
-        state = record.state
+        state = self._restore_runtime_tools_override(report.run_id, record.state)
         if state.runner_type == "flow":
             flow = self._flow_runs.get(report.run_id)
             if flow is None:

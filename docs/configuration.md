@@ -354,6 +354,8 @@ litellm.register_model(
 
 Model registration only adds pricing/context metadata. The provider prefix still has to be a
 LiteLLM-supported provider (or routed through LiteLLM proxy or a custom adapter) to make calls.
+For provider-prefixed model names such as `openai/gpt-5`, Blackgeorge checks both the full
+name and the unprefixed suffix when deciding whether context metadata is registered.
 
 ## Tool configuration
 

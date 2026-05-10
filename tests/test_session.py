@@ -111,6 +111,19 @@ def test_session_persistence_sqlite() -> None:
         assert report2.content == "Fourth"
 
 
+def test_missing_explicit_session_id_returns_none() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        worker = Worker(name="Assistant", model="fake")
+        desk = Desk(
+            model="fake",
+            adapter=FakeAdapter([ModelResponse(content="hi", tool_calls=[], usage={}, raw={})]),
+            run_store=InMemoryRunStore(),
+            storage_dir=str(tmpdir),
+        )
+
+        assert desk.session(worker, session_id="missing-session") is None
+
+
 def test_session_with_tools() -> None:
     @tool()
     def echo(text: str) -> str:

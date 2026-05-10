@@ -80,6 +80,28 @@ def _validate_tool_call(call: ToolCall, tool: Tool) -> dict[str, Any]:
     return validated.model_dump()
 
 
+def _execution_error_result(tool: Tool, exc: Exception) -> ToolResult:
+    if isinstance(exc, (ToolExecutionError, ToolTimeoutError, ToolValidationError)):
+        return ToolResult(error=str(exc), exception_type=type(exc).__name__)
+    tool_exc = ToolExecutionError(tool.name, str(exc), exc)
+    return ToolResult(error=str(tool_exc), exception_type=type(tool_exc).__name__)
+
+
+def _post_hook_error_result(tool: Tool, result: ToolResult, exc: Exception) -> ToolResult:
+    hook_result = _execution_error_result(tool, exc)
+    error = hook_result.error
+    if result.error is not None:
+        error = f"{result.error}. Post-hook error: {hook_result.error}"
+    return ToolResult(
+        content=result.content,
+        data=result.data,
+        error=error,
+        timed_out=result.timed_out,
+        cancelled=result.cancelled,
+        exception_type=result.exception_type or hook_result.exception_type,
+    )
+
+
 def _sync_invoke_hook(hook: Any, *args: Any) -> None:
     result = hook(*args)
     if isawaitable(result):
@@ -174,7 +196,10 @@ def _execute_sync_once(tool: Tool, args: dict[str, Any], timeout: float | None) 
 
 
 def execute_tool(tool: Tool, call: ToolCall) -> ToolResult:
-    _sync_pre_hooks(tool, call)
+    try:
+        _sync_pre_hooks(tool, call)
+    except Exception as exc:
+        return _execution_error_result(tool, exc)
 
     try:
         args = _validate_tool_call(call, tool)
@@ -184,11 +209,17 @@ def execute_tool(tool: Tool, call: ToolCall) -> ToolResult:
             error=str(exc_wrapped),
             exception_type=type(exc_wrapped).__name__,
         )
-        _sync_post_hooks(tool, call, tool_result)
+        try:
+            _sync_post_hooks(tool, call, tool_result)
+        except Exception as hook_exc:
+            return _post_hook_error_result(tool, tool_result, hook_exc)
         return tool_result
 
     tool_result = _execute_sync_with_retries(tool, args)
-    _sync_post_hooks(tool, call, tool_result)
+    try:
+        _sync_post_hooks(tool, call, tool_result)
+    except Exception as exc:
+        return _post_hook_error_result(tool, tool_result, exc)
 
     return tool_result
 
@@ -276,7 +307,10 @@ async def aexecute_tool(
     cancel_event: asyncio.Event | None = None,
     on_progress: ProgressCallback | None = None,
 ) -> ToolResult:
-    await _async_pre_hooks(tool, call)
+    try:
+        await _async_pre_hooks(tool, call)
+    except Exception as exc:
+        return _execution_error_result(tool, exc)
 
     try:
         args = _validate_tool_call(call, tool)
@@ -286,7 +320,10 @@ async def aexecute_tool(
             error=str(exc_wrapped),
             exception_type=type(exc_wrapped).__name__,
         )
-        await _async_post_hooks(tool, call, tool_result)
+        try:
+            await _async_post_hooks(tool, call, tool_result)
+        except Exception as hook_exc:
+            return _post_hook_error_result(tool, tool_result, hook_exc)
         return tool_result
 
     retries = tool.retries
@@ -316,6 +353,9 @@ async def aexecute_tool(
 
     tool_result = last_result or ToolResult(error="No execution result")
 
-    await _async_post_hooks(tool, call, tool_result)
+    try:
+        await _async_post_hooks(tool, call, tool_result)
+    except Exception as exc:
+        return _post_hook_error_result(tool, tool_result, exc)
 
     return tool_result

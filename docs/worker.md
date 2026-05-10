@@ -33,7 +33,7 @@ The worker builds messages from the job.
 
 If the model returns tool calls, the worker executes tools or pauses for a pending action.
 
-- requires_confirmation: the run pauses and waits for a boolean decision
+- requires_confirmation: the run pauses and waits for an explicit approval decision
 - requires_user_input: the run pauses and waits for a string input
 - requires_handoff: the run pauses with `pending_action.type="handoff"` (typically intercepted by `Workforce` in swarm mode)
 
@@ -112,7 +112,10 @@ if report.status == "paused":
     report = desk.resume(report, "your input")
 ```
 
-Confirmation actions treat truthy values as acceptance. If you pass a falsy value for confirmation, the tool result will be an error with message "Tool execution declined".
+Confirmation actions accept `True` or strings such as `yes`, `approve`, or `confirm`.
+They decline `False`, `None`, blank strings, or strings such as `no`, `decline`, `deny`, or `cancel`.
+Other non-empty strings still approve the tool for compatibility with earlier truthy resume values.
+Declined confirmations produce a tool result error with message "Tool execution declined".
 Declined confirmations emit a `tool.failed` event with that error.
 
 In async applications, use `desk.arun()` and `desk.aresume()`.
@@ -136,6 +139,8 @@ The worker stops and fails when:
 - Proactive: when `max_context_messages` is set, the worker summarizes before model calls when message count exceeds the limit.
 
 Proactive compaction does not consume the reactive retry budget used for context-limit recovery.
+Compaction keeps recent tool-call/result groups together so providers that require strict tool
+message ordering still receive valid history.
 If you are using a custom model, register its context window in LiteLLM for more reliable behavior.
 
 Failures are returned as `Report` objects with status `failed` and error messages in `Report.errors`.
