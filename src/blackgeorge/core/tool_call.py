@@ -1,7 +1,8 @@
-from dataclasses import asdict, is_dataclass
-from typing import Any, cast
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, field_serializer
+
+from blackgeorge.core.serialization import to_json_value
 
 
 class ToolCall(BaseModel):
@@ -15,10 +16,4 @@ class ToolCall(BaseModel):
 
     @field_serializer("result")
     def _serialize_result(self, value: Any) -> Any:
-        if value is None:
-            return None
-        if isinstance(value, BaseModel):
-            return value.model_dump(mode="json", warnings=False)
-        if is_dataclass(value) and not isinstance(value, type):
-            return asdict(cast(Any, value))
-        return value
+        return to_json_value(value)

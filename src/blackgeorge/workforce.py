@@ -19,25 +19,13 @@ from blackgeorge.worker import Worker
 if TYPE_CHECKING:
     from blackgeorge.config import RunConfig
 from blackgeorge.workforce_helpers import (
-    aggregate_reports as _aggregate_reports,
-)
-from blackgeorge.workforce_helpers import (
-    build_workforce_state as _build_workforce_state,
-)
-from blackgeorge.workforce_helpers import (
-    default_reducer as _default_reducer,
-)
-from blackgeorge.workforce_helpers import (
-    find_worker as _find_worker,
-)
-from blackgeorge.workforce_helpers import (
-    merge_swarm_reports as _merge_swarm_reports,
-)
-from blackgeorge.workforce_helpers import (
-    root_job as _root_job,
-)
-from blackgeorge.workforce_helpers import (
-    select_worker_name as _select_worker_name,
+    aggregate_reports,
+    build_workforce_state,
+    default_reducer,
+    find_worker,
+    merge_swarm_reports,
+    root_job,
+    select_worker_name,
 )
 
 Reducer = Callable[[list[Report]], Report]
@@ -61,26 +49,24 @@ class Workforce:
     ) -> None:
         if not workers:
             raise ValueError("Workforce requires at least one worker")
-        self.workers = workers
+        if mode not in ("managed", "collaborate", "swarm"):
+            raise ValueError("mode must be 'managed', 'collaborate', or 'swarm'")
+        worker_names = [worker.name for worker in workers]
+        duplicate_names = sorted(name for name in set(worker_names) if worker_names.count(name) > 1)
+        if duplicate_names:
+            raise ValueError(f"Worker names must be unique: {', '.join(duplicate_names)}")
+        if manager is not None and manager.name in worker_names and manager not in workers:
+            raise ValueError(f"Manager name conflicts with worker name: {manager.name}")
+        self.workers = list(workers)
         self.mode = mode
         self.name = name or "workforce"
         self.manager = manager
         self.reducer = reducer
         self.channel = channel or Channel()
         self.blackboard = blackboard or Blackboard()
-        self._worker_by_name: dict[str, Worker] = {w.name: w for w in workers}
+        self._worker_by_name: dict[str, Worker] = {worker.name: worker for worker in workers}
         if manager is not None:
             self._worker_by_name[manager.name] = manager
-
-    async def _arun_worker(
-        self, config: "RunConfig", worker: Worker, job: Job
-    ) -> tuple[Report, RunState | None]:
-        return await worker.arun(config, job)
-
-    async def _aresume_worker(
-        self, config: "RunConfig", worker: Worker, state: RunState, decision_or_input: Any
-    ) -> tuple[Report, RunState | None]:
-        return await worker.aresume(config, state, decision_or_input)
 
     def _can_parallelize_collaborate(self, job: Job) -> bool:
         if job.tools_override is not None:
@@ -93,7 +79,7 @@ class Workforce:
         job: Job,
         drain_async_handlers: Callable[[], Awaitable[None]] | None = None,
     ) -> tuple[Report, RunState | None]:
-        tasks = [asyncio.create_task(self._arun_worker(config, w, job)) for w in self.workers]
+        tasks = [asyncio.create_task(worker.arun(config, job)) for worker in self.workers]
         try:
             done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION)
             for task in pending:
@@ -138,7 +124,7 @@ class Workforce:
             any_failed = False
             for worker, (report, worker_state) in zip(self.workers, results, strict=False):
                 if worker_state:
-                    state = _build_workforce_state(
+                    state = build_workforce_state(
                         config.run_id,
                         "paused",
                         self.name,
@@ -158,11 +144,11 @@ class Workforce:
                 if report.status == "failed":
                     any_failed = True
             if any_failed:
-                return _aggregate_reports(reports, config.run_id, config.events, "failed"), None
+                return aggregate_reports(reports, config.run_id, config.events, "failed"), None
             return (
                 self.reducer([r for _, r in reports])
                 if self.reducer
-                else _default_reducer(reports, config.run_id, config.events)
+                else default_reducer(reports, config.run_id, config.events)
             ), None
         except asyncio.CancelledError:
             for task in tasks:
@@ -178,7 +164,7 @@ class Workforce:
     ) -> Report:
         if self.reducer:
             return self.reducer([report for _, report in reports])
-        return _default_reducer(reports, run_id, events)
+        return default_reducer(reports, run_id, events)
 
     def _build_paused_state(
         self,
@@ -188,7 +174,7 @@ class Workforce:
         stage: str,
         payload: dict[str, Any],
     ) -> RunState:
-        return _build_workforce_state(
+        return build_workforce_state(
             run_id,
             "paused",
             self.name,
@@ -216,11 +202,6 @@ class Workforce:
             events=config.events,
             errors=[message],
         )
-
-    def _swarm_resume_failed_report(
-        self, state: RunState, config: "RunConfig", message: str
-    ) -> Report:
-        return self._resume_failed_report(state, config, message)
 
     def _swarm_handoff_budget(self, config: "RunConfig") -> int:
         return max(1, min(config.max_iterations, config.max_tool_calls))
@@ -315,13 +296,13 @@ class Workforce:
         handoff_budget = self._swarm_handoff_budget(config)
         swarm_history: list[Report] = []
         while True:
-            report, worker_state = await self._arun_worker(config, current_worker, current_job)
+            report, worker_state = await current_worker.arun(config, current_job)
             if worker_state and report.status == "paused":
                 try:
                     handoff = self._handoff_transition(report, current_job, current_worker)
                 except ValueError as exc:
                     failed = self._handoff_failed_report(report, str(exc))
-                    return _merge_swarm_reports(swarm_history, failed), None
+                    return merge_swarm_reports(swarm_history, failed), None
                 if handoff is not None:
                     swarm_history.append(report.model_copy(update={"pending_action": None}))
                     handoff_count += 1
@@ -329,7 +310,7 @@ class Workforce:
                         failed = self._handoff_failed_report(
                             report, "Max handoff transitions exceeded."
                         )
-                        return _merge_swarm_reports(swarm_history, failed), None
+                        return merge_swarm_reports(swarm_history, failed), None
                     current_worker, current_job = handoff
                     continue
             if worker_state:
@@ -345,7 +326,7 @@ class Workforce:
                         "swarm_history": [r.model_dump(mode="json") for r in swarm_history],
                     },
                 )
-            return _merge_swarm_reports(swarm_history, report), None
+            return merge_swarm_reports(swarm_history, report), None
 
     async def _arun_managed_mode(
         self, config: "RunConfig", job: Job
@@ -356,7 +337,7 @@ class Workforce:
             response_schema=WorkerDecision,
             tools_override=[],
         )
-        manager_report, manager_state = await self._arun_worker(config, manager, manager_job)
+        manager_report, manager_state = await manager.arun(config, manager_job)
         if manager_state:
             return manager_report, self._build_paused_state(
                 config.run_id,
@@ -367,10 +348,10 @@ class Workforce:
             )
         if manager_report.status == "failed":
             return manager_report, None
-        selected_worker = _find_worker(
-            self.workers, _select_worker_name(manager_report, self.workers)
+        selected_worker = find_worker(
+            self.workers, select_worker_name(manager_report, self.workers)
         )
-        worker_report, worker_state = await self._arun_worker(config, selected_worker, job)
+        worker_report, worker_state = await selected_worker.arun(config, job)
         if worker_state:
             return worker_report, self._build_paused_state(
                 config.run_id,
@@ -394,7 +375,7 @@ class Workforce:
             return await self._arun_collaborate_parallel(config, job, drain_async_handlers)
         reports: list[tuple[Worker, Report]] = []
         for worker in self.workers:
-            report, worker_state = await self._arun_worker(config, worker, job)
+            report, worker_state = await worker.arun(config, job)
             if worker_state:
                 return report, self._build_paused_state(
                     config.run_id,
@@ -408,20 +389,11 @@ class Workforce:
                     },
                 )
             if report.status == "failed":
-                return _aggregate_reports(
+                return aggregate_reports(
                     reports + [(worker, report)], config.run_id, config.events, "failed"
                 ), None
             reports.append((worker, report))
         return self._reduce_reports(reports, config.run_id, config.events), None
-
-    def _missing_worker_state_report(self, state: RunState, config: "RunConfig") -> Report:
-        return self._resume_failed_report(state, config, "Missing worker state")
-
-    def _invalid_pending_worker_index_report(self, state: RunState, config: "RunConfig") -> Report:
-        return self._resume_failed_report(state, config, "Invalid pending worker index")
-
-    def _unknown_stage_report(self, state: RunState, config: "RunConfig") -> Report:
-        return self._resume_failed_report(state, config, "Unknown workflow stage")
 
     async def _aresume_swarm_stage(
         self,
@@ -437,7 +409,7 @@ class Workforce:
         try:
             current_worker = self._swarm_worker(current_worker_name)
         except ValueError as exc:
-            return self._swarm_resume_failed_report(state, config, str(exc)), None
+            return self._resume_failed_report(state, config, str(exc)), None
         current_job = state.job
         handoff_count = payload.get("handoff_count", 0)
         if not isinstance(handoff_count, int) or handoff_count < 0:
@@ -445,8 +417,8 @@ class Workforce:
         handoff_budget = self._swarm_handoff_budget(config)
         swarm_history_payload = payload.get("swarm_history", [])
         swarm_history: list[Report] = [Report.model_validate(r) for r in swarm_history_payload]
-        report, worker_state = await self._aresume_worker(
-            config, current_worker, stored_worker_state, decision_or_input
+        report, worker_state = await current_worker.aresume(
+            config, stored_worker_state, decision_or_input
         )
         while True:
             if worker_state and report.status == "paused":
@@ -454,7 +426,7 @@ class Workforce:
                     handoff = self._handoff_transition(report, current_job, current_worker)
                 except ValueError as exc:
                     failed = self._handoff_failed_report(report, str(exc))
-                    return _merge_swarm_reports(swarm_history, failed), None
+                    return merge_swarm_reports(swarm_history, failed), None
                 if handoff is not None:
                     swarm_history.append(report.model_copy(update={"pending_action": None}))
                     handoff_count += 1
@@ -462,11 +434,9 @@ class Workforce:
                         failed = self._handoff_failed_report(
                             report, "Max handoff transitions exceeded."
                         )
-                        return _merge_swarm_reports(swarm_history, failed), None
+                        return merge_swarm_reports(swarm_history, failed), None
                     current_worker, current_job = handoff
-                    report, worker_state = await self._arun_worker(
-                        config, current_worker, current_job
-                    )
+                    report, worker_state = await current_worker.arun(config, current_job)
                     continue
             if worker_state:
                 return report, self._build_paused_state(
@@ -481,7 +451,7 @@ class Workforce:
                         "swarm_history": [r.model_dump(mode="json") for r in swarm_history],
                     },
                 )
-            return _merge_swarm_reports(swarm_history, report), None
+            return merge_swarm_reports(swarm_history, report), None
 
     async def _aresume_manager_stage(
         self,
@@ -492,30 +462,30 @@ class Workforce:
         decision_or_input: Any,
     ) -> tuple[Report, RunState | None]:
         manager = self.manager or self.workers[0]
-        root_job = _root_job(payload, state.job)
-        manager_report, manager_state = await self._aresume_worker(
-            config, manager, stored_worker_state, decision_or_input
+        resumed_job = root_job(payload, state.job)
+        manager_report, manager_state = await manager.aresume(
+            config, stored_worker_state, decision_or_input
         )
         if manager_state:
             return manager_report, self._build_paused_state(
                 state.run_id,
-                root_job,
+                resumed_job,
                 manager_state,
                 "manager",
-                payload={"root_job": root_job.model_dump(mode="json")},
+                payload={"root_job": resumed_job.model_dump(mode="json")},
             )
         if manager_report.status == "failed":
             return manager_report, None
-        worker = _find_worker(self.workers, _select_worker_name(manager_report, self.workers))
-        report, next_state = await self._arun_worker(config, worker, root_job)
+        worker = find_worker(self.workers, select_worker_name(manager_report, self.workers))
+        report, next_state = await worker.arun(config, resumed_job)
         if next_state:
             return report, self._build_paused_state(
                 state.run_id,
-                root_job,
+                resumed_job,
                 next_state,
                 "worker",
                 payload={
-                    "root_job": root_job.model_dump(mode="json"),
+                    "root_job": resumed_job.model_dump(mode="json"),
                     "selected_worker": worker.name,
                 },
             )
@@ -529,19 +499,17 @@ class Workforce:
         stored_worker_state: RunState,
         decision_or_input: Any,
     ) -> tuple[Report, RunState | None]:
-        root_job = _root_job(payload, state.job)
-        worker = _find_worker(self.workers, payload.get("selected_worker"))
-        report, next_state = await self._aresume_worker(
-            config, worker, stored_worker_state, decision_or_input
-        )
+        resumed_job = root_job(payload, state.job)
+        worker = find_worker(self.workers, payload.get("selected_worker"))
+        report, next_state = await worker.aresume(config, stored_worker_state, decision_or_input)
         if next_state:
             return report, self._build_paused_state(
                 state.run_id,
-                root_job,
+                resumed_job,
                 next_state,
                 "worker",
                 payload={
-                    "root_job": root_job.model_dump(mode="json"),
+                    "root_job": resumed_job.model_dump(mode="json"),
                     "selected_worker": worker.name,
                 },
             )
@@ -555,7 +523,7 @@ class Workforce:
         stored_worker_state: RunState,
         decision_or_input: Any,
     ) -> tuple[Report, RunState | None]:
-        root_job = _root_job(payload, state.job)
+        resumed_job = root_job(payload, state.job)
         completed_reports_payload = payload.get("completed_reports", [])
         pending_index = payload.get("pending_worker_index", 0)
         if (
@@ -563,26 +531,26 @@ class Workforce:
             or pending_index < 0
             or pending_index >= len(self.workers)
         ):
-            return self._invalid_pending_worker_index_report(state, config), None
+            return self._resume_failed_report(state, config, "Invalid pending worker index"), None
         pending_worker = self.workers[pending_index]
-        report, next_state = await self._aresume_worker(
-            config, pending_worker, stored_worker_state, decision_or_input
+        report, next_state = await pending_worker.aresume(
+            config, stored_worker_state, decision_or_input
         )
         if next_state:
             return report, self._build_paused_state(
                 state.run_id,
-                root_job,
+                resumed_job,
                 next_state,
                 "collaborate",
                 payload={
-                    "root_job": root_job.model_dump(mode="json"),
+                    "root_job": resumed_job.model_dump(mode="json"),
                     "completed_reports": completed_reports_payload,
                     "pending_worker_index": pending_index,
                 },
             )
         completed_reports = [Report.model_validate(rep) for rep in completed_reports_payload]
         if report.status == "failed":
-            return _aggregate_reports(
+            return aggregate_reports(
                 list(zip(self.workers[: pending_index + 1], completed_reports, strict=False))
                 + [(pending_worker, report)],
                 state.run_id,
@@ -597,21 +565,21 @@ class Workforce:
             )
         ]
         for worker in self.workers[pending_index + 1 :]:
-            rep, next_state = await self._arun_worker(config, worker, root_job)
+            rep, next_state = await worker.arun(config, resumed_job)
             if next_state:
                 return rep, self._build_paused_state(
                     state.run_id,
-                    root_job,
+                    resumed_job,
                     next_state,
                     "collaborate",
                     payload={
-                        "root_job": root_job.model_dump(mode="json"),
+                        "root_job": resumed_job.model_dump(mode="json"),
                         "completed_reports": [r.model_dump(mode="json") for _, r in reports],
                         "pending_worker_index": len(reports),
                     },
                 )
             if rep.status == "failed":
-                return _aggregate_reports(
+                return aggregate_reports(
                     reports + [(worker, rep)], state.run_id, config.events, "failed"
                 ), None
             reports.append((worker, rep))
@@ -656,7 +624,7 @@ class Workforce:
         payload, stage = state.payload, state.payload.get("stage")
         worker_state_payload = payload.get("worker_state")
         if worker_state_payload is None:
-            return self._missing_worker_state_report(state, config), None
+            return self._resume_failed_report(state, config, "Missing worker state"), None
         stored_worker_state = RunState.model_validate(worker_state_payload)
         if stage == "swarm":
             return await self._aresume_swarm_stage(
@@ -674,4 +642,4 @@ class Workforce:
             return await self._aresume_collaborate_stage(
                 config, state, payload, stored_worker_state, decision_or_input
             )
-        return self._unknown_stage_report(state, config), None
+        return self._resume_failed_report(state, config, "Unknown workflow stage"), None

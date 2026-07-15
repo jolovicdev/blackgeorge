@@ -1,11 +1,9 @@
 import json
 import sqlite3
 import threading
-from dataclasses import asdict, is_dataclass
 from typing import Any
 
-from pydantic import BaseModel
-
+from blackgeorge.core.serialization import to_json_value
 from blackgeorge.memory.base import MemoryScope, MemoryStore
 from blackgeorge.utils import utc_now
 
@@ -45,7 +43,7 @@ class SQLiteMemoryStore(MemoryStore):
         self.close()
 
     def write(self, key: str, value: Any, scope: MemoryScope) -> None:
-        payload = json.dumps(self._normalize(value), ensure_ascii=True, default=str)
+        payload = json.dumps(to_json_value(value), ensure_ascii=True, default=str)
         now = utc_now().isoformat()
         with self._lock:
             self._conn.execute(
@@ -87,16 +85,3 @@ class SQLiteMemoryStore(MemoryStore):
         with self._lock:
             self._conn.execute("DELETE FROM memories WHERE scope = ?", (scope,))
             self._conn.commit()
-
-    def _normalize(self, value: Any) -> Any:
-        if isinstance(value, BaseModel):
-            return value.model_dump(mode="json", warnings=False)
-        if is_dataclass(value) and not isinstance(value, type):
-            return asdict(value)
-        if isinstance(value, dict):
-            return {key: self._normalize(item) for key, item in value.items()}
-        if isinstance(value, list):
-            return [self._normalize(item) for item in value]
-        if isinstance(value, tuple):
-            return [self._normalize(item) for item in value]
-        return value

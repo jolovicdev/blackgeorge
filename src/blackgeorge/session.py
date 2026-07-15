@@ -34,36 +34,59 @@ class WorkerSession(BaseModel):
         session_id: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> "WorkerSession":
-        store = SQLiteSessionStore(desk.db_path)
         session_id = session_id or new_id()
-
-        store.create_session(
-            session_id=session_id,
-            worker_name=worker.name,
-            metadata=metadata or {},
-        )
-
-        return cls(
+        session = cls.open(
             session_id=session_id,
             worker=worker,
             desk=desk,
-            store=store,
+            metadata=metadata,
+            create=True,
         )
+        if session is None:
+            raise ValueError(f"Session '{session_id}' belongs to another worker")
+        return session
 
     @classmethod
-    def resume(
+    def load(
         cls,
         *,
         session_id: str,
         worker: Worker,
         desk: Desk,
     ) -> "WorkerSession | None":
-        store = SQLiteSessionStore(desk.db_path)
+        return cls.open(
+            session_id=session_id,
+            worker=worker,
+            desk=desk,
+            create=False,
+        )
 
+    @classmethod
+    def open(
+        cls,
+        *,
+        session_id: str,
+        worker: Worker,
+        desk: Desk,
+        metadata: dict[str, Any] | None = None,
+        create: bool = True,
+    ) -> "WorkerSession | None":
+        if not session_id.strip():
+            raise ValueError("session_id must not be empty")
+        store = SQLiteSessionStore(desk.db_path)
         record = store.get_session(session_id)
-        if record is None or record.worker_name != worker.name:
+        if record is not None and record.worker_name != worker.name:
             store.close()
             return None
+        if record is None:
+            if not create:
+                store.close()
+                return None
+            store.create_session(
+                session_id=session_id,
+                worker_name=worker.name,
+                metadata=metadata or {},
+            )
 
         return cls(
             session_id=session_id,
@@ -73,22 +96,38 @@ class WorkerSession(BaseModel):
         )
 
     def run(self, user_input: Any, *, stream: bool = False, **job_kwargs: Any) -> Report:
-        job, initial_count = self._build_job(user_input, job_kwargs)
-        report = self.desk.run(self.worker, job, stream=stream)
-        self._persist_report(report, initial_count)
-        return report
+        job = self._build_job(user_input, job_kwargs)
+        return self._persist_report(self.desk.run(self.worker, job, stream=stream))
 
     async def arun(self, user_input: Any, *, stream: bool = False, **job_kwargs: Any) -> Report:
-        job, initial_count = self._build_job(user_input, job_kwargs)
-        report = await self.desk.arun(self.worker, job, stream=stream)
-        self._persist_report(report, initial_count)
-        return report
+        job = self._build_job(user_input, job_kwargs)
+        return self._persist_report(await self.desk.arun(self.worker, job, stream=stream))
+
+    def resume(
+        self,
+        report: Report,
+        decision_or_input: Any,
+        *,
+        stream: bool | None = None,
+    ) -> Report:
+        return self._persist_report(self.desk.resume(report, decision_or_input, stream=stream))
+
+    async def aresume(
+        self,
+        report: Report,
+        decision_or_input: Any,
+        *,
+        stream: bool | None = None,
+    ) -> Report:
+        return self._persist_report(
+            await self.desk.aresume(report, decision_or_input, stream=stream)
+        )
 
     def history(self) -> list[Message]:
         return self.store.get_messages(self.session_id)
 
     def stream_run(self, user_input: Any, **job_kwargs: Any) -> Iterator[Event]:
-        job, initial_count = self._build_job(user_input, job_kwargs)
+        job = self._build_job(user_input, job_kwargs)
         run_id = new_id()
         stream_done = object()
         events: queue.Queue[Event | object] = queue.Queue()
@@ -124,7 +163,7 @@ class WorkerSession(BaseModel):
             self.desk.event_bus.unsubscribe("*", handler)
             thread.join()
             if report is not None:
-                self._persist_report(report, initial_count)
+                self._persist_report(report)
 
         if not completed:
             return
@@ -134,7 +173,7 @@ class WorkerSession(BaseModel):
             raise RuntimeError("Run did not produce a report")
 
     async def astream_run(self, user_input: Any, **job_kwargs: Any) -> AsyncIterator[Event]:
-        job, initial_count = self._build_job(user_input, job_kwargs)
+        job = self._build_job(user_input, job_kwargs)
         run_id = new_id()
         stream_done = object()
         events: asyncio.Queue[Event | object] = asyncio.Queue()
@@ -162,7 +201,7 @@ class WorkerSession(BaseModel):
             if not run_task.done():
                 await run_task
             if run_task.done() and not run_task.cancelled() and run_task.exception() is None:
-                self._persist_report(run_task.result(), initial_count)
+                self._persist_report(run_task.result())
 
         if not completed:
             return
@@ -173,31 +212,44 @@ class WorkerSession(BaseModel):
             raise exception
 
     def close(self) -> None:
-        self.store.delete_session(self.session_id)
+        self.store.close()
 
-    def _build_job(self, user_input: Any, job_kwargs: dict[str, Any]) -> tuple[Job, int]:
+    def delete(self) -> None:
+        try:
+            self.store.delete_session(self.session_id)
+        finally:
+            self.store.close()
+
+    def __enter__(self) -> "WorkerSession":
+        return self
+
+    def __exit__(self, *_args: Any) -> None:
+        self.close()
+
+    def _build_job(self, user_input: Any, job_kwargs: dict[str, Any]) -> Job:
         messages = self.store.get_messages(self.session_id)
-        initial_count = len(messages) if messages else 0
-        job = Job(
+        return Job(
             input=user_input,
             initial_messages=messages if messages else None,
             **job_kwargs,
         )
-        return job, initial_count
 
-    def _persist_report(self, report: Report, initial_count: int) -> None:
-        if report.status != "completed":
-            return
-        new_messages = self._extract_conversation_messages(report)
-        self.store.add_messages(self.session_id, new_messages[initial_count:])
-        self.store.update_session(self.session_id)
+    def _persist_report(self, report: Report) -> Report:
+        if report.status == "completed":
+            new_messages = self._extract_conversation_messages(report)
+            self.store.replace_messages(self.session_id, new_messages)
+            self.store.update_session(self.session_id)
+        return report
 
     def _extract_conversation_messages(self, report: Report) -> list[Message]:
         messages: list[Message] = []
 
         for message in report.messages:
-            if message.role in ("user", "assistant") or (
-                message.role == "tool" and message.tool_call_id
+            is_summary = message.role == "system" and message.metadata.get("summary") is True
+            if (
+                is_summary
+                or message.role in ("user", "assistant")
+                or (message.role == "tool" and message.tool_call_id)
             ):
                 msg_dict = message.model_dump()
                 if message.role == "assistant" and not message.tool_calls:

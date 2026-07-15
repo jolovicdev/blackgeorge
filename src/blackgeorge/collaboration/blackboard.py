@@ -1,5 +1,6 @@
 import asyncio
 from collections.abc import Callable
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime
 from threading import Lock
@@ -8,7 +9,7 @@ from typing import Any
 from blackgeorge.utils import utc_now
 
 
-@dataclass
+@dataclass(frozen=True)
 class BlackboardEntry:
     key: str
     value: Any
@@ -29,6 +30,7 @@ class Blackboard:
 
     def write(self, key: str, value: Any, author: str) -> None:
         now = utc_now()
+        stored_value = deepcopy(value)
         callbacks: list[BlackboardCallback]
         global_callbacks: list[BlackboardCallback]
         with self._lock:
@@ -36,7 +38,7 @@ class Blackboard:
                 entry = self._data[key]
                 self._data[key] = BlackboardEntry(
                     key=key,
-                    value=value,
+                    value=stored_value,
                     author=author,
                     created_at=entry.created_at,
                     updated_at=now,
@@ -44,7 +46,7 @@ class Blackboard:
             else:
                 self._data[key] = BlackboardEntry(
                     key=key,
-                    value=value,
+                    value=stored_value,
                     author=author,
                     created_at=now,
                     updated_at=now,
@@ -52,9 +54,9 @@ class Blackboard:
             callbacks = list(self._subscribers.get(key, []))
             global_callbacks = list(self._global_subscribers)
         for callback in callbacks:
-            callback(key, value, author)
+            callback(key, deepcopy(stored_value), author)
         for callback in global_callbacks:
-            callback(key, value, author)
+            callback(key, deepcopy(stored_value), author)
 
     async def awrite(self, key: str, value: Any, author: str) -> None:
         await asyncio.to_thread(self.write, key, value, author)
@@ -62,14 +64,15 @@ class Blackboard:
     def read(self, key: str) -> Any | None:
         with self._lock:
             entry = self._data.get(key)
-        return entry.value if entry else None
+        return deepcopy(entry.value) if entry else None
 
     async def aread(self, key: str) -> Any | None:
         return await asyncio.to_thread(self.read, key)
 
     def read_entry(self, key: str) -> BlackboardEntry | None:
         with self._lock:
-            return self._data.get(key)
+            entry = self._data.get(key)
+        return deepcopy(entry)
 
     async def aread_entry(self, key: str) -> BlackboardEntry | None:
         return await asyncio.to_thread(self.read_entry, key)
@@ -100,7 +103,7 @@ class Blackboard:
 
     def all_entries(self) -> dict[str, BlackboardEntry]:
         with self._lock:
-            return dict(self._data)
+            return deepcopy(self._data)
 
     async def aall_entries(self) -> dict[str, BlackboardEntry]:
         return await asyncio.to_thread(self.all_entries)
@@ -120,6 +123,15 @@ class Blackboard:
 
     async def asubscribe_all(self, callback: BlackboardCallback) -> None:
         await asyncio.to_thread(self.subscribe_all, callback)
+
+    def unsubscribe_all(self, callback: BlackboardCallback) -> None:
+        with self._lock:
+            self._global_subscribers = [
+                registered for registered in self._global_subscribers if registered != callback
+            ]
+
+    async def aunsubscribe_all(self, callback: BlackboardCallback) -> None:
+        await asyncio.to_thread(self.unsubscribe_all, callback)
 
     def unsubscribe(self, key: str, callback: BlackboardCallback) -> None:
         with self._lock:

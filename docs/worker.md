@@ -136,7 +136,7 @@ The worker stops and fails when:
 `Desk` supports two context compaction paths:
 
 - Reactive: when `respect_context_window=True`, context-limit errors trigger summarization and retry.
-- Proactive: when `max_context_messages` is set, the worker summarizes before model calls when message count exceeds the limit.
+- Proactive: when `max_context_messages` is set, the worker summarizes before model calls when message count exceeds the limit and scales the preserved recent tail to fit that limit.
 
 Proactive compaction does not consume the reactive retry budget used for context-limit recovery.
 Compaction keeps recent tool-call/result groups together so providers that require strict tool

@@ -1,23 +1,25 @@
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
+from blackgeorge.adapters.base import ModelResponse
 from blackgeorge.config import RunConfig
+from blackgeorge.core.event import Event
 from blackgeorge.core.event_types import EventType
+from blackgeorge.core.job import Job
 from blackgeorge.core.message import Message
+from blackgeorge.core.pending_action import PendingAction
 from blackgeorge.core.report import Report
 from blackgeorge.core.tool_call import ToolCall
+from blackgeorge.store.state import RunState
 from blackgeorge.worker_runner_helpers import (
-    _acontext_retry,
-    _build_report,
-    _build_state,
-    _fail_report,
-    _finalize_plain_response,
-    _finalize_structured_response,
-    _record_usage,
+    aresolve_context_retry,
+    build_report,
+    build_worker_state,
+    fail_report,
+    finalize_plain_response,
+    finalize_structured_response,
 )
-
-ContextRetryHandler = Callable[[], Any]
 
 
 @dataclass
@@ -27,7 +29,7 @@ class LoopState:
     messages: list[Message]
     tool_calls: list[ToolCall]
     metrics: dict[str, Any]
-    events: list[Any]
+    events: list[Event]
     errors: list[str]
     iteration: int = 0
     context_summaries: int = 0
@@ -48,24 +50,18 @@ class CompletionContext:
     model_name: str
     state: LoopState
 
-    def make_on_token(self) -> Callable[[str, str], None]:
-        def on_token(token: str, token_type: str) -> None:
-            self.config.emit(
-                EventType.STREAM_TOKEN,
-                self.state.worker_name,
-                {"token": token, "type": token_type},
-            )
-
-        return on_token
-
-    def run_config(self) -> RunConfig:
-        return self.config
+    def emit_token(self, token: str, token_type: str) -> None:
+        self.config.emit(
+            EventType.STREAM_TOKEN,
+            self.state.worker_name,
+            {"token": token, "type": token_type},
+        )
 
     async def handle_context_limit(
         self,
-        apply_summary: Callable[[], Any],
+        apply_summary: Callable[[], Awaitable[bool]],
     ) -> Report | None:
-        decision = await _acontext_retry(
+        decision = await aresolve_context_retry(
             config=self.config,
             worker_name=self.state.worker_name,
             messages=self.state.messages,
@@ -82,7 +78,7 @@ class CompletionContext:
         return None
 
     def fail(self, message: str) -> Report:
-        return _fail_report(
+        return fail_report(
             config=self.config,
             worker_name=self.state.worker_name,
             message=message,
@@ -93,7 +89,7 @@ class CompletionContext:
         )
 
     def finalize_structured(self, data: Any) -> Report:
-        return _finalize_structured_response(
+        return finalize_structured_response(
             config=self.config,
             data=data,
             messages=self.state.messages,
@@ -103,8 +99,8 @@ class CompletionContext:
             worker_name=self.state.worker_name,
         )
 
-    def finalize_plain(self, response: Any) -> Report:
-        return _finalize_plain_response(
+    def finalize_plain(self, response: ModelResponse) -> Report:
+        return finalize_plain_response(
             config=self.config,
             response=response,
             messages=self.state.messages,
@@ -114,11 +110,8 @@ class CompletionContext:
             worker_name=self.state.worker_name,
         )
 
-    def record_usage(self, response: Any) -> None:
-        _record_usage(self.state.metrics, response)
-
-    def build_paused_report(self, pending: Any) -> Report:
-        return _build_report(
+    def pause(self, job: Job, pending: PendingAction) -> tuple[Report, RunState]:
+        report = build_report(
             self.state.run_id,
             "paused",
             None,
@@ -131,9 +124,7 @@ class CompletionContext:
             pending,
             self.state.errors,
         )
-
-    def build_paused_state(self, job: Any, pending: Any) -> Any:
-        return _build_state(
+        state = build_worker_state(
             self.state.run_id,
             "paused",
             self.state.worker_name,
@@ -144,3 +135,4 @@ class CompletionContext:
             self.state.metrics,
             self.state.iteration,
         )
+        return report, state

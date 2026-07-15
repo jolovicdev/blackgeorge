@@ -3,6 +3,8 @@ import threading
 import time
 from typing import Any
 
+import pytest
+
 from blackgeorge.adapters.base import BaseModelAdapter, ModelResponse
 from blackgeorge.config import RunConfig
 from blackgeorge.core.job import Job
@@ -259,6 +261,28 @@ class MessageCaptureAdapter(BaseModelAdapter):
         return self._responses.pop(0)
 
 
+def test_workforce_rejects_invalid_mode() -> None:
+    worker = Worker(name="A", model="fake")
+
+    with pytest.raises(ValueError, match="mode must be"):
+        Workforce([worker], mode="invalid")
+
+
+def test_workforce_rejects_duplicate_worker_names() -> None:
+    workers = [Worker(name="same", model="fake"), Worker(name="same", model="fake")]
+
+    with pytest.raises(ValueError, match="Worker names must be unique: same"):
+        Workforce(workers)
+
+
+def test_workforce_rejects_distinct_manager_with_worker_name() -> None:
+    worker = Worker(name="same", model="fake")
+    manager = Worker(name="same", model="fake")
+
+    with pytest.raises(ValueError, match="Manager name conflicts"):
+        Workforce([worker], manager=manager)
+
+
 def test_workforce_collaborate_default_reducer() -> None:
     responses = [
         ModelResponse(content="alpha", tool_calls=[], usage={}, raw={}),
@@ -404,7 +428,7 @@ def test_workforce_managed_manager_failure() -> None:
     assert report.status == "failed"
 
 
-def test_workforce_managed_does_not_fall_through_to_collaborate_sync() -> None:
+def test_workforce_managed_does_not_fall_through_to_collaborate_sync(monkeypatch) -> None:
     @tool()
     def noop(value: str) -> str:
         return value
@@ -415,8 +439,7 @@ def test_workforce_managed_does_not_fall_through_to_collaborate_sync() -> None:
     workforce = Workforce([worker_a, worker_b], mode="managed", name="team", manager=manager)
     calls: list[tuple[str, Any]] = []
 
-    async def run_worker(config, worker, job) -> tuple[Report, RunState | None]:
-
+    async def run_worker(worker, config, job) -> tuple[Report, RunState | None]:
         run_id = config.run_id
 
         calls.append((worker.name, job.input))
@@ -448,7 +471,7 @@ def test_workforce_managed_does_not_fall_through_to_collaborate_sync() -> None:
         )
         return worker_report, None
 
-    workforce._arun_worker = run_worker
+    monkeypatch.setattr(Worker, "arun", run_worker)
     desk = Desk(model="fake", adapter=FakeAdapter([]), run_store=InMemoryRunStore())
     report = desk.run(workforce, Job(input="work"))
 
@@ -460,7 +483,7 @@ def test_workforce_managed_does_not_fall_through_to_collaborate_sync() -> None:
     ]
 
 
-async def test_workforce_managed_does_not_fall_through_to_collaborate_async() -> None:
+async def test_workforce_managed_does_not_fall_through_to_collaborate_async(monkeypatch) -> None:
     @tool()
     def noop(value: str) -> str:
         return value
@@ -471,8 +494,7 @@ async def test_workforce_managed_does_not_fall_through_to_collaborate_async() ->
     workforce = Workforce([worker_a, worker_b], mode="managed", name="team", manager=manager)
     calls: list[tuple[str, Any]] = []
 
-    async def arun_worker(config, worker, job) -> tuple[Report, RunState | None]:
-
+    async def arun_worker(worker, config, job) -> tuple[Report, RunState | None]:
         run_id = config.run_id
 
         calls.append((worker.name, job.input))
@@ -504,7 +526,7 @@ async def test_workforce_managed_does_not_fall_through_to_collaborate_async() ->
         )
         return worker_report, None
 
-    workforce._arun_worker = arun_worker
+    monkeypatch.setattr(Worker, "arun", arun_worker)
     desk = Desk(model="fake", adapter=FakeAdapter([]), run_store=InMemoryRunStore())
     report = await desk.arun(workforce, Job(input="work"))
 
@@ -544,7 +566,7 @@ def test_unregister_workforce_blocks_resume() -> None:
     assert any(event.type == "run.failed" for event in desk.run_store.get_events(report.run_id))
 
 
-def test_managed_workforce_disables_manager_tools() -> None:
+def test_managed_workforce_disables_manager_tools(monkeypatch) -> None:
     @tool()
     def manager_tool(info: str) -> str:
         return info
@@ -554,8 +576,7 @@ def test_managed_workforce_disables_manager_tools() -> None:
     workforce = Workforce([worker], mode="managed", name="team", manager=manager)
     captured: list[list[Any] | None] = []
 
-    async def run_worker(config, worker, job) -> tuple[Report, RunState | None]:
-
+    async def run_worker(worker, config, job) -> tuple[Report, RunState | None]:
         captured.append(job.tools_override)
         report = Report(
             run_id=config.run_id,
@@ -571,7 +592,7 @@ def test_managed_workforce_disables_manager_tools() -> None:
         )
         return report, None
 
-    workforce._arun_worker = run_worker
+    monkeypatch.setattr(Worker, "arun", run_worker)
     desk = Desk(model="fake", adapter=FakeAdapter([]), run_store=InMemoryRunStore())
     report = desk.run(workforce, Job(input="work"))
     assert report.status == "completed"
@@ -705,7 +726,7 @@ def test_workforce_swarm_handoff_can_target_manager() -> None:
     assert report.content == "done"
 
 
-def test_workforce_swarm_resume_preserves_active_handoff_context() -> None:
+def test_workforce_swarm_resume_preserves_active_handoff_context(monkeypatch) -> None:
     @tool(requires_confirmation=True)
     def risky(action: str) -> str:
         return f"ok:{action}"
@@ -751,13 +772,13 @@ def test_workforce_swarm_resume_preserves_active_handoff_context() -> None:
     worker_c = Worker(name="C", model="fake")
     workforce = Workforce([worker_a, worker_b, worker_c], mode="swarm", name="team")
     observed_inputs: list[tuple[str, Any]] = []
-    original_arun_worker = workforce._arun_worker
+    original_arun = Worker.arun
 
-    async def track_worker_input(config, worker, job) -> tuple[Report, RunState | None]:
+    async def track_worker_input(worker, config, job) -> tuple[Report, RunState | None]:
         observed_inputs.append((worker.name, job.input))
-        return await original_arun_worker(config, worker, job)
+        return await original_arun(worker, config, job)
 
-    workforce._arun_worker = track_worker_input
+    monkeypatch.setattr(Worker, "arun", track_worker_input)
     paused = desk.run(workforce, Job(input="root"))
 
     assert paused.status == "paused"

@@ -1,61 +1,89 @@
-from dataclasses import dataclass
+import contextlib
 from typing import Any, cast
 
+from jsonschema.validators import validator_for
 from mcp import types as mcp_types
 from mcp.client.session import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.client.streamable_http import streamable_http_client
-from pydantic import BaseModel, create_model
+from pydantic import BaseModel, ConfigDict, create_model, model_validator
 
 from blackgeorge.async_utils import run_coroutine_sync
 from blackgeorge.tools.base import Tool, ToolResult
 
 
 def _json_schema_to_pydantic_field(
-    name: str,
     schema: dict[str, Any],
-) -> tuple[type[Any], Any]:
-    json_type = schema.get("type", "string")
-    default: Any = ...
-    if "default" in schema:
-        default = schema["default"]
-    type_mapping: dict[str, type[Any]] = {
+) -> tuple[Any, Any]:
+    default = schema.get("default", ...)
+    json_type = schema.get("type")
+    type_mapping: dict[str, Any] = {
         "string": str,
         "integer": int,
         "number": float,
         "boolean": bool,
-        "array": list,
-        "object": dict,
+        "array": list[Any],
+        "object": dict[str, Any],
+        "null": type(None),
     }
-    py_type = type_mapping.get(json_type, Any)
-    return (py_type, default)
+    if isinstance(json_type, list):
+        available = [
+            type_mapping[item]
+            for item in json_type
+            if isinstance(item, str) and item in type_mapping
+        ]
+        if available:
+            field_type = available[0]
+            for option in available[1:]:
+                field_type |= option
+            return field_type, default
+        return Any, default
+    if not isinstance(json_type, str):
+        return Any, default
+    return type_mapping.get(json_type, Any), default
 
 
 def _build_input_model_from_schema(
     tool_name: str,
     parameters: dict[str, Any],
 ) -> type[BaseModel]:
+    validator_class = validator_for(parameters)
+    validator_class.check_schema(parameters)
     properties = parameters.get("properties", {})
     required_fields = set(parameters.get("required", []))
     fields: dict[str, Any] = {}
+    if not isinstance(properties, dict):
+        properties = {}
     for prop_name, prop_schema in properties.items():
-        py_type, default = _json_schema_to_pydantic_field(prop_name, prop_schema)
+        if not isinstance(prop_name, str) or not isinstance(prop_schema, dict):
+            continue
+        py_type, default = _json_schema_to_pydantic_field(prop_schema)
         if prop_name in required_fields:
             fields[prop_name] = (py_type, ...)
         elif default is ...:
             fields[prop_name] = (py_type | None, None)
         else:
             fields[prop_name] = (py_type, default)
+
+    schema_validator = validator_class(parameters)
+
+    def validate_json_schema(value: Any) -> Any:
+        errors = list(schema_validator.iter_errors(value))
+        if errors:
+            raise ValueError(errors[0].message)
+        return value
+
     model_name = f"{tool_name.replace('-', '_').replace('.', '_').title()}Input"
-    return create_model(model_name, **fields)
-
-
-@dataclass
-class MCPConnection:
-    session: ClientSession
-    read_stream: Any
-    write_stream: Any
+    validators: dict[str, Any] = {
+        "validate_json_schema": model_validator(mode="before")(validate_json_schema)
+    }
+    return create_model(
+        model_name,
+        __config__=ConfigDict(extra="allow"),
+        __validators__=validators,
+        **fields,
+    )
 
 
 class MCPToolProvider:
@@ -64,7 +92,6 @@ class MCPToolProvider:
         self._context_manager: Any = None
         self._session_context: Any = None
         self._tools: list[Tool] = []
-        self._mcp_tools: dict[str, mcp_types.Tool] = {}
 
     async def connect_stdio(
         self,
@@ -77,54 +104,55 @@ class MCPToolProvider:
             args=args or [],
             env=env,
         )
-        self._context_manager = stdio_client(params)
-        read_stream, write_stream = await self._context_manager.__aenter__()
-        self._session_context = ClientSession(read_stream, write_stream)
-        self._session = await self._session_context.__aenter__()
-        await self._session.initialize()  # type: ignore[misc]
-        await self._discover_tools()
+        await self._connect(stdio_client(params))
 
     async def connect_sse(self, url: str) -> None:
-        self._context_manager = sse_client(url)
-        read_stream, write_stream = await self._context_manager.__aenter__()
-        self._session_context = ClientSession(read_stream, write_stream)
-        self._session = await self._session_context.__aenter__()
-        await self._session.initialize()  # type: ignore[misc]
-        await self._discover_tools()
+        await self._connect(sse_client(url))
 
     async def connect_streamable_http(
         self,
         url: str,
         http_client: Any | None = None,
     ) -> None:
-        self._context_manager = streamable_http_client(url, http_client=http_client)
-        read_stream, write_stream, _ = await self._context_manager.__aenter__()
-        self._session_context = ClientSession(read_stream, write_stream)
-        self._session = await self._session_context.__aenter__()
-        await self._session.initialize()  # type: ignore[misc]
-        await self._discover_tools()
+        await self._connect(streamable_http_client(url, http_client=http_client))
+
+    async def _connect(self, context_manager: Any) -> None:
+        await self.close()
+        self._context_manager = context_manager
+        try:
+            streams = await context_manager.__aenter__()
+            read_stream, write_stream = streams[0], streams[1]
+            self._session_context = ClientSession(read_stream, write_stream)
+            self._session = await self._session_context.__aenter__()
+            await self._session.initialize()  # type: ignore[misc]
+            await self._discover_tools()
+        except BaseException:
+            with contextlib.suppress(Exception):
+                await self.close()
+            raise
 
     async def close(self) -> None:
-        if self._session_context is not None:
-            await self._session_context.__aexit__(None, None, None)
-            self._session_context = None
-        if self._context_manager is not None:
-            await self._context_manager.__aexit__(None, None, None)
-            self._context_manager = None
+        session_context = self._session_context
+        context_manager = self._context_manager
+        self._session_context = None
+        self._context_manager = None
         self._session = None
         self._tools = []
-        self._mcp_tools = {}
+        try:
+            if session_context is not None:
+                await session_context.__aexit__(None, None, None)
+        finally:
+            if context_manager is not None:
+                await context_manager.__aexit__(None, None, None)
 
     async def _discover_tools(self) -> None:
         if self._session is None:
             return
         result = await self._session.list_tools()
         self._tools = []
-        self._mcp_tools = {}
         for mcp_tool in result.tools:
             tool = self._convert_mcp_tool(mcp_tool)
             self._tools.append(tool)
-            self._mcp_tools[mcp_tool.name] = mcp_tool
 
     def _convert_mcp_tool(self, mcp_tool: mcp_types.Tool) -> Tool:
         schema = mcp_tool.inputSchema or {}
@@ -164,6 +192,12 @@ class MCPToolProvider:
                     content_parts.append("[Embedded Resource]")
             content = "\n".join(content_parts) if content_parts else None
             data = result.structuredContent if hasattr(result, "structuredContent") else None
+            if getattr(result, "isError", False) is True:
+                return ToolResult(
+                    content=content,
+                    data=data,
+                    error=content or "MCP tool returned an error",
+                )
             return ToolResult(content=content, data=data)
         except Exception as exc:
             return ToolResult(error=str(exc))
@@ -188,8 +222,8 @@ class MCPToolProvider:
 
     async def __aexit__(
         self,
-        exc_type: type[BaseException] | None,
-        exc_val: BaseException | None,
-        exc_tb: Any,
+        _exc_type: type[BaseException] | None,
+        _exc_val: BaseException | None,
+        _exc_tb: Any,
     ) -> None:
         await self.close()

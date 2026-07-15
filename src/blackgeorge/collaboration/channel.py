@@ -1,5 +1,6 @@
 import asyncio
 from collections import defaultdict
+from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
 from threading import Lock
@@ -8,7 +9,7 @@ from typing import Any, Literal
 from blackgeorge.utils import new_id, utc_now
 
 
-@dataclass
+@dataclass(frozen=True)
 class ChannelMessage:
     id: str
     sender: str
@@ -39,13 +40,13 @@ class Channel:
             id=new_id(),
             sender=sender,
             recipient=recipient,
-            content=content,
+            content=deepcopy(content),
             timestamp=utc_now(),
-            metadata=metadata or {},
+            metadata=deepcopy(metadata) if metadata is not None else {},
         )
         with self._lock:
             self._messages[recipient].append(message)
-        return message
+        return deepcopy(message)
 
     async def asend(
         self,
@@ -66,13 +67,13 @@ class Channel:
             id=new_id(),
             sender=sender,
             recipient=None,
-            content=content,
+            content=deepcopy(content),
             timestamp=utc_now(),
-            metadata=metadata or {},
+            metadata=deepcopy(metadata) if metadata is not None else {},
         )
         with self._lock:
             self._broadcast.append(message)
-        return message
+        return deepcopy(message)
 
     async def abroadcast(
         self,
@@ -88,6 +89,8 @@ class Channel:
         clear: bool = True,
         broadcast_mode: BroadcastMode = "one_shot",
     ) -> list[ChannelMessage]:
+        if broadcast_mode not in ("one_shot", "all"):
+            raise ValueError("broadcast_mode must be 'one_shot' or 'all'")
         with self._lock:
             direct = list(self._messages.get(recipient, []))
             broadcasts = list(self._broadcast)
@@ -98,11 +101,10 @@ class Channel:
                 broadcasts = self._broadcast[start:]
                 if clear:
                     self._broadcast_positions[recipient] = len(self._broadcast)
-            elif broadcast_mode == "all":
-                broadcasts = list(self._broadcast)
             else:
-                broadcasts = []
-        return direct + list(broadcasts)
+                broadcasts = list(self._broadcast)
+        messages = sorted([*direct, *broadcasts], key=lambda message: message.timestamp)
+        return deepcopy(messages)
 
     async def areceive(
         self,
@@ -126,6 +128,7 @@ class Channel:
                 self._broadcast_positions.clear()
             else:
                 self._messages[recipient] = []
+                self._broadcast_positions[recipient] = len(self._broadcast)
 
     async def aclear(self, recipient: str | None = None) -> None:
         await asyncio.to_thread(self.clear, recipient)
@@ -136,7 +139,7 @@ class Channel:
             for msgs in self._messages.values():
                 all_msgs.extend(msgs)
             all_msgs.extend(self._broadcast)
-        return sorted(all_msgs, key=lambda m: m.timestamp)
+        return deepcopy(sorted(all_msgs, key=lambda message: message.timestamp))
 
     async def aall_messages(self) -> list[ChannelMessage]:
         return await asyncio.to_thread(self.all_messages)

@@ -137,14 +137,20 @@ loop = AsyncLoop(
 
 ## Pause and resume
 
-If a step pauses, the flow stores the current step state and outputs. Resume with the same report and a decision or input.
-Composite nodes (`Condition`, `Router`, `Loop`) short-circuit on paused or failed results to prevent subsequent steps from running.
+If a step pauses, the flow stores the current step state, outputs, workflow context, and nested
+continuation path. Composite nodes (`Condition`, `Router`, `Loop`, and `Parallel`) short-circuit on
+paused or failed results so work is not skipped or repeated.
 
 ```python
 report = flow.run(job)
 if report.status == "paused":
     report = flow.resume(report, True)
 ```
+
+Continuation state is persisted through the configured `RunStore`. An equivalent recreated flow can
+resume after a process restart by calling `recreated_flow.resume(report, decision)`. The recreated
+flow must have the same node structure, runner names, explicit loop names, and limits. Context
+artifacts must be JSON-serializable when a flow can pause.
 
 ## Async usage
 

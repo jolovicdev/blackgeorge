@@ -1,25 +1,35 @@
 import asyncio
 from typing import Any, cast
 
-from pydantic import BaseModel
-
 from blackgeorge.async_utils import ensure_not_running_loop
 from blackgeorge.config import RunConfig
 from blackgeorge.core.event import Event
 from blackgeorge.core.job import Job
 from blackgeorge.core.report import Report
+from blackgeorge.core.serialization import to_json_value
 from blackgeorge.store.state import RunState
 from blackgeorge.utils import new_id
 from blackgeorge.worker import Worker
 from blackgeorge.workflow.context import WorkflowContext
-from blackgeorge.workflow.result import StepOutput, StepResult
+from blackgeorge.workflow.nodes import (
+    OutputContinuation,
+    Step,
+    WorkflowGraph,
+    restore_continuations,
+    serialize_continuations,
+)
+from blackgeorge.workflow.result import (
+    StepOutput,
+    StepResult,
+    WorkflowContinuation,
+)
 from blackgeorge.workforce import Workforce
 
 
 class Flow:
     def __init__(self, desk: Any, steps: list[Any], name: str | None = None) -> None:
         self.desk = desk
-        self.steps = steps
+        self.steps = list(steps)
         self.name = name or "flow"
         self._run_id = ""
         self._events: list[Event] = []
@@ -28,12 +38,7 @@ class Flow:
     def emit(self, event_type: str, source: str, payload: dict[str, Any]) -> None:
         if not self._run_id:
             return
-        self.desk._emit(self._events, self._run_id, event_type, source, payload)
-
-    def _output_json(self, report: Report) -> Any | None:
-        if isinstance(report.data, BaseModel):
-            return report.data.model_dump(mode="json", warnings=False)
-        return report.data
+        self.desk.emit(self._events, self._run_id, event_type, source, payload)
 
     def _make_run_config(self, stream: bool) -> RunConfig:
         return RunConfig(
@@ -54,7 +59,7 @@ class Flow:
             default_model=self.desk.model,
         )
 
-    async def _run_runner(
+    async def run_runner(
         self,
         runner: Worker | Workforce,
         job: Job,
@@ -132,12 +137,18 @@ class Flow:
         reports: list[Report],
         step_state: RunState,
         stream: bool,
+        context: WorkflowContext,
+        continuations: list[WorkflowContinuation],
     ) -> RunState:
+        graph = WorkflowGraph(tuple(self.steps))
         payload = {
             "step_index": step_index,
             "outputs": [report.model_dump(mode="json") for report in reports],
             "step_state": step_state.model_dump(mode="json"),
             "stream": stream,
+            "flow_signature": graph.signature,
+            "context": context.snapshot(),
+            "continuations": serialize_continuations(graph, continuations),
         }
         return RunState(
             run_id=self._run_id,
@@ -154,8 +165,10 @@ class Flow:
         )
 
     def _restore_outputs(self, payload: Any) -> list[Report]:
-        if not isinstance(payload, list):
+        if payload is None:
             return []
+        if not isinstance(payload, list):
+            raise ValueError("Invalid flow outputs")
         return [Report.model_validate(item) for item in payload]
 
     def _combine_reports(self, reports: list[Report]) -> Report:
@@ -191,26 +204,68 @@ class Flow:
         return normalized
 
     def _emit_run_failed(self, report: Report) -> None:
-        self.desk._emit(self._events, self._run_id, "run.failed", self.name, {})
+        self.desk.emit(self._events, self._run_id, "run.failed", self.name, {})
         self.desk.run_store.update_run(
             self._run_id,
             "failed",
             report.content,
-            self._output_json(report),
+            to_json_value(report.data),
             None,
         )
         self.desk.unregister_flow_run(self._run_id)
 
     def _emit_run_completed(self, report: Report) -> None:
-        self.desk._emit(self._events, self._run_id, "run.completed", self.name, {})
+        self.desk.emit(self._events, self._run_id, "run.completed", self.name, {})
         self.desk.run_store.update_run(
             self._run_id,
             "completed",
             report.content,
-            self._output_json(report),
+            to_json_value(report.data),
             None,
         )
         self.desk.unregister_flow_run(self._run_id)
+
+    def _pause_flow(
+        self,
+        report: Report,
+        step_state: RunState,
+        job: Job,
+        step_index: int,
+        all_reports: list[Report],
+        stream_enabled: bool,
+        context: WorkflowContext,
+        continuations: list[WorkflowContinuation],
+    ) -> Report:
+        step_state.payload["stream"] = stream_enabled
+        try:
+            state = self._build_flow_state(
+                job,
+                step_index,
+                all_reports,
+                step_state,
+                stream_enabled,
+                context,
+                continuations,
+            )
+        except (TypeError, ValueError) as exc:
+            failed = report.model_copy(
+                update={
+                    "status": "failed",
+                    "pending_action": None,
+                    "errors": [*report.errors, f"Could not persist flow state: {exc}"],
+                }
+            )
+            self._emit_run_failed(failed)
+            return failed
+        self.desk.emit(self._events, self._run_id, "run.paused", self.name, {})
+        self.desk.run_store.update_run(
+            self._run_id,
+            "paused",
+            report.content,
+            None,
+            state,
+        )
+        return report
 
     async def _execute_step_results(
         self,
@@ -220,8 +275,10 @@ class Flow:
         job: Job,
         stream_enabled: bool,
         step_index: int,
+        remaining_continuations: list[WorkflowContinuation] | None = None,
     ) -> Report | None:
-        for result in self._normalize_results(results):
+        normalized = self._normalize_results(results)
+        for result_index, result in enumerate(normalized):
             report = result.report
             if report.status == "paused":
                 if result.state is None:
@@ -237,27 +294,26 @@ class Flow:
                         pending_action=None,
                         errors=["Missing runner state"],
                     )
-                    self.desk._emit(self._events, self._run_id, "run.failed", self.name, {})
+                    self.desk.emit(self._events, self._run_id, "run.failed", self.name, {})
                     self.desk.run_store.update_run(self._run_id, "failed", None, None, None)
                     self.desk.unregister_flow_run(self._run_id)
                     return failed
-                self.desk._emit(self._events, self._run_id, "run.paused", self.name, {})
-                result.state.payload["stream"] = stream_enabled
-                state = self._build_flow_state(
+                continuations = list(result.continuations)
+                tail = normalized[result_index + 1 :]
+                if tail:
+                    continuations.append(OutputContinuation(tuple(tail)))
+                if remaining_continuations:
+                    continuations.extend(remaining_continuations)
+                return self._pause_flow(
+                    report,
+                    result.state,
                     job,
                     step_index,
                     all_reports,
-                    result.state,
                     stream_enabled,
+                    context,
+                    continuations,
                 )
-                self.desk.run_store.update_run(
-                    self._run_id,
-                    "paused",
-                    report.content,
-                    None,
-                    state,
-                )
-                return report
             if report.status == "failed":
                 self._emit_run_failed(report)
                 return report
@@ -297,7 +353,7 @@ class Flow:
                 pending_action=None,
                 errors=["No steps executed"],
             )
-            self.desk._emit(self._events, self._run_id, "run.failed", self.name, {})
+            self.desk.emit(self._events, self._run_id, "run.failed", self.name, {})
             self.desk.run_store.update_run(self._run_id, "failed", None, None, None)
             self.desk.unregister_flow_run(self._run_id)
             return empty_report
@@ -310,12 +366,14 @@ class Flow:
         return final_report
 
     async def _run(self, job: Job) -> Report:
+        if self.desk.closed:
+            raise RuntimeError("Desk is closed")
         self._run_id = new_id()
         self._events = []
         self._stream = self.desk.stream
         self.desk.run_store.create_run(self._run_id, job.model_dump(mode="json"))
         self.desk.register_flow_run(self._run_id, self)
-        self.desk._emit(self._events, self._run_id, "run.started", self.name, {"job_id": job.id})
+        self.desk.emit(self._events, self._run_id, "run.started", self.name, {"job_id": job.id})
         context = WorkflowContext(job=job)
         all_reports: list[Report] = []
 
@@ -325,50 +383,59 @@ class Flow:
 
         return self._finalize_flow_run(all_reports)
 
+    def _resume_failure(self, state: RunState, error: str) -> Report:
+        report = Report(
+            run_id=state.run_id,
+            status="failed",
+            content=None,
+            data=None,
+            messages=state.messages,
+            tool_calls=state.tool_calls,
+            metrics=state.metrics,
+            events=self._events,
+            pending_action=None,
+            errors=[error],
+        )
+        self._emit_run_failed(report)
+        return report
+
     async def _resume(
         self,
         state: RunState,
         decision_or_input: Any,
         stream: bool | None = None,
     ) -> Report:
+        self._run_id = state.run_id
+        self._events = self.desk.run_store.get_events(state.run_id)
         payload = state.payload
         step_index = payload.get("step_index")
         step_state_payload = payload.get("step_state")
-        if not isinstance(step_index, int) or step_state_payload is None:
-            events = self.desk.run_store.get_events(state.run_id)
-            failed = Report(
-                run_id=state.run_id,
-                status="failed",
-                content=None,
-                data=None,
-                messages=state.messages,
-                tool_calls=state.tool_calls,
-                metrics=state.metrics,
-                events=events,
-                pending_action=None,
-                errors=["Invalid flow state"],
-            )
-            return failed
+        if isinstance(step_index, bool) or not isinstance(step_index, int):
+            return self._resume_failure(state, "Invalid flow state")
+        if step_state_payload is None:
+            return self._resume_failure(state, "Invalid flow state")
         if step_index < 0 or step_index >= len(self.steps):
-            events = self.desk.run_store.get_events(state.run_id)
-            failed = Report(
-                run_id=state.run_id,
-                status="failed",
-                content=None,
-                data=None,
-                messages=state.messages,
-                tool_calls=state.tool_calls,
-                metrics=state.metrics,
-                events=events,
-                pending_action=None,
-                errors=["Invalid step index"],
-            )
-            return failed
+            return self._resume_failure(state, "Invalid step index")
 
-        self._run_id = state.run_id
-        self._events = self.desk.run_store.get_events(state.run_id)
+        graph = WorkflowGraph(tuple(self.steps))
+        stored_signature = payload.get("flow_signature")
+        if stored_signature is not None and stored_signature != graph.signature:
+            return self._resume_failure(state, "Flow definition does not match stored state")
+        if "continuations" not in payload and not isinstance(self.steps[step_index], Step):
+            return self._resume_failure(
+                state,
+                "Stored flow state does not include composite continuation data",
+            )
+        try:
+            all_reports = self._restore_outputs(payload.get("outputs"))
+            context = WorkflowContext.restore(state.job, all_reports, payload.get("context"))
+            continuations = restore_continuations(graph, payload.get("continuations", []))
+            step_state = RunState.model_validate(step_state_payload)
+        except (TypeError, ValueError) as exc:
+            return self._resume_failure(state, f"Invalid flow state: {exc}")
+
         self.desk.register_flow_run(self._run_id, self)
-        self.desk._emit(self._events, self._run_id, "run.resumed", self.name, {})
+        self.desk.emit(self._events, self._run_id, "run.resumed", self.name, {})
 
         payload_stream = payload.get("stream")
         if stream is None:
@@ -379,11 +446,6 @@ class Flow:
             stream_enabled = stream
         self._stream = stream_enabled
 
-        context = WorkflowContext(job=state.job)
-        all_reports = self._restore_outputs(payload.get("outputs"))
-        context.outputs.extend(all_reports)
-
-        step_state = RunState.model_validate(step_state_payload)
         step_state.payload["stream"] = stream_enabled
         report, updated_state = await self._resume_runner(
             step_state,
@@ -404,33 +466,41 @@ class Flow:
                     pending_action=None,
                     errors=["Missing runner state"],
                 )
-                self.desk._emit(self._events, self._run_id, "run.failed", self.name, {})
+                self.desk.emit(self._events, self._run_id, "run.failed", self.name, {})
                 self.desk.run_store.update_run(self._run_id, "failed", None, None, None)
                 self.desk.unregister_flow_run(self._run_id)
                 return failed
-            self.desk._emit(self._events, self._run_id, "run.paused", self.name, {})
-            updated_state.payload["stream"] = stream_enabled
-            flow_state = self._build_flow_state(
+            return self._pause_flow(
+                report,
+                updated_state,
                 state.job,
                 step_index,
                 all_reports,
-                updated_state,
                 stream_enabled,
+                context,
+                continuations,
             )
-            self.desk.run_store.update_run(
-                self._run_id,
-                "paused",
-                report.content,
-                None,
-                flow_state,
-            )
-            return report
         if report.status == "failed":
             self._emit_run_failed(report)
             return report
 
         all_reports.append(report)
         context.outputs.append(report)
+
+        while continuations:
+            continuation = continuations.pop(0)
+            continuation_results = await continuation(self, context)
+            continuation_report = await self._execute_step_results(
+                continuation_results,
+                context,
+                all_reports,
+                state.job,
+                stream_enabled,
+                step_index,
+                continuations,
+            )
+            if continuation_report is not None:
+                return continuation_report
 
         remaining_report = await self._run_steps(
             self.steps[step_index + 1 :],
@@ -455,6 +525,8 @@ class Flow:
         *,
         stream: bool | None = None,
     ) -> Report:
+        if self.desk.closed:
+            raise RuntimeError("Desk is closed")
         record = self.desk.run_store.get_run(report.run_id)
         if record is None or record.state is None:
             failed = Report(

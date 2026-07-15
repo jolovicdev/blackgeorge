@@ -1,3 +1,4 @@
+import asyncio
 import json
 from collections.abc import Iterable
 from typing import TYPE_CHECKING
@@ -54,7 +55,9 @@ def _child_desk(
         structured_output_retries=structured_output_retries,
         max_iterations=max_iterations,
         max_tool_calls=max_tool_calls,
+        num_retries=desk.num_retries,
         respect_context_window=desk.respect_context_window,
+        max_context_messages=desk.max_context_messages,
         event_bus=desk.event_bus,
         run_store=desk.run_store,
         memory_store=desk.memory_store,
@@ -76,7 +79,7 @@ def _mark_child_run_failed(
     if record is not None and record.status != "running":
         return
     events = desk.run_store.get_events(run_id)
-    desk._emit(
+    desk.emit(
         events,
         run_id,
         "run.failed",
@@ -113,10 +116,14 @@ def create_subworker_tool(
         raise ValueError("max_iterations must be >= 1")
     if max_tool_calls < 1:
         raise ValueError("max_tool_calls must be >= 1")
+    if structured_output_retries < 0:
+        raise ValueError("structured_output_retries must be >= 0")
 
     allowed_model_set = set(allowed_models) if allowed_models is not None else None
     toolbelt = Toolbelt(available_tools or [])
     spawn_count = 0
+    active_count = 0
+    budget_lock = asyncio.Lock()
 
     async def spawn_subworker(
         name: str,
@@ -125,12 +132,7 @@ def create_subworker_tool(
         tools: list[str] | None = None,
         model: str | None = None,
     ) -> ToolResult:
-        nonlocal spawn_count
-
-        if spawn_count >= max_subworkers:
-            return ToolResult(
-                error=f"Subworker budget exceeded: max_subworkers={max_subworkers}",
-            )
+        nonlocal active_count, spawn_count
 
         resolved_model = model or default_model or desk.model
         if not resolved_model:
@@ -175,66 +177,84 @@ def create_subworker_tool(
         )
         child_job = Job(input=task)
         child_run_id = new_id()
+        slot_active = False
+
+        async with budget_lock:
+            if spawn_count + active_count >= max_subworkers:
+                return ToolResult(
+                    error=f"Subworker budget exceeded: max_subworkers={max_subworkers}",
+                )
+            active_count += 1
+            slot_active = True
 
         try:
-            report = await child_runner.arun(
-                subworker,
-                child_job,
-                stream=False,
-                run_id=child_run_id,
-            )
-        except Exception as exc:
-            error_message = str(exc)
-            _mark_child_run_failed(
-                desk=child_runner,
-                run_id=child_run_id,
-                job=child_job,
-                error=error_message,
-            )
-            return ToolResult(
-                error=f"Subworker execution failed: {error_message}",
-                data={
-                    "run_id": child_run_id,
-                    "status": "failed",
-                    "worker": name,
-                    "errors": [error_message],
-                },
-            )
+            try:
+                report = await child_runner.arun(
+                    subworker,
+                    child_job,
+                    stream=False,
+                    run_id=child_run_id,
+                )
+            except Exception as exc:
+                error_message = str(exc)
+                _mark_child_run_failed(
+                    desk=child_runner,
+                    run_id=child_run_id,
+                    job=child_job,
+                    error=error_message,
+                )
+                return ToolResult(
+                    error=f"Subworker execution failed: {error_message}",
+                    data={
+                        "run_id": child_run_id,
+                        "status": "failed",
+                        "worker": name,
+                        "errors": [error_message],
+                    },
+                )
 
-        result_data: dict[str, object] = {
-            "run_id": report.run_id,
-            "status": report.status,
-            "worker": name,
-        }
-        if report.errors:
-            result_data["errors"] = list(report.errors)
-        if report.pending_action is not None:
-            result_data["pending_action_type"] = report.pending_action.type
+            result_data: dict[str, object] = {
+                "run_id": report.run_id,
+                "status": report.status,
+                "worker": name,
+            }
+            if report.errors:
+                result_data["errors"] = list(report.errors)
+            if report.pending_action is not None:
+                result_data["pending_action_type"] = report.pending_action.type
 
-        if report.status == "paused":
-            if report.pending_action is None:
-                pending_type = "unknown"
-            else:
-                pending_type = report.pending_action.type
-            return ToolResult(
-                error=f"Subworker paused and requires {pending_type} follow-up",
-                data=result_data,
-            )
+            if report.status == "paused":
+                if report.pending_action is None:
+                    pending_type = "unknown"
+                else:
+                    pending_type = report.pending_action.type
+                return ToolResult(
+                    error=f"Subworker paused and requires {pending_type} follow-up",
+                    data=result_data,
+                )
 
-        if report.status == "failed":
-            return ToolResult(
-                error=_join_errors(report.errors, "Subworker failed"),
-                data=result_data,
-            )
+            if report.status == "failed":
+                return ToolResult(
+                    error=_join_errors(report.errors, "Subworker failed"),
+                    data=result_data,
+                )
 
-        spawn_count += 1
-        content = report.content
-        if content is None and report.data is not None:
-            content = json.dumps(report.data, ensure_ascii=True, default=str)
-        if content is None:
-            content = ""
+            content = report.content
+            if content is None and report.data is not None:
+                content = json.dumps(report.data, ensure_ascii=True, default=str)
+            if content is None:
+                content = ""
+            result = ToolResult(content=content, data=result_data)
 
-        return ToolResult(content=content, data=result_data)
+            async with budget_lock:
+                active_count -= 1
+                spawn_count += 1
+                slot_active = False
+            return result
+        finally:
+            if slot_active:
+                async with budget_lock:
+                    active_count -= 1
 
     return Tool(
         name=tool_name,

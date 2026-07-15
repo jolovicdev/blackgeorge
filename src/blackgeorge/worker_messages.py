@@ -1,6 +1,5 @@
 import json
 from collections.abc import Callable
-from dataclasses import asdict, is_dataclass
 from typing import Any, cast
 
 from pydantic import BaseModel
@@ -8,22 +7,9 @@ from pydantic import BaseModel
 from blackgeorge.core.event_types import EventType
 from blackgeorge.core.job import Job
 from blackgeorge.core.message import Message
+from blackgeorge.core.serialization import to_json_value
 from blackgeorge.core.tool_call import ToolCall
 from blackgeorge.tools.base import Tool, ToolResult
-
-
-def _json_payload(value: Any) -> Any:
-    if isinstance(value, BaseModel):
-        return value.model_dump(mode="json", warnings=False)
-    if is_dataclass(value) and not isinstance(value, type):
-        return asdict(value)
-    if isinstance(value, dict):
-        return {key: _json_payload(item) for key, item in value.items()}
-    if isinstance(value, list):
-        return [_json_payload(item) for item in value]
-    if isinstance(value, tuple):
-        return [_json_payload(item) for item in value]
-    return value
 
 
 def _is_multimodal_content_blocks(value: Any) -> bool:
@@ -59,10 +45,10 @@ def render_input(value: Any) -> str | list[dict[str, Any]]:
     if isinstance(value, str):
         return value
     if _is_multimodal_content_blocks(value):
-        payload = _json_payload(value)
+        payload = to_json_value(value)
         if isinstance(payload, list):
             return cast(list[dict[str, Any]], payload)
-    return json.dumps(_json_payload(value), ensure_ascii=True, default=str)
+    return json.dumps(to_json_value(value), ensure_ascii=True, default=str)
 
 
 def tool_call_payload(tool_call: ToolCall) -> dict[str, Any]:
@@ -72,7 +58,7 @@ def tool_call_payload(tool_call: ToolCall) -> dict[str, Any]:
         "function": {
             "name": tool_call.name,
             "arguments": json.dumps(
-                _json_payload(tool_call.arguments),
+                to_json_value(tool_call.arguments),
                 ensure_ascii=True,
                 default=str,
             ),
@@ -122,7 +108,7 @@ def system_message(instructions: str | None, job: Job) -> str | None:
     if job.constraints:
         parts.append(
             "Constraints: "
-            f"{json.dumps(_json_payload(job.constraints), ensure_ascii=True, default=str)}"
+            f"{json.dumps(to_json_value(job.constraints), ensure_ascii=True, default=str)}"
         )
     if not parts:
         return None
@@ -193,7 +179,7 @@ def chunk_thinking_blocks(chunk: Any) -> list[dict[str, Any]] | None:
 def structured_content(value: Any) -> str:
     if isinstance(value, BaseModel):
         return value.model_dump_json(warnings=False)
-    return json.dumps(_json_payload(value), ensure_ascii=True, default=str)
+    return json.dumps(to_json_value(value), ensure_ascii=True, default=str)
 
 
 def tool_message(result: ToolResult | dict[str, Any], tool_call: ToolCall) -> Message:

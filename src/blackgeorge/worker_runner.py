@@ -45,12 +45,11 @@ from blackgeorge.worker_messages import (
     tool_schemas,
 )
 from blackgeorge.worker_runner_helpers import (
-    _build_report,
-    _execute_tool_calls_async,
-    _plan_tool_calls,
-    _report_error,
-    _should_stream,
-    _tool_event_payload,
+    aexecute_tool_calls,
+    build_error_report,
+    build_report,
+    plan_tool_calls,
+    tool_event_payload,
 )
 from blackgeorge.worker_tools import resume_argument_key, update_arguments
 
@@ -112,9 +111,8 @@ class WorkerRunner:
             if not messages or messages[0].role != "system":
                 messages.insert(0, Message(role="system", content=system_content))
             else:
-                messages[0] = Message(
-                    role="system",
-                    content=f"{messages[0].content}\n\n{system_content}",
+                messages[0] = messages[0].model_copy(
+                    update={"content": f"{messages[0].content}\n\n{system_content}"}
                 )
         messages.append(Message(role="user", content=render_input(job.input)))
         return messages
@@ -313,7 +311,57 @@ class WorkerRunner:
             thinking_blocks: list[dict[str, Any]] = []
             tool_states: list[dict[str, Any]] = []
             keyed_states: dict[tuple[str, Any], dict[str, Any]] = {}
+            known_tool_names = {tool.name for tool in tools}
             usage: dict[str, Any] = {}
+
+            def can_reuse_position(
+                state: dict[str, Any],
+                stable_keys: list[tuple[str, int | str]],
+                position: int,
+                name: str,
+                arguments_value: Any,
+                from_message_payload: bool,
+            ) -> bool:
+                existing_keys = cast(set[tuple[str, int | str]], state["stable_keys"])
+                if any(
+                    existing[0] == incoming[0] and existing != incoming
+                    for existing in existing_keys
+                    for incoming in stable_keys
+                ):
+                    return False
+                # an unseen index that differs from this position belongs to a different tool
+                if any(
+                    incoming[0] == "index" and incoming[1] != position for incoming in stable_keys
+                ):
+                    return False
+                existing_name = cast(str, state["name"])
+                if (
+                    existing_name
+                    and name
+                    and not name.startswith(existing_name)
+                    and not existing_name.startswith(name)
+                    and f"{existing_name}{name}" not in known_tool_names
+                ):
+                    return False
+                argument_parts = cast(list[str], state["arguments_parts"])
+                existing_arguments = "".join(argument_parts)
+                arguments_obj = state.get("arguments_obj")
+                try:
+                    arguments_complete = isinstance(arguments_obj, dict) or (
+                        bool(existing_arguments.strip())
+                        and isinstance(json.loads(existing_arguments), dict)
+                    )
+                except (TypeError, ValueError):
+                    arguments_complete = False
+                if not stable_keys or not arguments_complete:
+                    return True
+                if not from_message_payload:
+                    return False
+                if isinstance(arguments_value, str):
+                    return arguments_value == existing_arguments
+                if isinstance(arguments_value, dict):
+                    return arguments_value == arguments_obj
+                return False
 
             def process_chunk(chunk: Any) -> None:
                 nonlocal usage
@@ -325,18 +373,32 @@ class WorkerRunner:
                 for position, tool_delta in enumerate(tool_deltas):
                     index_value = stream_value(tool_delta, "index")
                     call_id_value = stream_value(tool_delta, "id")
+                    function = stream_value(tool_delta, "function")
+                    name_value = stream_value(function, "name")
+                    name = name_value.strip() if isinstance(name_value, str) else ""
+                    arguments_value = stream_value(function, "arguments")
                     stable_keys: list[tuple[str, int | str]] = []
                     if isinstance(index_value, int):
                         stable_keys.append(("index", index_value))
                     if isinstance(call_id_value, str) and call_id_value:
                         stable_keys.append(("id", call_id_value))
                     fallback_key = ("position", position)
-                    lookup_keys = stable_keys or [fallback_key]
                     state = None
-                    for key in lookup_keys:
+                    for key in stable_keys:
                         state = keyed_states.get(key)
                         if state is not None:
                             break
+                    if state is None:
+                        fallback_state = keyed_states.get(fallback_key)
+                        if fallback_state is not None and can_reuse_position(
+                            fallback_state,
+                            stable_keys,
+                            position,
+                            name,
+                            arguments_value,
+                            from_message_payload,
+                        ):
+                            state = fallback_state
                     if state is None:
                         state = {
                             "id": None,
@@ -344,23 +406,25 @@ class WorkerRunner:
                             "arguments_parts": [],
                             "arguments_obj": None,
                             "error": None,
+                            "stable_keys": set(),
                         }
                         tool_states.append(state)
-                    for key in stable_keys or [fallback_key]:
+                    state_stable_keys = cast(set[tuple[str, int | str]], state["stable_keys"])
+                    state_stable_keys.update(stable_keys)
+                    for key in stable_keys:
                         keyed_states[key] = state
+                    # a keyed delta must not claim a position slot owned by a different tool
+                    occupant = keyed_states.get(fallback_key)
+                    if occupant is None or occupant is state or not stable_keys:
+                        keyed_states[fallback_key] = state
                     if isinstance(call_id_value, str) and call_id_value:
                         state["id"] = call_id_value
-                    function = stream_value(tool_delta, "function")
-                    name_value = stream_value(function, "name")
-                    if isinstance(name_value, str):
-                        name = name_value.strip()
-                        if name:
-                            existing_name = cast(str, state["name"])
-                            if not existing_name or name.startswith(existing_name):
-                                state["name"] = name
-                            elif not existing_name.startswith(name):
-                                state["name"] = f"{existing_name}{name}"
-                    arguments_value = stream_value(function, "arguments")
+                    if isinstance(name_value, str) and name:
+                        existing_name = cast(str, state["name"])
+                        if not existing_name or name.startswith(existing_name):
+                            state["name"] = name
+                        elif not existing_name.startswith(name):
+                            state["name"] = f"{existing_name}{name}"
                     if isinstance(arguments_value, str):
                         argument_parts = cast(list[str], state["arguments_parts"])
                         if from_message_payload:
@@ -421,7 +485,13 @@ class WorkerRunner:
             if hasattr(config.adapter, "clear_callback_context"):
                 config.adapter.clear_callback_context()
 
-    async def _apply_context_summary(self, ctx: CompletionContext) -> bool:
+    async def _apply_context_summary(
+        self,
+        ctx: CompletionContext,
+        *,
+        preserve_recent: bool = True,
+        message_limit: int | None = None,
+    ) -> bool:
         return await aapply_context_summary(
             adapter=ctx.config.adapter,
             model_name=ctx.model_name,
@@ -431,10 +501,14 @@ class WorkerRunner:
             emit=ctx.config.emit,
             worker_name=ctx.state.worker_name,
             model_registered=ctx.state.model_registered,
+            preserve_recent=preserve_recent,
+            message_limit=message_limit,
         )
 
     async def _retry_context_or_report(self, ctx: CompletionContext) -> Report | None:
-        return await ctx.handle_context_limit(lambda: self._apply_context_summary(ctx))
+        return await ctx.handle_context_limit(
+            lambda: self._apply_context_summary(ctx, preserve_recent=False)
+        )
 
     async def _acquire_turn_response(
         self,
@@ -445,11 +519,11 @@ class WorkerRunner:
         response_schema: Any,
         structured_stream_mode: str,
     ) -> tuple[ModelResponse | None, Report | None]:
-        on_token = ctx.make_on_token()
-        if _should_stream(ctx.config.stream, tools, response_schema):
+        on_token = ctx.emit_token
+        if ctx.config.stream and response_schema is None:
             try:
                 response = await self._astream_completion(
-                    config=ctx.run_config(),
+                    config=ctx.config,
                     model=ctx.model_name,
                     messages=ctx.state.messages,
                     tools=tools,
@@ -473,7 +547,7 @@ class WorkerRunner:
         ):
             try:
                 streamed = await self._astream_completion(
-                    config=ctx.run_config(),
+                    config=ctx.config,
                     model=ctx.model_name,
                     messages=ctx.state.messages,
                     tools=[],
@@ -493,7 +567,7 @@ class WorkerRunner:
             except Exception:
                 try:
                     data = await self._astructured_completion(
-                        config=ctx.run_config(),
+                        config=ctx.config,
                         model=ctx.model_name,
                         messages=ctx.state.messages,
                         response_schema=response_schema,
@@ -508,7 +582,7 @@ class WorkerRunner:
         if response_schema and not tools:
             try:
                 data = await self._astructured_completion(
-                    config=ctx.run_config(),
+                    config=ctx.config,
                     model=ctx.model_name,
                     messages=ctx.state.messages,
                     response_schema=response_schema,
@@ -522,7 +596,7 @@ class WorkerRunner:
 
         try:
             response = await self._acompletion(
-                config=ctx.run_config(),
+                config=ctx.config,
                 model=ctx.model_name,
                 messages=ctx.state.messages,
                 tools=tools,
@@ -546,7 +620,7 @@ class WorkerRunner:
         response_schema: Any,
         allowed_tools: dict[str, Tool],
     ) -> tuple[Report | None, RunState | None, bool]:
-        ctx.record_usage(response)
+        ctx.state.metrics["usage"] = response.usage
         if response.tool_calls:
             assistant_message = Message(
                 role="assistant",
@@ -557,14 +631,14 @@ class WorkerRunner:
             )
             ctx.state.messages.append(assistant_message)
             emit_assistant_message(ctx.config.emit, self.name, assistant_message)
-            plan = _plan_tool_calls(
+            plan = plan_tool_calls(
                 response=response,
                 allowed_tools=allowed_tools,
                 tool_calls=ctx.state.tool_calls,
                 max_tool_calls=ctx.config.max_tool_calls,
             )
-            await _execute_tool_calls_async(
-                ctx.run_config(),
+            await aexecute_tool_calls(
+                ctx.config,
                 plan.ordered_calls,
                 plan.executable_calls,
                 plan.immediate_results,
@@ -591,17 +665,14 @@ class WorkerRunner:
                     self.name,
                     {"pending_action_type": plan.pending.type},
                 )
-                return (
-                    ctx.build_paused_report(plan.pending),
-                    ctx.build_paused_state(job, plan.pending),
-                    False,
-                )
+                paused_report, paused_state = ctx.pause(job, plan.pending)
+                return paused_report, paused_state, False
             return None, None, True
 
         if response_schema:
             try:
                 data = await self._astructured_completion(
-                    config=ctx.run_config(),
+                    config=ctx.config,
                     model=ctx.model_name,
                     messages=ctx.state.messages,
                     response_schema=response_schema,
@@ -631,7 +702,9 @@ class WorkerRunner:
                 ctx.config.max_context_messages is not None
                 and len(ctx.state.messages) > ctx.config.max_context_messages
             ):
-                await self._apply_context_summary(ctx)
+                await self._apply_context_summary(
+                    ctx, message_limit=ctx.config.max_context_messages
+                )
 
             response, report = await self._acquire_turn_response(
                 ctx=ctx,
@@ -671,7 +744,7 @@ class WorkerRunner:
         if not model_name:
             errors = ["Worker model not set"]
             config.emit(EventType.WORKER_FAILED, self.name, {"error": errors[-1]})
-            return _report_error(config.run_id, messages, errors, config.events), None
+            return build_error_report(config.run_id, messages, errors, config.events), None
         state = LoopState(
             run_id=config.run_id,
             worker_name=self.name,
@@ -709,7 +782,7 @@ class WorkerRunner:
             config = config.with_overrides(run_id=state.run_id)
         pending = state.pending_action
         if pending is None:
-            return _build_report(
+            return build_report(
                 config.run_id,
                 "failed",
                 None,
@@ -756,14 +829,14 @@ class WorkerRunner:
                     {"tool_call_id": call.id, "error": result.error},
                 )
             else:
-                config.emit(EventType.TOOL_COMPLETED, tool.name, _tool_event_payload(call, result))
+                config.emit(EventType.TOOL_COMPLETED, tool.name, tool_event_payload(call, result))
             messages.append(tool_message(result, call))
             replace_tool_call(tool_calls, tool_call_with_result(call, result))
         model_name = config.model_name(worker_model)
         if not model_name:
             errors = ["Worker model not set"]
             config.emit(EventType.WORKER_FAILED, self.name, {"error": errors[-1]})
-            return _report_error(state.run_id, messages, errors, config.events), None
+            return build_error_report(state.run_id, messages, errors, config.events), None
         loop_state = LoopState(
             run_id=config.run_id,
             worker_name=self.name,

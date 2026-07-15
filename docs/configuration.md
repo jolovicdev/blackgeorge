@@ -182,7 +182,7 @@ When these limits are exceeded, the run fails with an error in `Report.errors`.
 | `max_context_messages` | int \| None | None | Auto-summarize when message count exceeds this limit (Proactive) |
 
 When `respect_context_window` is enabled, workers summarize conversation history and retry on context limit errors (Reactive).
-When `max_context_messages` is configured, workers summarize conversation proactively when the number of messages exceeds the limit to maintain a healthy context window.
+When `max_context_messages` is configured, workers summarize conversation proactively when the number of messages exceeds the limit. The preserved recent tail shrinks for small limits so compaction still occurs.
 
 ### Custom components
 
@@ -198,6 +198,11 @@ When `max_context_messages` is configured, workers summarize conversation proact
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `storage_dir` | str | ".blackgeorge" | Directory for SQLite run store |
+
+Execution limits are validated when `Desk` or `RunConfig` is created: token and iteration limits must
+be positive, while retry and tool-call counts may be zero but not negative. A closed desk rejects new
+runs, resumes, flows, and sessions. Injected run and memory stores are caller-owned and are not closed
+with the desk.
 
 ## Worker configuration
 
@@ -409,6 +414,12 @@ def my_function(param: str) -> str:
 ## Memory store configuration
 
 ### VectorMemoryStore
+
+Install the optional ChromaDB dependencies before configuring vector memory:
+
+```bash
+uv add "blackgeorge[vector]"
+```
 
 ```python
 from blackgeorge.memory import VectorMemoryStore

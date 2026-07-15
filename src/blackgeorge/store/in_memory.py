@@ -13,6 +13,8 @@ class InMemoryRunStore(RunStore):
         self._events: dict[str, list[Event]] = {}
 
     def create_run(self, run_id: str, input_payload: Any) -> None:
+        if run_id in self._runs:
+            raise ValueError(f"Run '{run_id}' already exists")
         now = utc_now()
         self._runs[run_id] = RunRecord(
             run_id=run_id,

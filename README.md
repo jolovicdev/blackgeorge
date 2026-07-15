@@ -50,6 +50,12 @@ See `examples/coding_agent` for a full end-to-end example.
 uv add blackgeorge
 ```
 
+Vector memory is optional because ChromaDB adds a substantial dependency tree:
+
+```
+uv add "blackgeorge[vector]"
+```
+
 For development setup, see `docs/development.md`.
 
 ## Quick Start: build your first AI agent

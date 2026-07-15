@@ -11,6 +11,8 @@ class Toolbelt:
                 self.add(tool)
 
     def add(self, tool: Tool) -> None:
+        if tool.name in self._tools:
+            raise ValueError(f"Tool name already registered: {tool.name}")
         self._tools[tool.name] = tool
 
     def resolve(self, name: str) -> Tool | None:

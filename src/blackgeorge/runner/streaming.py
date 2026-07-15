@@ -1,8 +1,8 @@
-import json
 from typing import Any, cast
 
 from pydantic import BaseModel, TypeAdapter
 
+from blackgeorge.core.tool_arguments import parse_tool_arguments
 from blackgeorge.core.tool_call import ToolCall
 from blackgeorge.utils import new_id
 
@@ -75,20 +75,9 @@ def streamed_tool_calls(states: list[dict[str, Any]]) -> list[ToolCall]:
         else:
             argument_parts = state.get("arguments_parts")
             argument_text = "".join(argument_parts) if isinstance(argument_parts, list) else ""
-            if argument_text:
-                try:
-                    parsed_arguments = json.loads(argument_text)
-                    if isinstance(parsed_arguments, dict):
-                        arguments = parsed_arguments
-                    else:
-                        error = append_tool_error(
-                            error, "Tool arguments JSON must decode to object"
-                        )
-                except json.JSONDecodeError as exc:
-                    error = append_tool_error(
-                        error,
-                        f"Invalid JSON in tool arguments: {exc}. Raw: {argument_text[:100]}",
-                    )
+            arguments, argument_error = parse_tool_arguments(argument_text)
+            if argument_error is not None:
+                error = append_tool_error(error, argument_error)
 
         call_id_raw = state.get("id")
         call_id = call_id_raw if isinstance(call_id_raw, str) and call_id_raw else new_id()

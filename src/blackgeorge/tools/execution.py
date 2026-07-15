@@ -3,29 +3,26 @@ import concurrent.futures
 import contextlib
 import json
 import time
-import weakref
 from inspect import isawaitable, iscoroutinefunction
 from typing import Any
 
 from pydantic import BaseModel
 
-from blackgeorge.async_utils import run_coroutine_in_thread, run_coroutine_sync
+from blackgeorge.async_utils import run_coroutine_sync
 from blackgeorge.core.tool_call import ToolCall
 from blackgeorge.exceptions import ToolExecutionError, ToolTimeoutError, ToolValidationError
 from blackgeorge.tools.base import ProgressCallback, Tool, ToolResult
 
 _shared_executor: concurrent.futures.ThreadPoolExecutor | None = None
-_executor_refs: weakref.WeakSet[concurrent.futures.ThreadPoolExecutor] = weakref.WeakSet()
 
 
 def get_shared_executor() -> concurrent.futures.ThreadPoolExecutor:
     global _shared_executor
-    if _shared_executor is None or _shared_executor._shutdown:  # type: ignore[attr-defined]
+    if _shared_executor is None:
         _shared_executor = concurrent.futures.ThreadPoolExecutor(
             max_workers=10,
             thread_name_prefix="blackgeorge-tool-",
         )
-        _executor_refs.add(_shared_executor)
     return _shared_executor
 
 
@@ -61,17 +58,9 @@ def _validate_output(result: Any, output_type: type[BaseModel] | None) -> tuple[
         return result, f"Output validation failed: {exc}"
 
 
-def _run_coroutine_in_thread(coro: Any) -> Any:
-    return run_coroutine_in_thread(coro)
-
-
-def _run_coroutine_sync(coro: Any) -> Any:
-    return run_coroutine_sync(coro)
-
-
 def _run_sync_call(tool: Tool, args: dict[str, Any]) -> Any:
     if iscoroutinefunction(tool.callable):
-        return _run_coroutine_sync(tool.callable(**args))
+        return run_coroutine_sync(tool.callable(**args))
     return tool.callable(**args)
 
 
@@ -105,7 +94,11 @@ def _post_hook_error_result(tool: Tool, result: ToolResult, exc: Exception) -> T
 def _sync_invoke_hook(hook: Any, *args: Any) -> None:
     result = hook(*args)
     if isawaitable(result):
-        _run_coroutine_sync(result)
+
+        async def await_hook() -> None:
+            await result
+
+        run_coroutine_sync(await_hook())
 
 
 def _sync_pre_hooks(tool: Tool, call: ToolCall) -> None:
@@ -284,7 +277,7 @@ async def _execute_once(
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task
-        return ToolResult(error="Tool execution cancelled", cancelled=True)
+        raise
     except Exception as original_exc:
         if isinstance(original_exc, (ToolExecutionError, ToolTimeoutError, ToolValidationError)):
             return ToolResult(
@@ -332,7 +325,8 @@ async def aexecute_tool(
 
     for attempt in range(retries + 1):
         if cancel_event is not None and cancel_event.is_set():
-            return ToolResult(error="Cancelled", cancelled=True)
+            last_result = ToolResult(error="Cancelled", cancelled=True)
+            break
 
         if on_progress is not None and attempt > 0:
             on_progress(f"Retry attempt {attempt}/{retries}")
@@ -349,7 +343,16 @@ async def aexecute_tool(
             delay = _backoff_delay(retry_delay, attempt)
             if on_progress is not None:
                 on_progress(f"Waiting {delay:.1f}s before retry")
-            await asyncio.sleep(delay)
+            if cancel_event is None:
+                await asyncio.sleep(delay)
+            else:
+                try:
+                    await asyncio.wait_for(cancel_event.wait(), timeout=delay)
+                except TimeoutError:
+                    pass
+                else:
+                    last_result = ToolResult(error="Cancelled during retry wait", cancelled=True)
+                    break
 
     tool_result = last_result or ToolResult(error="No execution result")
 

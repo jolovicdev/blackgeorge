@@ -309,6 +309,7 @@ report = desk.run(workforce, job)
 ## Thread safety
 
 Both `Blackboard` and `Channel` are thread-safe. They use internal locks to ensure safe concurrent access from multiple workers.
+Mutable values, message content, and metadata are copied at the API boundary so callers cannot alter stored collaboration state without an explicit write.
 
 ## Async methods
 
@@ -326,8 +327,9 @@ deleted = await blackboard.adelete("key")
 keys = await blackboard.akeys()
 entries = await blackboard.aall_entries()
 await blackboard.asubscribe("key", callback)
-await blackgeorge.asubscribe_all(callback)
+await blackboard.asubscribe_all(callback)
 await blackboard.aunsubscribe("key", callback)
+await blackboard.aunsubscribe_all(callback)
 await blackboard.aclear()
 ```
 

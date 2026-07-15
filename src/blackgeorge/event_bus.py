@@ -1,6 +1,5 @@
 import asyncio
 from collections.abc import Awaitable, Callable
-from inspect import iscoroutinefunction
 from typing import Any
 
 from blackgeorge.core.event import Event
@@ -34,8 +33,12 @@ class EventBus:
         handlers = list(self._handlers.get(event.type, []))
         handlers.extend(self._handlers.get("*", []))
         for handler in handlers:
-            result = handler(event)
-            if iscoroutinefunction(handler) or isinstance(result, Awaitable):
+            try:
+                result = handler(event)
+            except Exception as exc:
+                self._record_error(event.type, exc)
+                continue
+            if isinstance(result, Awaitable):
                 self._run_async(result, event.type)
 
     def _run_async(self, awaitable: Awaitable[Any], event_type: str | None) -> None:
@@ -45,7 +48,12 @@ class EventBus:
             if isinstance(awaitable, asyncio.Future) and awaitable.get_loop().is_running():
                 self._track_task(awaitable, event_type)
                 return
-            asyncio.run(self._await(awaitable))
+            try:
+                asyncio.run(self._await(awaitable))
+            except asyncio.CancelledError:
+                return
+            except BaseException as exc:
+                self._record_error(event_type, exc)
             return
         task = asyncio.ensure_future(awaitable, loop=loop)
         self._track_task(task, event_type)
@@ -60,15 +68,15 @@ class EventBus:
             return
         exc = task.exception()
         if exc is not None:
-            if isinstance(exc, Exception):
-                error = EventHandlerError(event_type or "unknown", exc)
-            else:
-                error = EventHandlerError(event_type or "unknown", Exception(str(exc)))
-            self._errors.append(error)
-            payload = {"error": str(exc), "error_type": type(exc).__name__}
-            if event_type is not None:
-                payload["event_type"] = event_type
-            self._logger.error("event handler failed", **payload)
+            self._record_error(event_type, exc)
+
+    def _record_error(self, event_type: str | None, exc: BaseException) -> None:
+        handler_error = exc if isinstance(exc, Exception) else Exception(str(exc))
+        self._errors.append(EventHandlerError(event_type or "unknown", handler_error))
+        payload = {"error": str(exc), "error_type": type(exc).__name__}
+        if event_type is not None:
+            payload["event_type"] = event_type
+        self._logger.error("event handler failed", **payload)
 
     async def _await(self, awaitable: Awaitable[Any]) -> Any:
         return await awaitable
@@ -77,12 +85,14 @@ class EventBus:
         handlers = list(self._handlers.get(event.type, []))
         handlers.extend(self._handlers.get("*", []))
         for handler in handlers:
-            if iscoroutinefunction(handler):
-                await handler(event)
-            else:
+            try:
                 result = handler(event)
                 if isinstance(result, Awaitable):
                     await result
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                self._record_error(event.type, exc)
 
     def get_errors(self) -> list[EventHandlerError]:
         return list(self._errors)

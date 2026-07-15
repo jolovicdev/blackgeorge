@@ -10,6 +10,8 @@ def build_input_model(fn: Any) -> type[BaseModel]:
     fields: dict[str, Any] = {}
 
     for name, param in signature.parameters.items():
+        if param.kind is inspect.Parameter.POSITIONAL_ONLY:
+            raise TypeError(f"Tool parameter '{name}' must accept keyword arguments")
         if param.kind in {inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD}:
             continue
         annotation = hints.get(name, Any)

@@ -14,7 +14,7 @@ bus = EventBus()
 
 ### Error collection
 
-EventBus collects errors from async handlers for inspection:
+EventBus collects errors from sync and async handlers for inspection without preventing other handlers from running:
 
 ```python
 bus = EventBus()

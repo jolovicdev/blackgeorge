@@ -30,13 +30,13 @@ def _compute_latency_ms(
     return int((end_time - start_time) * 1000)
 
 
-_callback_context: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar(
-    "_callback_context", default=None
+callback_context: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar(
+    "blackgeorge_callback_context", default=None
 )
 
 
 def emit_llm_started(model: str, messages_count: int, tools_count: int) -> None:
-    context = _callback_context.get()
+    context = callback_context.get()
     if not context:
         return
     emit = context.get("emit")
@@ -55,7 +55,7 @@ def emit_llm_started(model: str, messages_count: int, tools_count: int) -> None:
 
 
 def emit_llm_completed(model: str, response: Any) -> None:
-    context = _callback_context.get()
+    context = callback_context.get()
     if not context:
         return
     emit = context.get("emit")
@@ -109,7 +109,7 @@ def emit_llm_completed(model: str, response: Any) -> None:
 
 
 def emit_llm_failed(model: str, exception: Exception | None) -> None:
-    context = _callback_context.get()
+    context = callback_context.get()
     if not context:
         return
     emit = context.get("emit")

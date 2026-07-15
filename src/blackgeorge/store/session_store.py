@@ -46,5 +46,11 @@ class SessionStore:
     def add_messages(self, session_id: str, messages: list[Message]) -> None:
         raise NotImplementedError
 
+    def replace_messages(self, session_id: str, messages: list[Message]) -> None:
+        raise NotImplementedError
+
     def get_messages(self, session_id: str) -> list[Message]:
         raise NotImplementedError
+
+    def close(self) -> None:
+        return None

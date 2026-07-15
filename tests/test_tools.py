@@ -2,9 +2,10 @@ import asyncio
 
 import pytest
 
+from blackgeorge.async_utils import run_coroutine_sync
 from blackgeorge.core.tool_call import ToolCall
-from blackgeorge.tools import execute_tool, tool, transfer_to_agent_tool
-from blackgeorge.tools.execution import _run_coroutine_sync, aexecute_tool
+from blackgeorge.tools import Toolbelt, execute_tool, tool, transfer_to_agent_tool
+from blackgeorge.tools.execution import aexecute_tool
 from blackgeorge.worker_messages import tool_message
 
 
@@ -16,6 +17,19 @@ def test_tool_schema_inference() -> None:
     assert "properties" in add.schema
     assert "a" in add.schema["properties"]
     assert "b" in add.schema["properties"]
+
+
+def test_toolbelt_rejects_duplicate_tool_names() -> None:
+    @tool(name="duplicate")
+    def first() -> str:
+        return "first"
+
+    @tool(name="duplicate")
+    def second() -> str:
+        return "second"
+
+    with pytest.raises(ValueError, match="Tool name already registered: duplicate"):
+        Toolbelt([first, second])
 
 
 def test_tool_execution() -> None:
@@ -263,5 +277,5 @@ async def test_run_coroutine_sync_from_running_loop() -> None:
         await asyncio.sleep(0)
         return "ok"
 
-    result = _run_coroutine_sync(coro())
+    result = run_coroutine_sync(coro())
     assert result == "ok"

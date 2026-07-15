@@ -52,3 +52,5 @@ The in-memory store is useful for tests or ephemeral runs. It stores records and
 ## Custom stores
 
 To build a custom run store, implement the `RunStore` interface and pass it to `Desk(run_store=...)`.
+Stores passed into `Desk` are caller-owned and remain open when the desk closes. The desk closes only
+the run and memory stores it creates itself.

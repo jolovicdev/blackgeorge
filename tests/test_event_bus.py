@@ -27,6 +27,30 @@ def test_eventbus_runs_async_handler() -> None:
     assert ran["value"] is True
 
 
+def test_eventbus_collects_async_handler_error_without_running_loop() -> None:
+    bus = EventBus()
+
+    async def handler(event: Event) -> None:
+        raise ValueError("boom")
+
+    bus.subscribe("x", handler)
+    event = Event(
+        event_id=new_id(),
+        type="x",
+        timestamp=utc_now(),
+        run_id="r",
+        source="test",
+        payload={},
+    )
+
+    bus.emit(event)
+
+    errors = bus.get_errors()
+    assert len(errors) == 1
+    assert errors[0].event_type == "x"
+    assert str(errors[0].handler_error) == "boom"
+
+
 def test_eventbus_wildcard_subscription_receives_all_events() -> None:
     bus = EventBus()
     seen: list[str] = []
@@ -72,6 +96,35 @@ def test_eventbus_unsubscribe_handler() -> None:
     bus.emit(event)
 
     assert count["value"] == 1
+
+
+def test_eventbus_collects_sync_handler_error_and_continues() -> None:
+    bus = EventBus()
+    seen: list[str] = []
+
+    def failing_handler(event: Event) -> None:
+        raise ValueError("boom")
+
+    def working_handler(event: Event) -> None:
+        seen.append(event.type)
+
+    bus.subscribe("x", failing_handler)
+    bus.subscribe("x", working_handler)
+    event = Event(
+        event_id=new_id(),
+        type="x",
+        timestamp=utc_now(),
+        run_id="r",
+        source="test",
+        payload={},
+    )
+
+    bus.emit(event)
+
+    assert seen == ["x"]
+    errors = bus.get_errors()
+    assert len(errors) == 1
+    assert str(errors[0].handler_error) == "boom"
 
 
 async def test_eventbus_accepts_task_return() -> None:
@@ -143,3 +196,32 @@ async def test_eventbus_aemit_wildcard_subscription_receives_event() -> None:
     )
 
     assert seen == ["x"]
+
+
+async def test_eventbus_aemit_collects_handler_error_and_continues() -> None:
+    bus = EventBus()
+    seen: list[str] = []
+
+    async def failing_handler(event: Event) -> None:
+        raise ValueError("boom")
+
+    async def working_handler(event: Event) -> None:
+        seen.append(event.type)
+
+    bus.subscribe("x", failing_handler)
+    bus.subscribe("x", working_handler)
+    event = Event(
+        event_id=new_id(),
+        type="x",
+        timestamp=utc_now(),
+        run_id="r",
+        source="test",
+        payload={},
+    )
+
+    await bus.aemit(event)
+
+    assert seen == ["x"]
+    errors = bus.get_errors()
+    assert len(errors) == 1
+    assert str(errors[0].handler_error) == "boom"

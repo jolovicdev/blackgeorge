@@ -1,6 +1,14 @@
 from pathlib import Path
 
+import pytest
+from pydantic import BaseModel
+
 from blackgeorge.memory.vector import DeterministicEmbeddingFunction, VectorMemoryStore, _chunk_text
+
+
+class VectorValue(BaseModel):
+    name: str
+    count: int
 
 
 def test_chunk_text_small() -> None:
@@ -22,6 +30,14 @@ def test_vector_memory_store_write_read(tmp_path: Path) -> None:
     store.write("key1", {"value": 42}, "test_scope")
     result = store.read("key1", "test_scope")
     assert result == {"value": 42}
+
+
+def test_vector_memory_store_serializes_pydantic_models(tmp_path: Path) -> None:
+    store = VectorMemoryStore(str(tmp_path / "chroma_db"))
+
+    store.write("model", VectorValue(name="saved", count=2), "scope")
+
+    assert store.read("model", "scope") == {"name": "saved", "count": 2}
 
 
 def test_vector_memory_store_write_string(tmp_path: Path) -> None:
@@ -62,6 +78,15 @@ def test_vector_memory_store_search_scoped(tmp_path: Path) -> None:
     assert "doc2" not in keys
 
 
+def test_vector_memory_store_search_limit_validation(tmp_path: Path) -> None:
+    store = VectorMemoryStore(str(tmp_path / "chroma_db"))
+    store.write("doc", "hello", "scope")
+
+    assert store.search("hello", "scope", top_k=0) == []
+    with pytest.raises(ValueError, match="top_k must be non-negative"):
+        store.search("hello", "scope", top_k=-1)
+
+
 def test_vector_memory_store_reset(tmp_path: Path) -> None:
     path = tmp_path / "chroma_db"
     store = VectorMemoryStore(str(path))
@@ -81,6 +106,16 @@ def test_vector_memory_store_overwrite(tmp_path: Path) -> None:
     store.write("key1", "updated", "scope1")
     result = store.read("key1", "scope1")
     assert result == "updated"
+
+
+def test_vector_memory_store_ids_do_not_collide_on_delimiters(tmp_path: Path) -> None:
+    store = VectorMemoryStore(str(tmp_path / "chroma_db"))
+
+    store.write("c", "first", "a:b")
+    store.write("b:c", "second", "a")
+
+    assert store.read("c", "a:b") == "first"
+    assert store.read("b:c", "a") == "second"
 
 
 def test_vector_memory_store_chunked_document(tmp_path: Path) -> None:
