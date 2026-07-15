@@ -60,6 +60,70 @@ def test_channel_broadcast_all_mode() -> None:
     assert len(msgs_a_again) >= 1
 
 
+def test_channel_clear_recipient_discards_pending_broadcasts() -> None:
+    channel = Channel()
+    channel.send("a", "b", "direct")
+    channel.broadcast("a", "broadcast")
+
+    channel.clear("b")
+
+    assert channel.receive("b") == []
+
+
+def test_channel_receive_orders_direct_and_broadcast_messages() -> None:
+    channel = Channel()
+    channel.broadcast("a", "first")
+    channel.send("a", "b", "second")
+
+    messages = channel.receive("b")
+
+    assert [message.content for message in messages] == ["first", "second"]
+
+
+def test_channel_copies_metadata() -> None:
+    channel = Channel()
+    metadata = {"priority": "high"}
+    message = channel.send("a", "b", "hello", metadata)
+
+    metadata["priority"] = "low"
+
+    assert message.metadata == {"priority": "high"}
+
+
+def test_channel_isolates_stored_mutable_payloads() -> None:
+    channel = Channel()
+    content = {"items": ["original"]}
+    metadata = {"routing": {"priority": "high"}}
+
+    sent = channel.send("a", "b", content, metadata)
+    content["items"].append("input mutation")
+    metadata["routing"]["priority"] = "low"
+    sent.content["items"].append("return mutation")
+    sent.metadata["routing"]["priority"] = "none"
+
+    first_peek = channel.peek("b")[0]
+    assert first_peek.content == {"items": ["original"]}
+    assert first_peek.metadata == {"routing": {"priority": "high"}}
+
+    first_peek.content["items"].append("peek mutation")
+    first_peek.metadata["routing"]["priority"] = "low"
+
+    second_peek = channel.peek("b")[0]
+    assert second_peek.content == {"items": ["original"]}
+    assert second_peek.metadata == {"routing": {"priority": "high"}}
+
+
+def test_channel_rejects_unknown_broadcast_mode() -> None:
+    channel = Channel()
+
+    try:
+        channel.receive("b", broadcast_mode="invalid")
+    except ValueError as exc:
+        assert str(exc) == "broadcast_mode must be 'one_shot' or 'all'"
+    else:
+        raise AssertionError("Invalid broadcast mode was accepted")
+
+
 def test_channel_isolation() -> None:
     channel = Channel()
     channel.send("a", "b", "for_b")
@@ -95,6 +159,36 @@ def test_blackboard_overwrite() -> None:
     assert entry.author == "b"
 
 
+def test_blackboard_isolates_stored_mutable_values() -> None:
+    bb = Blackboard()
+    value = {"items": ["original"]}
+    bb.write("key", value, "writer")
+    value["items"].append("input mutation")
+
+    read_value = bb.read("key")
+    read_value["items"].append("read mutation")
+    entry = bb.read_entry("key")
+    assert entry is not None
+    entry.value["items"].append("entry mutation")
+    entries = bb.all_entries()
+    entries["key"].value["items"].append("entries mutation")
+
+    assert bb.read("key") == {"items": ["original"]}
+
+
+def test_blackboard_callback_cannot_mutate_stored_value() -> None:
+    bb = Blackboard()
+
+    def mutate_value(key: str, value: object, author: str) -> None:
+        assert isinstance(value, dict)
+        value["items"].append("callback mutation")
+
+    bb.subscribe("key", mutate_value)
+    bb.write("key", {"items": ["original"]}, "writer")
+
+    assert bb.read("key") == {"items": ["original"]}
+
+
 def test_blackboard_subscription() -> None:
     bb = Blackboard()
     notifications: list[tuple[str, object, str]] = []
@@ -120,6 +214,20 @@ def test_blackboard_global_subscription() -> None:
     bb.write("b", 2, "y")
     assert "a" in notifications
     assert "b" in notifications
+
+
+def test_blackboard_unsubscribe_all() -> None:
+    bb = Blackboard()
+    notifications: list[str] = []
+
+    def callback(key: str, value: object, author: str) -> None:
+        notifications.append(key)
+
+    bb.subscribe_all(callback)
+    bb.unsubscribe_all(callback)
+    bb.write("key", "value", "writer")
+
+    assert notifications == []
 
 
 def test_blackboard_delete() -> None:
