@@ -52,10 +52,12 @@ class InMemorySessionStore(SessionStore):
         limit: int | None = None,
     ) -> list[SessionRecord]:
         sessions = list(self._sessions.values())
-        if worker_name:
+        if worker_name is not None:
             sessions = [s for s in sessions if s.worker_name == worker_name]
         sessions.sort(key=lambda s: s.updated_at, reverse=True)
-        if limit:
+        if limit is not None:
+            if limit < 0:
+                raise ValueError("limit must be non-negative")
             sessions = sessions[:limit]
         return sessions
 
@@ -67,6 +69,9 @@ class InMemorySessionStore(SessionStore):
         if session_id not in self._messages:
             self._messages[session_id] = []
         self._messages[session_id].extend(messages)
+
+    def replace_messages(self, session_id: str, messages: list[Message]) -> None:
+        self._messages[session_id] = list(messages)
 
     def get_messages(self, session_id: str) -> list[Message]:
         return list(self._messages.get(session_id, []))

@@ -1,35 +1,19 @@
 import json
 import sqlite3
 import threading
-from dataclasses import asdict, is_dataclass
 from datetime import datetime
-from typing import Any, cast
-
-from pydantic import BaseModel
+from typing import Any
 
 from blackgeorge.core.event import Event
+from blackgeorge.core.serialization import to_json_value
 from blackgeorge.core.types import RunStatus
 from blackgeorge.store.base import RunRecord, RunStore
 from blackgeorge.store.state import RunState
 from blackgeorge.utils import utc_now
 
 
-def _normalize(value: Any) -> Any:
-    if isinstance(value, BaseModel):
-        return value.model_dump(mode="json", warnings=False)
-    if is_dataclass(value) and not isinstance(value, type):
-        return asdict(cast(Any, value))
-    if isinstance(value, dict):
-        return {key: _normalize(item) for key, item in value.items()}
-    if isinstance(value, list):
-        return [_normalize(item) for item in value]
-    if isinstance(value, tuple):
-        return [_normalize(item) for item in value]
-    return value
-
-
 def _serialize(value: Any) -> str:
-    return json.dumps(_normalize(value), ensure_ascii=True)
+    return json.dumps(to_json_value(value), ensure_ascii=True)
 
 
 def _serialize_state(state: RunState | None) -> str | None:
@@ -53,8 +37,7 @@ class SQLiteRunStore(RunStore):
         self._path = path
         self._lock = threading.Lock()
         self._conn = sqlite3.connect(self._path, check_same_thread=False)
-        self._event_buffer: dict[str, list[Event]] = {}
-        self._event_buffer_limit = 128
+        self._closed = False
         with self._lock, self._conn:
             self._conn.execute(
                 """
@@ -88,48 +71,18 @@ class SQLiteRunStore(RunStore):
             self._conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status)")
             self._conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_created_at ON runs(created_at)")
 
-    def _connect(self) -> sqlite3.Connection:
-        return self._conn
-
-    def _event_row(self, event: Event) -> tuple[str, str, str, str, str]:
-        return (
-            event.event_id,
-            event.run_id,
-            event.type,
-            _serialize(event.model_dump(mode="json", warnings=False)),
-            event.timestamp.isoformat(),
-        )
-
-    def _flush_events_locked(self, run_id: str | None = None) -> None:
-        conn = self._connect()
-        run_ids = list(self._event_buffer.keys()) if run_id is None else [run_id]
-        for current_run_id in run_ids:
-            events = self._event_buffer.get(current_run_id)
-            if not events:
-                continue
-            rows = [self._event_row(event) for event in events]
-            with conn:
-                conn.executemany(
-                    """
-                    INSERT INTO events (id, run_id, type, payload, timestamp)
-                    VALUES (?, ?, ?, ?, ?)
-                    """,
-                    rows,
-                )
-            self._event_buffer.pop(current_run_id, None)
-
     def create_run(self, run_id: str, input_payload: Any) -> None:
         now = utc_now().isoformat()
-        with self._lock:
-            conn = self._connect()
-            with conn:
-                conn.execute(
+        try:
+            with self._lock, self._conn:
+                self._conn.execute(
                     """
-                    INSERT INTO runs (
-                        id, status, input, output, output_json, state_json, created_at, updated_at
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
+                        INSERT INTO runs (
+                            id, status, input, output, output_json, state_json,
+                            created_at, updated_at
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
                     (
                         run_id,
                         "running",
@@ -141,6 +94,8 @@ class SQLiteRunStore(RunStore):
                         now,
                     ),
                 )
+        except sqlite3.IntegrityError as exc:
+            raise ValueError(f"Run '{run_id}' already exists") from exc
 
     def update_run(
         self,
@@ -151,31 +106,26 @@ class SQLiteRunStore(RunStore):
         state: RunState | None,
     ) -> None:
         now = utc_now().isoformat()
-        with self._lock:
-            self._flush_events_locked(run_id)
-            conn = self._connect()
-            with conn:
-                conn.execute(
-                    """
+        with self._lock, self._conn:
+            self._conn.execute(
+                """
                     UPDATE runs
                     SET status = ?, output = ?, output_json = ?, state_json = ?, updated_at = ?
                     WHERE id = ?
                     """,
-                    (
-                        status,
-                        output,
-                        _serialize(output_json) if output_json is not None else None,
-                        _serialize_state(state),
-                        now,
-                        run_id,
-                    ),
-                )
+                (
+                    status,
+                    output,
+                    _serialize(output_json) if output_json is not None else None,
+                    _serialize_state(state),
+                    now,
+                    run_id,
+                ),
+            )
 
     def get_run(self, run_id: str) -> RunRecord | None:
         with self._lock:
-            self._flush_events_locked(run_id)
-            conn = self._connect()
-            cursor = conn.execute(
+            cursor = self._conn.execute(
                 """
                 SELECT id, status, input, output, output_json, state_json, created_at, updated_at
                 FROM runs WHERE id = ?
@@ -188,8 +138,8 @@ class SQLiteRunStore(RunStore):
         input_payload = json.loads(row[2]) if row[2] else None
         output_json = json.loads(row[4]) if row[4] else None
         state = _deserialize_state(row[5])
-        created_at = datetime_from_iso(row[6])
-        updated_at = datetime_from_iso(row[7])
+        created_at = datetime.fromisoformat(row[6])
+        updated_at = datetime.fromisoformat(row[7])
         return RunRecord(
             run_id=row[0],
             status=row[1],
@@ -202,18 +152,26 @@ class SQLiteRunStore(RunStore):
         )
 
     def add_event(self, event: Event) -> None:
-        with self._lock:
-            buffered = self._event_buffer.setdefault(event.run_id, [])
-            buffered.append(event)
-            self._flush_events_locked(event.run_id)
+        with self._lock, self._conn:
+            self._conn.execute(
+                """
+                    INSERT INTO events (id, run_id, type, payload, timestamp)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                (
+                    event.event_id,
+                    event.run_id,
+                    event.type,
+                    _serialize(event.model_dump(mode="json", warnings=False)),
+                    event.timestamp.isoformat(),
+                ),
+            )
 
     def get_events(self, run_id: str) -> list[Event]:
         with self._lock:
-            self._flush_events_locked(run_id)
-            conn = self._connect()
-            cursor = conn.execute(
+            cursor = self._conn.execute(
                 """
-                SELECT payload FROM events WHERE run_id = ? ORDER BY timestamp ASC
+                SELECT payload FROM events WHERE run_id = ? ORDER BY timestamp ASC, rowid ASC
                 """,
                 (run_id,),
             )
@@ -222,9 +180,12 @@ class SQLiteRunStore(RunStore):
 
     def close(self) -> None:
         with self._lock:
-            self._flush_events_locked()
-            self._conn.close()
+            if not self._closed:
+                self._conn.close()
+                self._closed = True
 
+    def __enter__(self) -> "SQLiteRunStore":
+        return self
 
-def datetime_from_iso(value: str) -> datetime:
-    return datetime.fromisoformat(value)
+    def __exit__(self, *_args: Any) -> None:
+        self.close()

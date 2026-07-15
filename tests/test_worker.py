@@ -1,6 +1,7 @@
 import json
 import tempfile
 import threading
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -21,6 +22,65 @@ from blackgeorge.tools import tool, transfer_to_agent_tool
 from blackgeorge.worker import Worker
 from blackgeorge.worker_messages import replace_tool_call, structured_content
 from tests.utils import FakeAdapter
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"max_tokens": 0}, "max_tokens must be >= 1"),
+        ({"structured_output_retries": -1}, "structured_output_retries must be >= 0"),
+        ({"max_iterations": 0}, "max_iterations must be >= 1"),
+        ({"max_tool_calls": -1}, "max_tool_calls must be >= 0"),
+        ({"num_retries": -1}, "num_retries must be >= 0"),
+        ({"max_context_messages": 0}, "max_context_messages must be >= 1"),
+    ],
+)
+def test_desk_rejects_invalid_execution_limits(kwargs: dict[str, int], message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        Desk(model="fake", run_store=InMemoryRunStore(), **kwargs)
+
+
+def test_desk_rejects_invalid_model_settings() -> None:
+    with pytest.raises(ValueError, match="model must not be empty"):
+        Desk(model=" ", run_store=InMemoryRunStore())
+    with pytest.raises(ValueError, match="temperature must be non-negative"):
+        Desk(model="fake", temperature=-0.1, run_store=InMemoryRunStore())
+
+
+def test_desk_with_external_store_does_not_create_storage_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    Desk(model="fake", run_store=InMemoryRunStore())
+
+    assert not (tmp_path / ".blackgeorge").exists()
+
+
+def test_closed_desk_rejects_new_work(tmp_path: Path) -> None:
+    desk = Desk(
+        model="fake",
+        adapter=FakeAdapter([ModelResponse(content="unused", tool_calls=[], usage={}, raw={})]),
+        run_store=InMemoryRunStore(),
+        storage_dir=str(tmp_path),
+    )
+    worker = Worker(name="Worker", model="fake")
+    desk.close()
+
+    assert desk.closed is True
+    with pytest.raises(RuntimeError, match="Desk is closed"):
+        desk.run(worker, Job(input="run"))
+    with pytest.raises(RuntimeError, match="Desk is closed"):
+        desk.flow([])
+    with pytest.raises(RuntimeError, match="Desk is closed"):
+        desk.session(worker)
+
+
+def test_worker_rejects_empty_name_and_model() -> None:
+    with pytest.raises(ValueError, match="Worker name must not be empty"):
+        Worker(name=" ")
+    with pytest.raises(ValueError, match="Worker model must not be empty"):
+        Worker(name="Worker", model=" ")
 
 
 class CapturingToolsAdapter(FakeAdapter):
@@ -968,6 +1028,37 @@ def test_max_tool_calls_limit_enforced() -> None:
     assert report.status == "failed"
     assert len(report.tool_calls) == 3
     assert any("Max tool calls exceeded" in error for error in report.errors)
+
+
+def test_confirmation_does_not_bypass_max_tool_calls() -> None:
+    @tool(requires_confirmation=True)
+    def risky() -> str:
+        return "ok"
+
+    responses = [
+        ModelResponse(
+            content=None,
+            tool_calls=[
+                ToolCall(id=f"call_{index}", name="risky", arguments={}) for index in range(5)
+            ],
+            usage={},
+            raw={},
+        )
+    ]
+    desk = Desk(
+        model="fake",
+        adapter=FakeAdapter(responses),
+        run_store=InMemoryRunStore(),
+        max_tool_calls=2,
+    )
+    worker = Worker(name="Worker", model="fake", tools=[risky])
+
+    report = desk.run(worker, Job(input="run"))
+
+    assert report.status == "failed"
+    assert report.pending_action is None
+    assert len(report.tool_calls) == 2
+    assert "Max tool calls exceeded" in report.errors
 
 
 def test_streaming_with_content_only() -> None:
@@ -1989,3 +2080,51 @@ def test_stream_token_events_include_type_field() -> None:
     assert "Hello" in content_tokens
     assert '{"text": ' in tool_tokens
     assert '"hi"' in tool_tokens
+
+
+def test_streamed_tool_call_reuses_position_when_id_arrives_late() -> None:
+    from tests.utils import StreamingAdapter
+
+    @tool()
+    async def echo(text: str) -> str:
+        return f"echo:{text}"
+
+    streams = [
+        [
+            {
+                "choices": [
+                    {"delta": {"tool_calls": [{"function": {"name": "echo", "arguments": ""}}]}}
+                ]
+            },
+            {
+                "choices": [
+                    {
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "index": 0,
+                                    "id": "call_1",
+                                    "function": {"arguments": '{"text":"hi"}'},
+                                }
+                            ]
+                        }
+                    }
+                ]
+            },
+        ],
+        [{"choices": [{"delta": {"content": "done"}}]}],
+    ]
+    desk = Desk(
+        model="fake",
+        adapter=StreamingAdapter(streams),
+        run_store=InMemoryRunStore(),
+        stream=True,
+    )
+    worker = Worker(name="Worker", model="fake", tools=[echo])
+
+    report = desk.run(worker, Job(input="run"))
+
+    assert report.status == "completed"
+    assert len(report.tool_calls) == 1
+    assert report.tool_calls[0].id == "call_1"
+    assert report.tool_calls[0].arguments == {"text": "hi"}

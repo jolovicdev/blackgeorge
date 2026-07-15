@@ -41,3 +41,6 @@ class RunStore:
 
     def get_events(self, run_id: str) -> list[Event]:
         raise NotImplementedError
+
+    def close(self) -> None:
+        return None

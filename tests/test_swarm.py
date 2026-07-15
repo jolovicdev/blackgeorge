@@ -1,3 +1,4 @@
+import asyncio
 from typing import Any
 
 import pytest
@@ -142,6 +143,50 @@ class FailThenSucceedAdapter(BaseModelAdapter):
             drop_params=drop_params,
             extra_body=extra_body,
         )
+
+
+class BlockingAdapter(BaseModelAdapter):
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    def complete(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        tool_choice: str | dict[str, Any] | None,
+        temperature: float | None,
+        max_tokens: int | None,
+        stream: bool,
+        stream_options: dict[str, Any] | None,
+        thinking: dict[str, Any] | None = None,
+        drop_params: bool | None = None,
+        extra_body: dict[str, Any] | None = None,
+        num_retries: int | None = None,
+    ) -> ModelResponse:
+        raise RuntimeError("BlockingAdapter only supports async completion")
+
+    async def acomplete(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        tool_choice: str | dict[str, Any] | None,
+        temperature: float | None,
+        max_tokens: int | None,
+        stream: bool,
+        stream_options: dict[str, Any] | None,
+        thinking: dict[str, Any] | None = None,
+        drop_params: bool | None = None,
+        extra_body: dict[str, Any] | None = None,
+        num_retries: int | None = None,
+    ) -> ModelResponse:
+        self.started.set()
+        await self.release.wait()
+        return ModelResponse(content="child ok", tool_calls=[], usage={}, raw={})
 
 
 @pytest.mark.asyncio
@@ -322,6 +367,17 @@ async def test_subworker_rejects_disallowed_model() -> None:
     assert result.error is not None
     assert "not allowed" in result.error
 
+    allowed_call = call.model_copy(
+        update={
+            "id": "spawn-4-allowed",
+            "arguments": {**call.arguments, "model": "fake"},
+        }
+    )
+    allowed_result = await aexecute_tool(spawn_tool, allowed_call)
+
+    assert allowed_result.error is None
+    assert allowed_result.content == "child ok"
+
 
 @pytest.mark.asyncio
 async def test_subworker_budget_limit_blocks_additional_spawns() -> None:
@@ -356,6 +412,38 @@ async def test_subworker_budget_limit_blocks_additional_spawns() -> None:
 
     first_result = await aexecute_tool(spawn_tool, first_call)
     second_result = await aexecute_tool(spawn_tool, second_call)
+
+    assert first_result.error is None
+    assert second_result.error is not None
+    assert "budget exceeded" in second_result.error
+
+
+@pytest.mark.asyncio
+async def test_subworker_budget_blocks_concurrent_spawns() -> None:
+    adapter = BlockingAdapter()
+    desk = Desk(
+        model="fake",
+        adapter=adapter,
+        run_store=InMemoryRunStore(),
+    )
+    spawn_tool = create_subworker_tool(
+        desk=desk,
+        default_model="fake",
+        max_subworkers=1,
+    )
+    arguments = {
+        "name": "ChildWorker",
+        "instructions": "Return output.",
+        "task": "run",
+    }
+    first_call = ToolCall(id="spawn-concurrent-1", name=spawn_tool.name, arguments=arguments)
+    second_call = ToolCall(id="spawn-concurrent-2", name=spawn_tool.name, arguments=arguments)
+
+    first_task = asyncio.create_task(aexecute_tool(spawn_tool, first_call))
+    await adapter.started.wait()
+    second_result = await aexecute_tool(spawn_tool, second_call)
+    adapter.release.set()
+    first_result = await first_task
 
     assert first_result.error is None
     assert second_result.error is not None

@@ -26,6 +26,7 @@ class SQLiteSessionStore(SessionStore):
         self._db_path = db_path
         self._lock = threading.Lock()
         self._conn = sqlite3.connect(self._db_path, check_same_thread=False)
+        self._closed = False
         with self._lock, self._conn:
             self._conn.execute(
                 """
@@ -137,9 +138,12 @@ class SQLiteSessionStore(SessionStore):
         worker_name: str | None = None,
         limit: int | None = None,
     ) -> list[SessionRecord]:
+        if limit is not None and limit < 0:
+            raise ValueError("limit must be non-negative")
+        row_limit = -1 if limit is None else limit
         with self._lock:
             conn = self._connect()
-            if worker_name:
+            if worker_name is not None:
                 cursor = conn.execute(
                     """
                     SELECT id, worker_name, metadata, created_at, updated_at
@@ -148,7 +152,7 @@ class SQLiteSessionStore(SessionStore):
                     ORDER BY updated_at DESC
                     LIMIT ?
                     """,
-                    (worker_name, limit or -1),
+                    (worker_name, row_limit),
                 )
             else:
                 cursor = conn.execute(
@@ -158,7 +162,7 @@ class SQLiteSessionStore(SessionStore):
                     ORDER BY updated_at DESC
                     LIMIT ?
                     """,
-                    (limit or -1,),
+                    (row_limit,),
                 )
             rows = cursor.fetchall()
         return [
@@ -194,6 +198,28 @@ class SQLiteSessionStore(SessionStore):
                         (message_id, session_id, _serialize_message(message), now),
                     )
 
+    def replace_messages(self, session_id: str, messages: list[Message]) -> None:
+        now = utc_now().isoformat()
+        with self._lock:
+            conn = self._connect()
+            with conn:
+                conn.execute("DELETE FROM session_messages WHERE session_id = ?", (session_id,))
+                conn.executemany(
+                    """
+                    INSERT INTO session_messages (id, session_id, message_json, timestamp)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    [
+                        (
+                            f"{session_id}_{index}_{new_id()}",
+                            session_id,
+                            _serialize_message(message),
+                            now,
+                        )
+                        for index, message in enumerate(messages)
+                    ],
+                )
+
     def get_messages(self, session_id: str) -> list[Message]:
         with self._lock:
             conn = self._connect()
@@ -210,4 +236,12 @@ class SQLiteSessionStore(SessionStore):
 
     def close(self) -> None:
         with self._lock:
-            self._conn.close()
+            if not self._closed:
+                self._conn.close()
+                self._closed = True
+
+    def __enter__(self) -> "SQLiteSessionStore":
+        return self
+
+    def __exit__(self, *_args: Any) -> None:
+        self.close()

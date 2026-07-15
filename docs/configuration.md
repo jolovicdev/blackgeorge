@@ -199,6 +199,11 @@ When `max_context_messages` is configured, workers summarize conversation proact
 |-----------|------|---------|-------------|
 | `storage_dir` | str | ".blackgeorge" | Directory for SQLite run store |
 
+Execution limits are validated when `Desk` or `RunConfig` is created: token and iteration limits must
+be positive, while retry and tool-call counts may be zero but not negative. A closed desk rejects new
+runs, resumes, flows, and sessions. Injected run and memory stores are caller-owned and are not closed
+with the desk.
+
 ## Worker configuration
 
 Workers can be configured with several options:
@@ -409,6 +414,12 @@ def my_function(param: str) -> str:
 ## Memory store configuration
 
 ### VectorMemoryStore
+
+Install the optional ChromaDB dependencies before configuring vector memory:
+
+```bash
+uv add "blackgeorge[vector]"
+```
 
 ```python
 from blackgeorge.memory import VectorMemoryStore

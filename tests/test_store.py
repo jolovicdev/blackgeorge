@@ -1,12 +1,16 @@
 import sqlite3
 import threading
+from pathlib import Path
 
+import pytest
 from pydantic import BaseModel
 
 from blackgeorge.core.event import Event
 from blackgeorge.core.job import Job
 from blackgeorge.core.report import Report as ReportModel
+from blackgeorge.desk import Desk
 from blackgeorge.memory.sqlite import SQLiteMemoryStore
+from blackgeorge.store.in_memory import InMemoryRunStore
 from blackgeorge.store.sqlite import SQLiteRunStore
 from blackgeorge.store.state import RunState
 from blackgeorge.utils import new_id, utc_now
@@ -14,6 +18,24 @@ from blackgeorge.utils import new_id, utc_now
 
 class ExampleModel(BaseModel):
     value: int
+
+
+@pytest.mark.parametrize("store_kind", ["memory", "sqlite"])
+def test_run_stores_reject_duplicate_ids(tmp_path: Path, store_kind: str) -> None:
+    store = (
+        InMemoryRunStore()
+        if store_kind == "memory"
+        else SQLiteRunStore(str(tmp_path / "duplicate.db"))
+    )
+    store.create_run("duplicate", {"input": "first"})
+
+    with pytest.raises(ValueError, match="already exists"):
+        store.create_run("duplicate", {"input": "second"})
+
+    record = store.get_run("duplicate")
+    assert record is not None
+    assert record.input == {"input": "first"}
+    store.close()
 
 
 def test_sqlite_memory_store(tmp_path) -> None:
@@ -89,7 +111,7 @@ def test_sqlite_run_store_serializes_base_models(tmp_path) -> None:
     assert updated.output_json == {"items": [{"value": 1}, {"nested": {"value": 2}}]}
 
 
-def test_sqlite_run_store_flushes_buffer_on_close(tmp_path) -> None:
+def test_sqlite_run_store_persists_events_across_close(tmp_path) -> None:
     path = tmp_path / "run_buffered.db"
     run_id = "run_buffered"
     store = SQLiteRunStore(str(path))
@@ -105,11 +127,40 @@ def test_sqlite_run_store_flushes_buffer_on_close(tmp_path) -> None:
         )
     )
     store.close()
+    store.close()
 
     reopened = SQLiteRunStore(str(path))
     events = reopened.get_events(run_id)
     assert len(events) == 1
     reopened.close()
+
+
+def test_desk_context_closes_default_store(tmp_path) -> None:
+    with Desk(model="fake", storage_dir=str(tmp_path)) as desk:
+        store = desk.run_store
+
+    assert isinstance(store, SQLiteRunStore)
+    assert store._closed is True
+    desk.close()
+
+
+def test_desk_close_leaves_injected_stores_open(tmp_path) -> None:
+    run_store = SQLiteRunStore(str(tmp_path / "external_runs.db"))
+    memory_store = SQLiteMemoryStore(str(tmp_path / "external_memory.db"))
+    desk = Desk(
+        model="fake",
+        run_store=run_store,
+        memory_store=memory_store,
+    )
+
+    desk.close()
+    run_store.create_run("still-open", {"input": "value"})
+    memory_store.write("key", "value", "scope")
+
+    assert run_store.get_run("still-open") is not None
+    assert memory_store.read("key", "scope") == "value"
+    run_store.close()
+    memory_store.close()
 
 
 def test_sqlite_run_store_add_event_persists_immediately(tmp_path) -> None:

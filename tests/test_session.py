@@ -9,6 +9,7 @@ from blackgeorge.adapters.base import ModelResponse
 from blackgeorge.core.message import Message
 from blackgeorge.core.tool_call import ToolCall
 from blackgeorge.desk import Desk
+from blackgeorge.session import WorkerSession
 from blackgeorge.store.in_memory import InMemoryRunStore
 from blackgeorge.store.in_memory_session_store import InMemorySessionStore
 from blackgeorge.store.session_store import SessionRecord
@@ -111,7 +112,7 @@ def test_session_persistence_sqlite() -> None:
         assert report2.content == "Fourth"
 
 
-def test_missing_explicit_session_id_returns_none() -> None:
+def test_missing_explicit_session_id_returns_none_in_load_only_mode() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         worker = Worker(name="Assistant", model="fake")
         desk = Desk(
@@ -121,7 +122,42 @@ def test_missing_explicit_session_id_returns_none() -> None:
             storage_dir=str(tmpdir),
         )
 
-        assert desk.session(worker, session_id="missing-session") is None
+        assert desk.session(worker, session_id="missing-session", create=False) is None
+
+
+def test_explicit_session_id_is_created_by_default(tmp_path) -> None:
+    worker = Worker(name="Assistant", model="fake")
+    desk = Desk(
+        model="fake",
+        adapter=FakeAdapter([ModelResponse(content="hi", tool_calls=[], usage={}, raw={})]),
+        run_store=InMemoryRunStore(),
+        storage_dir=str(tmp_path),
+    )
+
+    created = desk.session(
+        worker,
+        session_id="named-session",
+        metadata={"owner": "user-1"},
+    )
+
+    assert created is not None
+    assert created.session_id == "named-session"
+    record = created.store.get_session("named-session")
+    assert record is not None
+    assert record.metadata == {"owner": "user-1"}
+    created.close()
+
+
+def test_empty_session_id_is_rejected(tmp_path) -> None:
+    worker = Worker(name="Assistant", model="fake")
+    desk = Desk(
+        model="fake",
+        run_store=InMemoryRunStore(),
+        storage_dir=str(tmp_path),
+    )
+
+    with pytest.raises(ValueError, match="session_id must not be empty"):
+        WorkerSession.open(session_id=" ", worker=worker, desk=desk)
 
 
 def test_session_with_tools() -> None:
@@ -219,12 +255,13 @@ def test_session_preserves_reasoning_content_for_tool_calls() -> None:
     assert all(msg.thinking_blocks is None for msg in plain_messages)
 
 
-def test_session_close() -> None:
+def test_session_close_preserves_history(tmp_path) -> None:
     worker = Worker(name="Assistant", model="fake")
     desk = Desk(
         model="fake",
         adapter=FakeAdapter([ModelResponse(content="hi", tool_calls=[], usage={}, raw={})]),
         run_store=InMemoryRunStore(),
+        storage_dir=str(tmp_path),
     )
 
     session = desk.session(worker)
@@ -233,7 +270,108 @@ def test_session_close() -> None:
     session.close()
 
     loaded = desk.session(worker, session_id=session_id)
-    assert loaded is None
+    assert loaded is not None
+    assert [message.content for message in loaded.history()] == ["hello", "hi"]
+    loaded.close()
+
+
+def test_session_delete_removes_history(tmp_path) -> None:
+    worker = Worker(name="Assistant", model="fake")
+    desk = Desk(
+        model="fake",
+        adapter=FakeAdapter([ModelResponse(content="hi", tool_calls=[], usage={}, raw={})]),
+        run_store=InMemoryRunStore(),
+        storage_dir=str(tmp_path),
+    )
+    session = desk.session(worker)
+    session_id = session.session_id
+    session.run("hello")
+
+    session.delete()
+
+    assert desk.session(worker, session_id=session_id, create=False) is None
+
+
+def test_session_resume_persists_completed_conversation(tmp_path) -> None:
+    @tool(requires_confirmation=True)
+    def risky(action: str) -> str:
+        return f"ok:{action}"
+
+    responses = [
+        ModelResponse(
+            content=None,
+            tool_calls=[ToolCall(id="1", name="risky", arguments={"action": "go"})],
+            usage={},
+            raw={},
+        ),
+        ModelResponse(content="finished", tool_calls=[], usage={}, raw={}),
+    ]
+    desk = Desk(
+        model="fake",
+        adapter=FakeAdapter(responses),
+        run_store=InMemoryRunStore(),
+        storage_dir=str(tmp_path),
+    )
+    worker = Worker(name="Assistant", model="fake", tools=[risky])
+    session = desk.session(worker)
+
+    paused = session.run("run")
+    assert paused.status == "paused"
+    assert session.history() == []
+
+    resumed = session.resume(paused, True)
+    assert resumed.status == "completed"
+    assert [message.role for message in session.history()] == [
+        "user",
+        "assistant",
+        "tool",
+        "assistant",
+    ]
+    session.close()
+
+
+def test_session_preserves_compacted_summary(tmp_path) -> None:
+    store = InMemorySessionStore()
+    store.create_session("summary-session", "Assistant")
+    store.replace_messages(
+        "summary-session",
+        [
+            Message(
+                role="user",
+                content="Summary of previous context:\nimportant fact",
+                metadata={"summary": True},
+            ),
+            Message(role="user", content="recent question"),
+            Message(role="assistant", content="recent answer"),
+        ],
+    )
+    desk = Desk(
+        model="fake",
+        adapter=FakeAdapter([ModelResponse(content="new answer", tool_calls=[], usage={}, raw={})]),
+        run_store=InMemoryRunStore(),
+        storage_dir=str(tmp_path),
+    )
+    worker = Worker(name="Assistant", model="fake", instructions="Be concise")
+    session = WorkerSession(
+        session_id="summary-session",
+        worker=worker,
+        desk=desk,
+        store=store,
+    )
+
+    report = session.run("new question")
+    history = session.history()
+
+    assert report.status == "completed"
+    assert history[0].role == "user"
+    assert history[0].metadata == {"summary": True}
+    assert "important fact" in history[0].content
+    assert [message.content for message in history[1:]] == [
+        "recent question",
+        "recent answer",
+        "new question",
+        "new answer",
+    ]
 
 
 def test_session_list() -> None:
@@ -375,6 +513,16 @@ def test_in_memory_session_store() -> None:
     assert store.get_session("test-1") is None
 
 
+def test_in_memory_session_store_limit_semantics() -> None:
+    store = InMemorySessionStore()
+    store.create_session("one", "worker")
+    store.create_session("two", "worker")
+
+    assert store.list_sessions(limit=0) == []
+    with pytest.raises(ValueError, match="limit must be non-negative"):
+        store.list_sessions(limit=-1)
+
+
 def test_session_record_frozen() -> None:
     record = SessionRecord(
         session_id="test",
@@ -404,3 +552,15 @@ def test_sqlite_session_message_order(tmp_path) -> None:
     with sqlite3.connect(str(tmp_path / "sessions.db")) as conn:
         row = conn.execute("SELECT count(*) FROM session_messages").fetchone()
     assert row is not None and row[0] == 3
+
+
+def test_sqlite_session_store_limit_semantics(tmp_path) -> None:
+    store = SQLiteSessionStore(str(tmp_path / "sessions.db"))
+    store.create_session("one", "worker")
+    store.create_session("two", "worker")
+
+    assert store.list_sessions(limit=0) == []
+    with pytest.raises(ValueError, match="limit must be non-negative"):
+        store.list_sessions(limit=-1)
+    store.close()
+    store.close()

@@ -6,6 +6,7 @@ import pytest
 from blackgeorge.adapters.base import BaseModelAdapter, ModelResponse
 from blackgeorge.core.job import Job
 from blackgeorge.desk import Desk
+from blackgeorge.store.in_memory import InMemoryRunStore
 from blackgeorge.worker import Worker
 from blackgeorge.workforce import Workforce
 
@@ -246,6 +247,24 @@ async def test_cancellation_cleanup():
 
     with pytest.raises(asyncio.CancelledError):
         await task
+
+
+async def test_cancellation_marks_persisted_run_failed() -> None:
+    adapter = SlowAdapter(delay=1.0)
+    store = InMemoryRunStore()
+    desk = Desk(model="test-model", adapter=adapter, run_store=store)
+    worker = Worker(name="worker")
+    task = asyncio.create_task(desk.arun(worker, Job(input="test"), run_id="cancelled-run"))
+    await asyncio.sleep(0.05)
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    record = store.get_run("cancelled-run")
+    assert record is not None
+    assert record.status == "failed"
+    assert record.output_json == {"error": "Run cancelled", "error_type": "CancelledError"}
 
 
 async def test_external_cancellation_cancels_parallel_worker_tasks() -> None:

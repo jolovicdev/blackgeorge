@@ -40,7 +40,7 @@ if TYPE_CHECKING:
 EventEmitter = Callable[[str, str, dict[str, Any]], None]
 
 
-def _build_report(
+def build_report(
     run_id: str,
     status: RunStatus,
     content: str | None = None,
@@ -68,7 +68,7 @@ def _build_report(
     )
 
 
-def _build_state(
+def build_worker_state(
     run_id: str,
     status: RunStatus,
     runner_name: str,
@@ -95,7 +95,7 @@ def _build_state(
     )
 
 
-def _report_error(
+def build_error_report(
     run_id: str, messages: list[Message], errors: list[str], events: list[Event]
 ) -> Report:
     return Report(
@@ -113,7 +113,7 @@ def _report_error(
     )
 
 
-def _fail_report(
+def fail_report(
     *,
     config: "RunConfig",
     worker_name: str,
@@ -125,7 +125,7 @@ def _fail_report(
 ) -> Report:
     errors.append(message)
     config.emit(EventType.WORKER_FAILED, worker_name, {"error": message})
-    return _build_report(
+    return build_report(
         config.run_id,
         "failed",
         None,
@@ -140,7 +140,7 @@ def _fail_report(
     )
 
 
-async def _acontext_retry(
+async def aresolve_context_retry(
     *,
     config: "RunConfig",
     worker_name: str,
@@ -155,7 +155,7 @@ async def _acontext_retry(
     if not config.respect_context_window:
         return ContextDecision(
             False,
-            _fail_report(
+            fail_report(
                 config=config,
                 worker_name=worker_name,
                 message=context_error_message(model_registered, False),
@@ -168,7 +168,7 @@ async def _acontext_retry(
     if context_summaries >= SUMMARY_ATTEMPT_LIMIT:
         return ContextDecision(
             False,
-            _fail_report(
+            fail_report(
                 config=config,
                 worker_name=worker_name,
                 message=context_error_message(model_registered, True),
@@ -181,7 +181,7 @@ async def _acontext_retry(
     if not await apply_summary():
         return ContextDecision(
             False,
-            _fail_report(
+            fail_report(
                 config=config,
                 worker_name=worker_name,
                 message=context_error_message(model_registered, True),
@@ -192,10 +192,6 @@ async def _acontext_retry(
             ),
         )
     return ContextDecision(True, None)
-
-
-def _should_stream(stream: bool, _tools: list[Tool], response_schema: Any | None) -> bool:
-    return stream and response_schema is None
 
 
 def _tool_result_preview(result: ToolResult, limit: int) -> tuple[str | None, bool]:
@@ -215,7 +211,7 @@ def _tool_result_preview(result: ToolResult, limit: int) -> tuple[str | None, bo
     return text, False
 
 
-def _tool_event_payload(call: ToolCall, result: ToolResult, limit: int = 200) -> dict[str, Any]:
+def tool_event_payload(call: ToolCall, result: ToolResult, limit: int = 200) -> dict[str, Any]:
     payload: dict[str, Any] = {"tool_call_id": call.id}
     preview, truncated = _tool_result_preview(result, limit)
     if preview is not None:
@@ -227,14 +223,7 @@ def _tool_event_payload(call: ToolCall, result: ToolResult, limit: int = 200) ->
     return payload
 
 
-def _record_usage(metrics: dict[str, Any], response: object) -> None:
-    if hasattr(response, "usage"):
-        metrics["usage"] = response.usage
-    else:
-        metrics["usage"] = {}
-
-
-def _finalize_structured_response(
+def finalize_structured_response(
     *,
     config: "RunConfig",
     data: Any,
@@ -249,7 +238,7 @@ def _finalize_structured_response(
     messages.append(assistant_message)
     emit_assistant_message(config.emit, worker_name, assistant_message)
     config.emit(EventType.WORKER_COMPLETED, worker_name, {})
-    return _build_report(
+    return build_report(
         config.run_id,
         "completed",
         content,
@@ -264,7 +253,7 @@ def _finalize_structured_response(
     )
 
 
-def _finalize_plain_response(
+def finalize_plain_response(
     *,
     config: "RunConfig",
     response: ModelResponse,
@@ -283,7 +272,7 @@ def _finalize_plain_response(
     messages.append(assistant_message)
     emit_assistant_message(config.emit, worker_name, assistant_message)
     config.emit(EventType.WORKER_COMPLETED, worker_name, {})
-    return _build_report(
+    return build_report(
         config.run_id,
         "completed",
         response.content,
@@ -313,7 +302,7 @@ class ContextDecision:
     report: Report | None
 
 
-def _plan_tool_calls(
+def plan_tool_calls(
     *,
     response: ModelResponse,
     allowed_tools: dict[str, Tool],
@@ -355,6 +344,9 @@ def _plan_tool_calls(
                 metadata=metadata,
             )
             for remaining_call in response.tool_calls[i + 1 :]:
+                if len(tool_calls) >= max_tool_calls:
+                    max_tool_calls_exceeded = True
+                    break
                 tool_calls.append(remaining_call)
                 ordered_calls.append(remaining_call)
                 immediate_results[remaining_call.id] = ToolResult(
@@ -368,7 +360,7 @@ def _plan_tool_calls(
     )
 
 
-async def _execute_tool_calls_async(
+async def aexecute_tool_calls(
     config: "RunConfig",
     ordered_calls: list[ToolCall],
     executable_calls: list[tuple[ToolCall, Tool]],
@@ -395,6 +387,6 @@ async def _execute_tool_calls_async(
                 EventType.TOOL_FAILED, call.name, {"tool_call_id": call.id, "error": result.error}
             )
         else:
-            config.emit(EventType.TOOL_COMPLETED, call.name, _tool_event_payload(call, result))
+            config.emit(EventType.TOOL_COMPLETED, call.name, tool_event_payload(call, result))
         messages.append(tool_message(result, call))
         replace_tool_call(tool_calls, tool_call_with_result(call, result))

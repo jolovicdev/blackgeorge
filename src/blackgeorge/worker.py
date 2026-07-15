@@ -18,6 +18,10 @@ class Worker:
         instructions: str | None = None,
         memory_scope: str | None = None,
     ) -> None:
+        if not name.strip():
+            raise ValueError("Worker name must not be empty")
+        if model is not None and not model.strip():
+            raise ValueError("Worker model must not be empty")
         self.name = name
         self.model = model
         self.instructions = instructions

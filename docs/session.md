@@ -55,12 +55,14 @@ The session automatically:
 ## Loading an existing session
 
 ```python
-restored = desk.session(worker, session_id="user-123")
+restored = desk.session(worker, session_id="user-123", create=False)
 if restored:
     report = restored.run("Continue our conversation")
 ```
 
-Returns `None` if the session doesn't exist or belongs to a different worker.
+With `create=False`, `session()` returns `None` if the session does not exist or belongs to a
+different worker. The default `create=True` behavior opens an existing session or creates it when
+the ID is new.
 
 ## Session history
 
@@ -78,7 +80,19 @@ for message in messages:
 session.close()
 ```
 
-This removes the session and all associated messages from storage.
+Closing releases the session store connection and preserves the conversation. Sessions also support
+the context manager protocol.
+
+```python
+with desk.session(worker) as session:
+    report = session.run("Hello")
+```
+
+Delete a session and all of its messages explicitly:
+
+```python
+session.delete()
+```
 
 ## Context compaction
 
