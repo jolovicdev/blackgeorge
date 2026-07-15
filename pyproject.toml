@@ -8,15 +8,18 @@ authors = [{ name = "Dušan Jolović", email = "jolovic@pm.me" }]
 urls = { Repository = "https://github.com/jolovicdev/blackgeorge" }
 requires-python = ">=3.12"
 dependencies = [
-    "chromadb>=1.5.8",
     "instructor>=1.15.1",
     "litellm>=1.83.13",
     "mcp>=1.27.0",
     "pydantic>=2.12.5",
 ]
 
+[project.optional-dependencies]
+vector = ["chromadb>=1.5.8"]
+
 [dependency-groups]
 dev = [
+    "chromadb>=1.5.8",
     "mypy>=1.20.2",
     "mkdocs>=1.6.1",
     "mkdocs-material>=9.7.6",

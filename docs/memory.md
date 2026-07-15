@@ -36,6 +36,11 @@ The SQLite store persists memory to a file. Values are serialized as JSON string
 The vector store uses ChromaDB for semantic search with embeddings. It persists locally and supports similarity-based retrieval.
 By default, Blackgeorge uses a deterministic local embedding function so memory operations work in offline or restricted environments.
 You can pass your own Chroma embedding function for provider-quality embeddings.
+ChromaDB is not part of the base installation. Install the vector extra before using this store:
+
+```bash
+uv add "blackgeorge[vector]"
+```
 
 ```python
 from chromadb.utils.embedding_functions import OpenAIEmbeddingFunction

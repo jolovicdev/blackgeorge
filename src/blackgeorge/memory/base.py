@@ -15,3 +15,6 @@ class MemoryStore:
 
     def reset(self, scope: MemoryScope) -> None:
         raise NotImplementedError
+
+    def close(self) -> None:
+        return None

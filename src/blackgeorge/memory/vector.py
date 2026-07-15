@@ -4,13 +4,19 @@ import logging
 import re
 from typing import Any, cast
 
-import chromadb
-import numpy as np
-from chromadb.api.types import Documents, Embeddable, EmbeddingFunction, Embeddings, Metadatas
-from chromadb.config import DEFAULT_DATABASE, DEFAULT_TENANT
-from chromadb.errors import NotFoundError
-from numpy.typing import NDArray
+try:
+    import chromadb
+    import numpy as np
+    from chromadb.api.types import Documents, Embeddable, EmbeddingFunction, Embeddings, Metadatas
+    from chromadb.config import DEFAULT_DATABASE, DEFAULT_TENANT
+    from chromadb.errors import NotFoundError
+    from numpy.typing import NDArray
+except ModuleNotFoundError as exc:
+    raise ImportError(
+        "VectorMemoryStore requires the vector extra: uv add 'blackgeorge[vector]'"
+    ) from exc
 
+from blackgeorge.core.serialization import to_json_value
 from blackgeorge.memory.base import MemoryScope, MemoryStore
 from blackgeorge.utils import utc_now
 
@@ -33,7 +39,8 @@ def _chunk_text(
         return [text]
     chunks: list[str] = []
     start = 0
-    step = max(chunk_size - overlap, 1)
+    overlap = min(max(overlap, 0), chunk_size - 1)
+    step = chunk_size - overlap
     while start < len(text):
         end = min(start + chunk_size, len(text))
         chunks.append(text[start:end])
@@ -46,7 +53,7 @@ def _chunk_text(
 def _serialize_value(value: Any) -> str:
     if isinstance(value, str):
         return value
-    return json.dumps(value, ensure_ascii=True, default=str)
+    return json.dumps(to_json_value(value), ensure_ascii=True, default=str)
 
 
 def _deserialize_value(text: str) -> Any:
@@ -149,7 +156,7 @@ class VectorMemoryStore(MemoryStore):
         )
         self._collection_name = collection_name
         self._chunk_size = max(chunk_size, 1)
-        self._chunk_overlap = max(chunk_overlap, 0)
+        self._chunk_overlap = min(max(chunk_overlap, 0), self._chunk_size - 1)
         try:
             existing_collection = self._client.get_collection(name=collection_name)
             if self._embedding_function is None:
@@ -187,6 +194,7 @@ class VectorMemoryStore(MemoryStore):
             chunk_size = self._chunk_size
         if chunk_overlap < 0:
             chunk_overlap = 0
+        chunk_overlap = min(chunk_overlap, chunk_size - 1)
         return chunk_size, chunk_overlap
 
     def write(self, key: str, value: Any, scope: MemoryScope) -> None:
@@ -197,7 +205,8 @@ class VectorMemoryStore(MemoryStore):
         ids: list[str] = []
         metadatas: Metadatas = []
         for i, _ in enumerate(chunks):
-            ids.append(f"{scope}:{key}:{i}")
+            identity = json.dumps([scope, key, i], ensure_ascii=True).encode("utf-8")
+            ids.append(hashlib.blake2b(identity, digest_size=16).hexdigest())
             metadatas.append(
                 {
                     "scope": scope,
@@ -249,6 +258,10 @@ class VectorMemoryStore(MemoryStore):
         scope: MemoryScope,
         top_k: int = 5,
     ) -> list[tuple[str, Any]]:
+        if top_k < 0:
+            raise ValueError("top_k must be non-negative")
+        if top_k == 0:
+            return []
         results = self._collection.query(
             query_texts=[query],
             where={"scope": {"$eq": scope}},  # type: ignore[dict-item]

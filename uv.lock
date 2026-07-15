@@ -261,15 +261,20 @@ name = "blackgeorge"
 version = "1.2.5"
 source = { editable = "." }
 dependencies = [
-    { name = "chromadb" },
     { name = "instructor" },
     { name = "litellm" },
     { name = "mcp" },
     { name = "pydantic" },
 ]
 
+[package.optional-dependencies]
+vector = [
+    { name = "chromadb" },
+]
+
 [package.dev-dependencies]
 dev = [
+    { name = "chromadb" },
     { name = "mkdocs" },
     { name = "mkdocs-llmstxt" },
     { name = "mkdocs-material" },
@@ -281,15 +286,17 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "chromadb", specifier = ">=1.5.8" },
+    { name = "chromadb", marker = "extra == 'vector'", specifier = ">=1.5.8" },
     { name = "instructor", specifier = ">=1.15.1" },
     { name = "litellm", specifier = ">=1.83.13" },
     { name = "mcp", specifier = ">=1.27.0" },
     { name = "pydantic", specifier = ">=2.12.5" },
 ]
+provides-extras = ["vector"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "chromadb", specifier = ">=1.5.8" },
     { name = "mkdocs", specifier = ">=1.6.1" },
     { name = "mkdocs-llmstxt", specifier = ">=0.5.0" },
     { name = "mkdocs-material", specifier = ">=9.7.6" },
