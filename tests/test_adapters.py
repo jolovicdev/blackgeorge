@@ -1,3 +1,4 @@
+import asyncio
 import threading
 import time
 from types import SimpleNamespace
@@ -8,7 +9,7 @@ import pytest
 from pydantic import BaseModel, TypeAdapter
 
 from blackgeorge.adapters.instructor_client import InstructorClientPool, instructor_clients
-from blackgeorge.adapters.litellm import LiteLLMAdapter, _parse_tool_calls
+from blackgeorge.adapters.litellm import LiteLLMAdapter, _drain_logging_queue, _parse_tool_calls
 
 
 class AnswerModel(BaseModel):
@@ -17,6 +18,23 @@ class AnswerModel(BaseModel):
 
 class ItemModel(BaseModel):
     value: int
+
+
+def test_litellm_logging_queue_drain_closes_coroutines() -> None:
+    async def pending() -> None:
+        return None
+
+    first = pending()
+    second = pending()
+    queue: asyncio.Queue[dict[str, object]] = asyncio.Queue()
+    queue.put_nowait({"coroutine": first})
+    queue.put_nowait({"coroutine": second})
+
+    _drain_logging_queue(SimpleNamespace(_queue=queue))
+
+    assert queue.empty()
+    assert first.cr_frame is None
+    assert second.cr_frame is None
 
 
 def test_parse_tool_calls_with_valid_json() -> None:
@@ -194,6 +212,26 @@ def test_parse_tool_calls_unsupported_arguments_type_sets_error() -> None:
     assert "Unsupported tool arguments type" in calls[0].error
 
 
+def test_parse_tool_calls_non_object_json_sets_error() -> None:
+    message = {
+        "tool_calls": [
+            {
+                "id": "call_002",
+                "function": {
+                    "name": "test_tool",
+                    "arguments": "[]",
+                },
+            }
+        ]
+    }
+
+    calls = _parse_tool_calls(message)
+
+    assert len(calls) == 1
+    assert calls[0].arguments == {}
+    assert calls[0].error == "Tool arguments JSON must decode to an object"
+
+
 def test_instructor_client_pool_thread_safe(monkeypatch) -> None:
     pool = InstructorClientPool()
     call_count = {"value": 0}
@@ -361,19 +399,30 @@ def test_litellm_stream_emits_completed_after_consumption(monkeypatch) -> None:
 def test_litellm_stream_emits_failed_on_iteration_error(monkeypatch) -> None:
     adapter = LiteLLMAdapter()
     events: list[str] = []
+    close_calls = 0
+
+    class FailingStream:
+        def __init__(self) -> None:
+            self.index = 0
+
+        def __iter__(self) -> "FailingStream":
+            return self
+
+        def __next__(self) -> dict[str, object]:
+            if self.index == 0:
+                self.index += 1
+                return {"choices": [{"delta": {"content": "hello"}}]}
+            raise RuntimeError("stream exploded")
+
+        def close(self) -> None:
+            nonlocal close_calls
+            close_calls += 1
 
     def emit(event_type: str, source: str, payload: dict[str, object]) -> None:
         events.append(event_type)
 
-    def failing_stream() -> object:
-        def iterator() -> object:
-            yield {"choices": [{"delta": {"content": "hello"}}]}
-            raise RuntimeError("stream exploded")
-
-        return iterator()
-
     def fake_completion(**kwargs: object) -> object:
-        return failing_stream()
+        return FailingStream()
 
     monkeypatch.setattr(litellm, "completion", fake_completion)
     adapter.set_callback_context("run-2", emit)
@@ -389,10 +438,12 @@ def test_litellm_stream_emits_failed_on_iteration_error(monkeypatch) -> None:
     )
     with pytest.raises(RuntimeError, match="stream exploded"):
         list(stream)
+    stream.close()
     adapter.clear_callback_context()
 
     assert "llm.started" in events
     assert "llm.failed" in events
+    assert close_calls == 1
 
 
 def test_structured_complete_uses_response_format_base_model(monkeypatch) -> None:
@@ -536,7 +587,7 @@ async def test_astructured_complete_type_adapter_manual_fallback(monkeypatch) ->
     assert "response_format" not in calls[1]
 
 
-def test_structured_complete_retry_floor(monkeypatch) -> None:
+def test_structured_complete_respects_retry_budget(monkeypatch) -> None:
     adapter = LiteLLMAdapter()
 
     class CallCounter:
@@ -562,7 +613,7 @@ def test_structured_complete_retry_floor(monkeypatch) -> None:
     counter = CallCounter()
 
     def fake_completion(**kwargs: object) -> dict[str, object]:
-        raise RuntimeError("response_format failed")
+        raise RuntimeError("response_format unsupported")
 
     def fake_get(model: str, async_client: bool) -> object:
         return FakeClient(counter)
@@ -578,7 +629,29 @@ def test_structured_complete_retry_floor(monkeypatch) -> None:
             retries=0,
         )
 
-    assert counter.calls == 4
+    assert counter.calls == 1
+
+
+def test_structured_complete_does_not_retry_provider_failure(monkeypatch) -> None:
+    adapter = LiteLLMAdapter()
+    calls = 0
+
+    def fake_completion(**kwargs: object) -> dict[str, object]:
+        nonlocal calls
+        calls += 1
+        raise RuntimeError("rate limit exceeded")
+
+    monkeypatch.setattr(litellm, "completion", fake_completion)
+
+    with pytest.raises(RuntimeError, match="rate limit exceeded"):
+        adapter.structured_complete(
+            model="openai/gpt-5-nano",
+            messages=[{"role": "user", "content": "hi"}],
+            response_schema=AnswerModel,
+            retries=3,
+        )
+
+    assert calls == 1
 
 
 @pytest.mark.asyncio
@@ -645,3 +718,54 @@ async def test_litellm_async_stream_emits_completed_after_consumption(monkeypatc
     assert "llm.completed" in events
     completed_payload = payloads[events.index("llm.completed")]
     assert completed_payload.get("total_tokens") == 9
+
+
+@pytest.mark.asyncio
+async def test_litellm_async_stream_closes_resource_after_iteration_error(monkeypatch) -> None:
+    adapter = LiteLLMAdapter()
+    events: list[str] = []
+    close_calls = 0
+
+    class FailingAsyncStream:
+        def __init__(self) -> None:
+            self.index = 0
+
+        def __aiter__(self) -> "FailingAsyncStream":
+            return self
+
+        async def __anext__(self) -> dict[str, object]:
+            if self.index == 0:
+                self.index += 1
+                return {"choices": [{"delta": {"content": "hello"}}]}
+            raise RuntimeError("async stream exploded")
+
+        async def aclose(self) -> None:
+            nonlocal close_calls
+            close_calls += 1
+
+    def emit(event_type: str, source: str, payload: dict[str, object]) -> None:
+        events.append(event_type)
+
+    async def fake_acompletion(**kwargs: object) -> object:
+        return FailingAsyncStream()
+
+    monkeypatch.setattr(litellm, "acompletion", fake_acompletion)
+    adapter.set_callback_context("run-async-error", emit)
+    stream = await adapter.acomplete(
+        model="openai/gpt-5-nano",
+        messages=[{"role": "user", "content": "hi"}],
+        tools=None,
+        tool_choice=None,
+        temperature=None,
+        max_tokens=None,
+        stream=True,
+        stream_options={"include_usage": True},
+    )
+    with pytest.raises(RuntimeError, match="async stream exploded"):
+        async for _ in stream:
+            pass
+    await stream.aclose()
+    adapter.clear_callback_context()
+
+    assert "llm.failed" in events
+    assert close_calls == 1

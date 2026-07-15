@@ -158,6 +158,46 @@ async def test_cancellation_during_execution() -> None:
 
 
 @pytest.mark.asyncio
+async def test_external_task_cancellation_propagates() -> None:
+    started = asyncio.Event()
+
+    @tool()
+    async def cancellable() -> str:
+        started.set()
+        await asyncio.sleep(10)
+        return "done"
+
+    call = ToolCall(id="1", name="cancellable", arguments={})
+    task = asyncio.create_task(aexecute_tool(cancellable, call))
+    await started.wait()
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+@pytest.mark.asyncio
+async def test_cancel_event_interrupts_retry_wait() -> None:
+    cancel_event = asyncio.Event()
+    called = asyncio.Event()
+
+    @tool(retries=3, retry_delay=10)
+    async def failing() -> str:
+        called.set()
+        raise ValueError("fail")
+
+    call = ToolCall(id="1", name="failing", arguments={})
+    task = asyncio.create_task(aexecute_tool(failing, call, cancel_event=cancel_event))
+    await called.wait()
+    await asyncio.sleep(0)
+    cancel_event.set()
+    result = await asyncio.wait_for(task, timeout=0.5)
+
+    assert result.cancelled is True
+    assert result.error == "Cancelled during retry wait"
+
+
+@pytest.mark.asyncio
 async def test_execute_tool_runs_async_callable() -> None:
     @tool()
     async def async_tool() -> str:

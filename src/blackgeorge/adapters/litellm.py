@@ -11,11 +11,12 @@ from pydantic import BaseModel, TypeAdapter
 from blackgeorge.adapters.base import BaseModelAdapter, ModelResponse
 from blackgeorge.adapters.instructor_client import instructor_clients
 from blackgeorge.adapters.litellm_callbacks import (
-    _callback_context,
+    callback_context,
     emit_llm_completed,
     emit_llm_failed,
     emit_llm_started,
 )
+from blackgeorge.core.tool_arguments import parse_tool_arguments
 from blackgeorge.core.tool_call import ToolCall
 from blackgeorge.utils import new_id
 
@@ -26,6 +27,19 @@ def _close_coroutine(coroutine: Any) -> None:
     close = getattr(coroutine, "close", None)
     if callable(close):
         close()
+
+
+def _drain_logging_queue(worker: Any) -> None:
+    queue = getattr(worker, "_queue", None)
+    if queue is None:
+        return
+    while not queue.empty():
+        try:
+            task = queue.get_nowait()
+        except asyncio.QueueEmpty:
+            return
+        if isinstance(task, dict):
+            _close_coroutine(task.get("coroutine"))
 
 
 def _safe_litellm_shutdown() -> None:
@@ -67,6 +81,14 @@ def _patch_logging_worker_enqueue() -> None:
     original_ensure_initialized_and_enqueue = worker.ensure_initialized_and_enqueue
 
     def ensure_initialized_and_enqueue(async_coroutine: Any) -> None:
+        try:
+            current_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            _close_coroutine(async_coroutine)
+            return
+        bound_loop = getattr(worker, "_bound_loop", None)
+        if getattr(worker, "_queue", None) is not None and bound_loop is not current_loop:
+            _drain_logging_queue(worker)
         original_ensure_initialized_and_enqueue(async_coroutine)
         if getattr(worker, "_queue", None) is None:
             _close_coroutine(async_coroutine)
@@ -79,6 +101,7 @@ def _configure_litellm_runtime() -> None:
     global _litellm_runtime_configured
     if _litellm_runtime_configured:
         return
+    litellm.suppress_debug_info = True
     litellm.disable_streaming_logging = True
     if hasattr(litellm, "_async_client_cleanup_registered"):
         litellm._async_client_cleanup_registered = True
@@ -155,7 +178,27 @@ def _is_base_model_schema(response_schema: Any) -> bool:
 
 def _is_json_schema_unavailable_error(error: Exception) -> bool:
     error_str = str(error).lower()
-    return "response_format type is unavailable" in error_str
+    return any(
+        marker in error_str
+        for marker in (
+            "response_format type is unavailable",
+            "json_schema is not supported",
+            "json schema is not supported",
+            "does not support json_schema",
+        )
+    )
+
+
+def _is_response_format_unsupported_error(error: Exception) -> bool:
+    error_str = str(error).lower()
+    return _is_json_schema_unavailable_error(error) or any(
+        marker in error_str
+        for marker in (
+            "response_format unsupported",
+            "unsupported response_format",
+            "does not support response_format",
+        )
+    )
 
 
 def _build_json_object_prompt(response_schema: Any) -> str:
@@ -188,10 +231,14 @@ def _try_json_object_fallback(
             messages=augmented_payload,
             response_format={"type": "json_object"},
         )
+    except Exception as exc:
+        if _is_response_format_unsupported_error(exc):
+            return None
+        raise
+    try:
         return _json_object_fallback_result(response, response_schema)
     except Exception:
-        pass
-    return None
+        return None
 
 
 async def _atry_json_object_fallback(
@@ -210,10 +257,14 @@ async def _atry_json_object_fallback(
             messages=augmented_payload,
             response_format={"type": "json_object"},
         )
+    except Exception as exc:
+        if _is_response_format_unsupported_error(exc):
+            return None
+        raise
+    try:
         return _json_object_fallback_result(response, response_schema)
     except Exception:
-        pass
-    return None
+        return None
 
 
 def _parse_completion_response(response: Any, response_schema: Any) -> Any:
@@ -298,26 +349,9 @@ def _parse_tool_calls(message: Any) -> list[ToolCall]:
         name_raw = _get(function, "name")
         name = name_raw.strip() if isinstance(name_raw, str) else ""
         arguments_raw = _get(function, "arguments")
-        arguments: dict[str, Any] = {}
-        error: str | None = None
+        arguments, error = parse_tool_arguments(arguments_raw)
         if not name:
-            error = "Missing tool name"
-
-        if isinstance(arguments_raw, dict):
-            arguments = arguments_raw
-        elif isinstance(arguments_raw, str):
-            if arguments_raw:
-                try:
-                    arguments = json.loads(arguments_raw)
-                except json.JSONDecodeError as e:
-                    message_text = (
-                        f"Invalid JSON in tool arguments: {e}. Raw: {arguments_raw[:100]}"
-                    )
-                    error = f"{error}; {message_text}" if error else message_text
-                    arguments = {}
-        elif arguments_raw is not None:
-            message_text = f"Unsupported tool arguments type: {type(arguments_raw).__name__}"
-            error = f"{error}; {message_text}" if error else message_text
+            error = "Missing tool name" if error is None else f"Missing tool name; {error}"
 
         call_id_raw = _get(call, "id")
         call_id = call_id_raw if isinstance(call_id_raw, str) and call_id_raw else new_id()
@@ -417,12 +451,30 @@ def _stream_usage(chunk: Any) -> dict[str, Any] | None:
     return None
 
 
-class _SyncStreamWithEvents:
-    def __init__(self, model: str, stream: Iterator[Any]) -> None:
+class _StreamEvents:
+    def __init__(self, model: str) -> None:
         self._model = model
-        self._stream = stream
         self._usage: dict[str, Any] = {}
-        self._closed = False
+        self._finished = False
+
+    def _emit_completed(self) -> None:
+        if self._finished:
+            return
+        self._finished = True
+        emit_llm_completed(self._model, {"usage": self._usage})
+
+    def _emit_failed(self, exc: Exception) -> None:
+        if self._finished:
+            return
+        self._finished = True
+        emit_llm_failed(self._model, exc)
+
+
+class _SyncStreamWithEvents(_StreamEvents):
+    def __init__(self, model: str, stream: Iterator[Any]) -> None:
+        super().__init__(model)
+        self._stream = stream
+        self._resource_closed = False
 
     def __iter__(self) -> Iterator[Any]:
         try:
@@ -437,8 +489,9 @@ class _SyncStreamWithEvents:
         self._emit_completed()
 
     def close(self) -> None:
-        if self._closed:
+        if self._resource_closed:
             return
+        self._resource_closed = True
         try:
             close_fn = getattr(self._stream, "close", None)
             if callable(close_fn):
@@ -448,35 +501,22 @@ class _SyncStreamWithEvents:
             raise
         self._emit_completed()
 
-    def _emit_completed(self) -> None:
-        if self._closed:
-            return
-        self._closed = True
-        emit_llm_completed(self._model, {"usage": self._usage})
-
-    def _emit_failed(self, exc: Exception) -> None:
-        if self._closed:
-            return
-        self._closed = True
-        emit_llm_failed(self._model, exc)
-
     def __getattr__(self, name: str) -> Any:
         return getattr(self._stream, name)
 
 
-class _AsyncStreamWithEvents:
+class _AsyncStreamWithEvents(_StreamEvents):
     def __init__(self, model: str, stream: AsyncIterator[Any]) -> None:
-        self._model = model
+        super().__init__(model)
         self._stream = stream
         self._iterator = stream.__aiter__()
-        self._usage: dict[str, Any] = {}
-        self._closed = False
+        self._resource_closed = False
 
     def __aiter__(self) -> "_AsyncStreamWithEvents":
         return self
 
     async def __anext__(self) -> Any:
-        if self._closed:
+        if self._finished:
             raise StopAsyncIteration
         try:
             chunk = await self._iterator.__anext__()
@@ -492,8 +532,9 @@ class _AsyncStreamWithEvents:
         return chunk
 
     async def aclose(self) -> None:
-        if self._closed:
+        if self._resource_closed:
             return
+        self._resource_closed = True
         try:
             aclose_fn = getattr(self._stream, "aclose", None)
             if callable(aclose_fn):
@@ -506,18 +547,6 @@ class _AsyncStreamWithEvents:
             self._emit_failed(exc)
             raise
         self._emit_completed()
-
-    def _emit_completed(self) -> None:
-        if self._closed:
-            return
-        self._closed = True
-        emit_llm_completed(self._model, {"usage": self._usage})
-
-    def _emit_failed(self, exc: Exception) -> None:
-        if self._closed:
-            return
-        self._closed = True
-        emit_llm_failed(self._model, exc)
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._stream, name)
@@ -535,16 +564,15 @@ def _wrap_stream_with_events(model: str, response: Any, *, prefer_async: bool) -
 
 class LiteLLMAdapter(BaseModelAdapter):
     def __init__(self) -> None:
-        warnings.filterwarnings("ignore", message="Pydantic serializer warnings")
         _configure_litellm_runtime()
 
     def set_callback_context(
         self, run_id: str, emit: Callable[[str, str, dict[str, Any]], None]
     ) -> None:
-        _callback_context.set({"run_id": run_id, "emit": emit})
+        callback_context.set({"run_id": run_id, "emit": emit})
 
     def clear_callback_context(self) -> None:
-        _callback_context.set(None)
+        callback_context.set(None)
 
     def complete(
         self,
@@ -657,6 +685,9 @@ class LiteLLMAdapter(BaseModelAdapter):
         except Exception as exc:
             if _is_json_schema_unavailable_error(exc):
                 return True, None
+            if _is_response_format_unsupported_error(exc):
+                return False, None
+            raise
         return False, None
 
     async def _aattempt_schema_completion(
@@ -681,6 +712,9 @@ class LiteLLMAdapter(BaseModelAdapter):
         except Exception as exc:
             if _is_json_schema_unavailable_error(exc):
                 return True, None
+            if _is_response_format_unsupported_error(exc):
+                return False, None
+            raise
         return False, None
 
     def structured_complete(
@@ -707,7 +741,6 @@ class LiteLLMAdapter(BaseModelAdapter):
             if result is not None:
                 return result
 
-        retries = max(retries, 3)
         if not _is_base_model_schema(response_schema):
             return _structured_json_retry(
                 model=model,
@@ -760,7 +793,6 @@ class LiteLLMAdapter(BaseModelAdapter):
             if result is not None:
                 return result
 
-        retries = max(retries, 3)
         if not _is_base_model_schema(response_schema):
             return await _astructured_json_retry(
                 model=model,

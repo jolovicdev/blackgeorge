@@ -41,3 +41,17 @@ class Tool:
     retries: int = 0
     retry_delay: float = 1.0
     output_type: type[BaseModel] | None = None
+
+    def __post_init__(self) -> None:
+        if not self.name.strip():
+            raise ValueError("Tool name must not be empty")
+        if sum((self.requires_confirmation, self.requires_user_input, self.requires_handoff)) > 1:
+            raise ValueError("A tool can require only one interactive action")
+        if self.timeout is not None and self.timeout <= 0:
+            raise ValueError("Tool timeout must be greater than zero")
+        if self.retries < 0:
+            raise ValueError("Tool retries must be non-negative")
+        if self.retry_delay < 0:
+            raise ValueError("Tool retry_delay must be non-negative")
+        object.__setattr__(self, "pre", tuple(self.pre))
+        object.__setattr__(self, "post", tuple(self.post))

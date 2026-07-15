@@ -27,8 +27,8 @@ def tool(
     def wrapper(fn: Callable[..., Any]) -> Tool:
         input_model = build_input_model(fn)
         schema = build_schema(input_model)
-        tool_name = name or fn.__name__
-        tool_description = description or (fn.__doc__ or "")
+        tool_name = fn.__name__ if name is None else name
+        tool_description = fn.__doc__ or "" if description is None else description
         return Tool(
             name=tool_name,
             description=tool_description,

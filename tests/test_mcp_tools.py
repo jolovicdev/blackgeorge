@@ -1,6 +1,7 @@
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from jsonschema.exceptions import SchemaError
 from mcp import types as mcp_types
 from pydantic import ValidationError
 
@@ -53,6 +54,51 @@ def test_required_field_with_default_is_required() -> None:
     model = _build_input_model_from_schema("required_default", parameters)
     with pytest.raises(ValidationError):
         model()
+
+
+def test_standard_nullable_type_is_supported() -> None:
+    parameters = {
+        "type": "object",
+        "properties": {"query": {"type": ["string", "null"]}},
+        "required": ["query"],
+    }
+    model = _build_input_model_from_schema("nullable", parameters)
+
+    assert model(query=None).query is None
+    assert model(query="value").query == "value"
+    with pytest.raises(ValidationError):
+        model(query=3)
+
+
+def test_full_json_schema_constraints_are_validated() -> None:
+    parameters = {
+        "type": "object",
+        "properties": {
+            "mode": {"type": "string", "enum": ["fast", "safe"]},
+            "items": {
+                "type": "array",
+                "minItems": 1,
+                "items": {"type": "integer", "minimum": 1},
+            },
+        },
+        "required": ["mode", "items"],
+        "additionalProperties": False,
+    }
+    model = _build_input_model_from_schema("constrained", parameters)
+
+    validated = model(mode="fast", items=[1, 2])
+    assert validated.items == [1, 2]
+    with pytest.raises(ValidationError):
+        model(mode="unknown", items=[1])
+    with pytest.raises(ValidationError):
+        model(mode="safe", items=[])
+    with pytest.raises(ValidationError):
+        model(mode="safe", items=[1], unexpected=True)
+
+
+def test_invalid_mcp_schema_is_rejected_during_discovery() -> None:
+    with pytest.raises(SchemaError):
+        _build_input_model_from_schema("invalid", {"type": "unknown"})
 
 
 @pytest.fixture
@@ -136,6 +182,24 @@ async def test_mcp_tool_provider_call_tool_error() -> None:
     provider._session = mock_session
     result = await provider.acall_tool("bad_tool", {})
     assert result.error == "Connection failed"
+
+
+@pytest.mark.asyncio
+async def test_mcp_protocol_error_result_is_not_reported_as_success() -> None:
+    provider = MCPToolProvider()
+    mock_result = MagicMock()
+    mock_result.content = [mcp_types.TextContent(type="text", text="Remote tool failed")]
+    mock_result.structuredContent = {"code": "failed"}
+    mock_result.isError = True
+    mock_session = MagicMock()
+    mock_session.call_tool = AsyncMock(return_value=mock_result)
+    provider._session = mock_session
+
+    result = await provider.acall_tool("broken", {})
+
+    assert result.error == "Remote tool failed"
+    assert result.content == "Remote tool failed"
+    assert result.data == {"code": "failed"}
 
 
 @pytest.mark.asyncio

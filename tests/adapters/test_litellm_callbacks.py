@@ -3,7 +3,7 @@ from contextlib import contextmanager
 from typing import Any
 
 from blackgeorge.adapters.litellm_callbacks import (
-    _callback_context,
+    callback_context,
     emit_llm_completed,
     emit_llm_failed,
     emit_llm_started,
@@ -12,12 +12,12 @@ from blackgeorge.adapters.litellm_callbacks import (
 
 @contextmanager
 def _set_callback_context(run_id: str, emit: Callable[[str, str, dict[str, Any]], None]):
-    original = _callback_context.get()
-    _callback_context.set({"run_id": run_id, "emit": emit})
+    original = callback_context.get()
+    callback_context.set({"run_id": run_id, "emit": emit})
     try:
         yield
     finally:
-        _callback_context.set(original)
+        callback_context.set(original)
 
 
 def test_emit_llm_started_event() -> None:
