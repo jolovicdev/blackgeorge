@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from blackgeorge.adapters.base import BaseModelAdapter
 from blackgeorge.adapters.litellm import LiteLLMAdapter
+from blackgeorge.async_utils import ensure_not_running_loop
 from blackgeorge.config import RunConfig, validate_execution_limits
 from blackgeorge.core.event import Event
 from blackgeorge.core.job import Job
@@ -388,38 +389,8 @@ class Desk:
         stream: bool | None = None,
         run_id: str | None = None,
     ) -> Report:
-        self._ensure_open()
-        run_id = run_id or new_id()
-        events: list[Event] = []
-        stream_enabled = self.stream if stream is None else stream
-        job = self._resolve_structured_stream_mode(job)
-        if isinstance(runner, Worker):
-            job = self._apply_memory(runner, job)
-        self.run_store.create_run(run_id, job.model_dump(mode="json"))
-        self.emit(events, run_id, "run.started", "desk", {"job_id": job.id})
-
-        async def drain_handlers() -> None:
-            await self.event_bus.await_pending()
-
-        config = self._make_run_config(run_id, events, stream_enabled)
-
-        try:
-            if isinstance(runner, Worker):
-                self.register_worker(runner)
-                report, state = runner.run(config, job)
-            elif isinstance(runner, Workforce):
-                self.register_workforce(runner)
-                report, state = runner.run(config, job, drain_async_handlers=drain_handlers)
-            else:
-                raise TypeError("Runner must be Worker or Workforce")
-        except asyncio.CancelledError as exc:
-            self._record_unexpected_failure(run_id, events, exc)
-            raise
-        except Exception as exc:
-            self._record_unexpected_failure(run_id, events, exc)
-            raise
-
-        return self._finalize_run(runner, report, state, run_id, events, stream_enabled)
+        ensure_not_running_loop("Desk.run", "Desk.arun")
+        return asyncio.run(self.arun(runner, job, stream=stream, run_id=run_id))
 
     async def arun(
         self,
@@ -469,57 +440,8 @@ class Desk:
         *,
         stream: bool | None = None,
     ) -> Report:
-        self._ensure_open()
-        record = self.run_store.get_run(report.run_id)
-        if record is None:
-            failed = Report(
-                run_id=report.run_id,
-                status="failed",
-                content=None,
-                reasoning_content=None,
-                data=None,
-                messages=report.messages,
-                tool_calls=report.tool_calls,
-                metrics=report.metrics,
-                events=report.events,
-                pending_action=None,
-                errors=["No stored state"],
-            )
-            return failed
-        events = self.run_store.get_events(report.run_id)
-
-        if record.state is None:
-            return self._fail_resume(report, events, "No stored state")
-
-        state = self._restore_runtime_tools_override(report.run_id, record.state)
-        if state.runner_type == "flow":
-            flow = self._flow_runs.get(report.run_id)
-            if flow is None:
-                return self._fail_resume(report, events, "Flow not registered")
-            return flow.resume(report, decision_or_input, stream=stream)
-        stream_enabled = stream if stream is not None else state.payload.get("stream", self.stream)
-
-        self.emit(events, report.run_id, "run.resumed", "desk", {})
-
-        config = self._make_run_config(report.run_id, events, stream_enabled)
-
-        worker: Worker | None = None
-        if state.runner_type == "worker":
-            worker = self._workers.get(state.runner_name)
-            if worker is None:
-                return self._fail_resume(report, events, "Worker not registered")
-            updated_report, updated_state = worker.resume(config, state, decision_or_input)
-        elif state.runner_type == "workforce":
-            workforce = self._workforces.get(state.runner_name)
-            if workforce is None:
-                return self._fail_resume(report, events, "Workforce not registered")
-            updated_report, updated_state = workforce.resume(config, state, decision_or_input)
-        else:
-            return self._fail_resume(report, events, "Unknown runner type")
-
-        return self._finalize_run(
-            worker, updated_report, updated_state, report.run_id, events, stream_enabled
-        )
+        ensure_not_running_loop("Desk.resume", "Desk.aresume")
+        return asyncio.run(self.aresume(report, decision_or_input, stream=stream))
 
     async def aresume(
         self,

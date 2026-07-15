@@ -562,6 +562,27 @@ def _wrap_stream_with_events(model: str, response: Any, *, prefer_async: bool) -
     return response
 
 
+type SchemaAttempt = tuple[bool, Any | None]
+
+
+def _schema_attempt_response(response: Any, response_schema: Any) -> SchemaAttempt:
+    content = _response_content(response)
+    if not content:
+        return False, None
+    try:
+        return False, _parse_structured_json(response_schema, content)
+    except Exception:
+        return True, None
+
+
+def _schema_attempt_error(exc: Exception) -> SchemaAttempt | None:
+    if _is_json_schema_unavailable_error(exc):
+        return True, None
+    if _is_response_format_unsupported_error(exc):
+        return False, None
+    return None
+
+
 class LiteLLMAdapter(BaseModelAdapter):
     def __init__(self) -> None:
         _configure_litellm_runtime()
@@ -676,19 +697,12 @@ class LiteLLMAdapter(BaseModelAdapter):
                 messages=payload,
                 response_format=response_format,
             )
-            content = _response_content(response)
-            if content:
-                try:
-                    return False, _parse_structured_json(response_schema, content)
-                except Exception:
-                    return True, None
         except Exception as exc:
-            if _is_json_schema_unavailable_error(exc):
-                return True, None
-            if _is_response_format_unsupported_error(exc):
-                return False, None
+            result = _schema_attempt_error(exc)
+            if result is not None:
+                return result
             raise
-        return False, None
+        return _schema_attempt_response(response, response_schema)
 
     async def _aattempt_schema_completion(
         self,
@@ -703,19 +717,12 @@ class LiteLLMAdapter(BaseModelAdapter):
                 messages=payload,
                 response_format=response_format,
             )
-            content = _response_content(response)
-            if content:
-                try:
-                    return False, _parse_structured_json(response_schema, content)
-                except Exception:
-                    return True, None
         except Exception as exc:
-            if _is_json_schema_unavailable_error(exc):
-                return True, None
-            if _is_response_format_unsupported_error(exc):
-                return False, None
+            result = _schema_attempt_error(exc)
+            if result is not None:
+                return result
             raise
-        return False, None
+        return _schema_attempt_response(response, response_schema)
 
     def structured_complete(
         self,

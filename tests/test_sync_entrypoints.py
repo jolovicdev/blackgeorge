@@ -22,7 +22,8 @@ async def test_desk_run_raises_in_running_loop(tmp_path) -> None:
     )
     worker = Worker(name="AsyncGuard")
     with pytest.raises(RuntimeError, match="run cannot be called from a running event loop"):
-        desk.run(worker, Job(input="hi"))
+        desk.run(worker, Job(input="hi"), run_id="guarded-run")
+    assert desk.run_store.get_run("guarded-run") is None
 
 
 async def test_desk_run_parallel_workforce_raises_in_running_loop(tmp_path) -> None:
@@ -106,3 +107,36 @@ async def test_desk_aresume_resumes_paused_worker(tmp_path) -> None:
     record = desk.run_store.get_run(paused.run_id)
     assert record is not None
     assert record.status == "completed"
+
+
+async def test_desk_resume_in_running_loop_has_no_side_effects(tmp_path) -> None:
+    @tool(requires_confirmation=True)
+    def risky(action: str) -> str:
+        return f"ok:{action}"
+
+    desk = Desk(
+        model="fake",
+        adapter=FakeAdapter(
+            [
+                ModelResponse(
+                    content=None,
+                    tool_calls=[ToolCall(id="call-1", name="risky", arguments={"action": "go"})],
+                    usage={},
+                    raw={},
+                )
+            ]
+        ),
+        run_store=InMemoryRunStore(),
+        storage_dir=str(tmp_path),
+    )
+    worker = Worker(name="AsyncResumeGuard", model="fake", tools=[risky])
+    paused = await desk.arun(worker, Job(input="run"))
+    original_events = desk.run_store.get_events(paused.run_id)
+
+    with pytest.raises(RuntimeError, match="resume cannot be called from a running event loop"):
+        desk.resume(paused, True)
+
+    record = desk.run_store.get_run(paused.run_id)
+    assert record is not None
+    assert record.status == "paused"
+    assert desk.run_store.get_events(paused.run_id) == original_events

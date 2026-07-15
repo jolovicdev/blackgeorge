@@ -97,15 +97,11 @@ class WorkerSession(BaseModel):
 
     def run(self, user_input: Any, *, stream: bool = False, **job_kwargs: Any) -> Report:
         job = self._build_job(user_input, job_kwargs)
-        report = self.desk.run(self.worker, job, stream=stream)
-        self._persist_report(report)
-        return report
+        return self._persist_report(self.desk.run(self.worker, job, stream=stream))
 
     async def arun(self, user_input: Any, *, stream: bool = False, **job_kwargs: Any) -> Report:
         job = self._build_job(user_input, job_kwargs)
-        report = await self.desk.arun(self.worker, job, stream=stream)
-        self._persist_report(report)
-        return report
+        return self._persist_report(await self.desk.arun(self.worker, job, stream=stream))
 
     def resume(
         self,
@@ -114,9 +110,7 @@ class WorkerSession(BaseModel):
         *,
         stream: bool | None = None,
     ) -> Report:
-        resumed = self.desk.resume(report, decision_or_input, stream=stream)
-        self._persist_report(resumed)
-        return resumed
+        return self._persist_report(self.desk.resume(report, decision_or_input, stream=stream))
 
     async def aresume(
         self,
@@ -125,9 +119,9 @@ class WorkerSession(BaseModel):
         *,
         stream: bool | None = None,
     ) -> Report:
-        resumed = await self.desk.aresume(report, decision_or_input, stream=stream)
-        self._persist_report(resumed)
-        return resumed
+        return self._persist_report(
+            await self.desk.aresume(report, decision_or_input, stream=stream)
+        )
 
     def history(self) -> list[Message]:
         return self.store.get_messages(self.session_id)
@@ -240,12 +234,12 @@ class WorkerSession(BaseModel):
             **job_kwargs,
         )
 
-    def _persist_report(self, report: Report) -> None:
-        if report.status != "completed":
-            return
-        new_messages = self._extract_conversation_messages(report)
-        self.store.replace_messages(self.session_id, new_messages)
-        self.store.update_session(self.session_id)
+    def _persist_report(self, report: Report) -> Report:
+        if report.status == "completed":
+            new_messages = self._extract_conversation_messages(report)
+            self.store.replace_messages(self.session_id, new_messages)
+            self.store.update_session(self.session_id)
+        return report
 
     def _extract_conversation_messages(self, report: Report) -> list[Message]:
         messages: list[Message] = []
