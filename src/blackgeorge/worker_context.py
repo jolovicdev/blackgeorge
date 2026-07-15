@@ -213,17 +213,20 @@ def summarize_messages(
 
 
 def _summary_split(
-    messages: list[Message], preserve_recent: bool
+    messages: list[Message], preserve_recent: bool, message_limit: int | None = None
 ) -> tuple[list[Message], list[Message], list[Message]]:
     system_messages = [message for message in messages if message.role == "system"]
     non_system = [message for message in messages if message.role != "system"]
     if not non_system:
         return system_messages, [], []
-    if len(non_system) <= SUMMARY_TAIL_MESSAGES:
+    tail_limit = SUMMARY_TAIL_MESSAGES
+    if message_limit is not None:
+        tail_limit = min(tail_limit, max(0, message_limit - len(system_messages) - 1))
+    if len(non_system) <= tail_limit:
         if preserve_recent:
             return system_messages, [], non_system
         return system_messages, non_system, []
-    boundary = len(non_system) - SUMMARY_TAIL_MESSAGES
+    boundary = len(non_system) - tail_limit if preserve_recent else len(non_system)
     boundary = _preserve_tool_call_boundary(non_system, boundary)
     return system_messages, non_system[:boundary], non_system[boundary:]
 
@@ -336,8 +339,9 @@ def apply_context_summary(
     worker_name: str,
     model_registered: bool,
     preserve_recent: bool = True,
+    message_limit: int | None = None,
 ) -> bool:
-    system_messages, head, tail = _summary_split(messages, preserve_recent)
+    system_messages, head, tail = _summary_split(messages, preserve_recent, message_limit)
     if not head:
         return False
     try:
@@ -371,8 +375,9 @@ async def aapply_context_summary(
     worker_name: str,
     model_registered: bool,
     preserve_recent: bool = True,
+    message_limit: int | None = None,
 ) -> bool:
-    system_messages, head, tail = _summary_split(messages, preserve_recent)
+    system_messages, head, tail = _summary_split(messages, preserve_recent, message_limit)
     if not head:
         return False
     try:

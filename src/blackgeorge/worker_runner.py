@@ -311,7 +311,51 @@ class WorkerRunner:
             thinking_blocks: list[dict[str, Any]] = []
             tool_states: list[dict[str, Any]] = []
             keyed_states: dict[tuple[str, Any], dict[str, Any]] = {}
+            known_tool_names = {tool.name for tool in tools}
             usage: dict[str, Any] = {}
+
+            def can_reuse_position(
+                state: dict[str, Any],
+                stable_keys: list[tuple[str, int | str]],
+                name: str,
+                arguments_value: Any,
+                from_message_payload: bool,
+            ) -> bool:
+                existing_keys = cast(set[tuple[str, int | str]], state["stable_keys"])
+                if any(
+                    existing[0] == incoming[0] and existing != incoming
+                    for existing in existing_keys
+                    for incoming in stable_keys
+                ):
+                    return False
+                existing_name = cast(str, state["name"])
+                if (
+                    existing_name
+                    and name
+                    and not name.startswith(existing_name)
+                    and not existing_name.startswith(name)
+                    and f"{existing_name}{name}" not in known_tool_names
+                ):
+                    return False
+                argument_parts = cast(list[str], state["arguments_parts"])
+                existing_arguments = "".join(argument_parts)
+                arguments_obj = state.get("arguments_obj")
+                try:
+                    arguments_complete = isinstance(arguments_obj, dict) or (
+                        bool(existing_arguments.strip())
+                        and isinstance(json.loads(existing_arguments), dict)
+                    )
+                except (TypeError, ValueError):
+                    arguments_complete = False
+                if not stable_keys or not arguments_complete:
+                    return True
+                if not from_message_payload:
+                    return False
+                if isinstance(arguments_value, str):
+                    return arguments_value == existing_arguments
+                if isinstance(arguments_value, dict):
+                    return arguments_value == arguments_obj
+                return False
 
             def process_chunk(chunk: Any) -> None:
                 nonlocal usage
@@ -323,6 +367,10 @@ class WorkerRunner:
                 for position, tool_delta in enumerate(tool_deltas):
                     index_value = stream_value(tool_delta, "index")
                     call_id_value = stream_value(tool_delta, "id")
+                    function = stream_value(tool_delta, "function")
+                    name_value = stream_value(function, "name")
+                    name = name_value.strip() if isinstance(name_value, str) else ""
+                    arguments_value = stream_value(function, "arguments")
                     stable_keys: list[tuple[str, int | str]] = []
                     if isinstance(index_value, int):
                         stable_keys.append(("index", index_value))
@@ -336,18 +384,13 @@ class WorkerRunner:
                             break
                     if state is None:
                         fallback_state = keyed_states.get(fallback_key)
-                        fallback_stable_keys = cast(
-                            set[tuple[str, int | str]],
-                            fallback_state.get("stable_keys", set())
-                            if fallback_state is not None
-                            else set(),
-                        )
-                        conflicts = any(
-                            existing[0] == incoming[0] and existing != incoming
-                            for existing in fallback_stable_keys
-                            for incoming in stable_keys
-                        )
-                        if fallback_state is not None and not conflicts:
+                        if fallback_state is not None and can_reuse_position(
+                            fallback_state,
+                            stable_keys,
+                            name,
+                            arguments_value,
+                            from_message_payload,
+                        ):
                             state = fallback_state
                     if state is None:
                         state = {
@@ -366,17 +409,12 @@ class WorkerRunner:
                     keyed_states[fallback_key] = state
                     if isinstance(call_id_value, str) and call_id_value:
                         state["id"] = call_id_value
-                    function = stream_value(tool_delta, "function")
-                    name_value = stream_value(function, "name")
-                    if isinstance(name_value, str):
-                        name = name_value.strip()
-                        if name:
-                            existing_name = cast(str, state["name"])
-                            if not existing_name or name.startswith(existing_name):
-                                state["name"] = name
-                            elif not existing_name.startswith(name):
-                                state["name"] = f"{existing_name}{name}"
-                    arguments_value = stream_value(function, "arguments")
+                    if isinstance(name_value, str) and name:
+                        existing_name = cast(str, state["name"])
+                        if not existing_name or name.startswith(existing_name):
+                            state["name"] = name
+                        elif not existing_name.startswith(name):
+                            state["name"] = f"{existing_name}{name}"
                     if isinstance(arguments_value, str):
                         argument_parts = cast(list[str], state["arguments_parts"])
                         if from_message_payload:
@@ -438,7 +476,11 @@ class WorkerRunner:
                 config.adapter.clear_callback_context()
 
     async def _apply_context_summary(
-        self, ctx: CompletionContext, *, preserve_recent: bool = True
+        self,
+        ctx: CompletionContext,
+        *,
+        preserve_recent: bool = True,
+        message_limit: int | None = None,
     ) -> bool:
         return await aapply_context_summary(
             adapter=ctx.config.adapter,
@@ -450,6 +492,7 @@ class WorkerRunner:
             worker_name=ctx.state.worker_name,
             model_registered=ctx.state.model_registered,
             preserve_recent=preserve_recent,
+            message_limit=message_limit,
         )
 
     async def _retry_context_or_report(self, ctx: CompletionContext) -> Report | None:
@@ -649,7 +692,9 @@ class WorkerRunner:
                 ctx.config.max_context_messages is not None
                 and len(ctx.state.messages) > ctx.config.max_context_messages
             ):
-                await self._apply_context_summary(ctx)
+                await self._apply_context_summary(
+                    ctx, message_limit=ctx.config.max_context_messages
+                )
 
             response, report = await self._acquire_turn_response(
                 ctx=ctx,

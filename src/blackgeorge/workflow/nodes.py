@@ -51,6 +51,9 @@ def defer_after_pause(
     outputs: list[StepOutput],
     *continuations: WorkflowContinuation,
 ) -> list[StepOutput]:
+    failures = [output for output in outputs if report_for(output).status == "failed"]
+    if failures:
+        return failures
     for index, output in enumerate(outputs):
         report = report_for(output)
         if report.status != "paused":

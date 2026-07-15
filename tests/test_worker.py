@@ -1002,6 +1002,42 @@ def test_proactive_summaries_do_not_consume_context_retry_budget() -> None:
     assert adapter.summary_calls >= 3
 
 
+def test_proactive_summary_honors_small_message_limit() -> None:
+    class CapturingContextAdapter(FakeAdapter):
+        def __init__(self) -> None:
+            super().__init__([])
+            self.summary_calls = 0
+            self.turn_messages: list[list[dict[str, Any]]] = []
+
+        async def acomplete(self, **kwargs: Any) -> ModelResponse:
+            messages = kwargs["messages"]
+            if str(messages[0].get("content", "")).startswith("You are a summarization assistant."):
+                self.summary_calls += 1
+                return ModelResponse(content="summary", tool_calls=[], usage={}, raw={})
+            self.turn_messages.append(messages)
+            return ModelResponse(content="done", tool_calls=[], usage={}, raw={})
+
+    adapter = CapturingContextAdapter()
+    desk = Desk(
+        model="fake",
+        adapter=adapter,
+        run_store=InMemoryRunStore(),
+        max_context_messages=1,
+    )
+    initial_messages = [Message(role="user", content="history")]
+
+    report = desk.run(
+        Worker(name="Worker", model="fake"),
+        Job(input="current", initial_messages=initial_messages),
+    )
+
+    assert report.status == "completed"
+    assert adapter.summary_calls == 1
+    assert len(adapter.turn_messages) == 1
+    assert len(adapter.turn_messages[0]) == 1
+    assert adapter.turn_messages[0][0]["content"] == "Summary of previous context:\nsummary"
+
+
 def test_max_tool_calls_limit_enforced() -> None:
     @tool()
     def dummy_tool() -> str:
@@ -2128,3 +2164,70 @@ def test_streamed_tool_call_reuses_position_when_id_arrives_late() -> None:
     assert len(report.tool_calls) == 1
     assert report.tool_calls[0].id == "call_1"
     assert report.tool_calls[0].arguments == {"text": "hi"}
+
+
+def test_streamed_distinct_tool_call_does_not_reuse_anonymous_position() -> None:
+    from tests.utils import StreamingAdapter
+
+    executed: list[str] = []
+
+    @tool()
+    async def tool_a(x: str) -> str:
+        executed.append(f"a:{x}")
+        return executed[-1]
+
+    @tool()
+    async def tool_b(y: str) -> str:
+        executed.append(f"b:{y}")
+        return executed[-1]
+
+    streams = [
+        [
+            {
+                "choices": [
+                    {
+                        "delta": {
+                            "tool_calls": [
+                                {"function": {"name": "tool_a", "arguments": '{"x":"1"}'}}
+                            ]
+                        }
+                    }
+                ]
+            },
+            {
+                "choices": [
+                    {
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "index": 1,
+                                    "id": "call_b",
+                                    "function": {
+                                        "name": "tool_b",
+                                        "arguments": '{"y":"2"}',
+                                    },
+                                }
+                            ]
+                        }
+                    }
+                ]
+            },
+        ],
+        [{"choices": [{"delta": {"content": "done"}}]}],
+    ]
+    desk = Desk(
+        model="fake",
+        adapter=StreamingAdapter(streams),
+        run_store=InMemoryRunStore(),
+        stream=True,
+    )
+    worker = Worker(name="Worker", model="fake", tools=[tool_a, tool_b])
+
+    report = desk.run(worker, Job(input="run"), stream=True)
+
+    assert report.status == "completed"
+    assert [(call.name, call.arguments) for call in report.tool_calls] == [
+        ("tool_a", {"x": "1"}),
+        ("tool_b", {"y": "2"}),
+    ]
+    assert executed == ["a:1", "b:2"]

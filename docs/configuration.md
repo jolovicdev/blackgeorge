@@ -182,7 +182,7 @@ When these limits are exceeded, the run fails with an error in `Report.errors`.
 | `max_context_messages` | int \| None | None | Auto-summarize when message count exceeds this limit (Proactive) |
 
 When `respect_context_window` is enabled, workers summarize conversation history and retry on context limit errors (Reactive).
-When `max_context_messages` is configured, workers summarize conversation proactively when the number of messages exceeds the limit to maintain a healthy context window.
+When `max_context_messages` is configured, workers summarize conversation proactively when the number of messages exceeds the limit. The preserved recent tail shrinks for small limits so compaction still occurs.
 
 ### Custom components
 

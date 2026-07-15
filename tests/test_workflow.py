@@ -343,6 +343,44 @@ def test_parallel_resume_preserves_completed_siblings() -> None:
     assert "sibling" in resumed.content
 
 
+@pytest.mark.parametrize("pause_first", [True, False])
+def test_parallel_failure_takes_precedence_over_pause(pause_first: bool) -> None:
+    executed: list[str] = []
+
+    class FailedStep:
+        async def execute(
+            self,
+            flow: Any,
+            context: WorkflowContext,
+        ) -> list[StepOutput]:
+            return [Report(run_id="failed", status="failed", errors=["sibling failed"])]
+
+    @tool(requires_confirmation=True)
+    def risky(action: str) -> str:
+        executed.append(action)
+        return action
+
+    responses = [
+        ModelResponse(
+            content=None,
+            tool_calls=[ToolCall(id="1", name="risky", arguments={"action": "write"})],
+            usage={},
+            raw={},
+        )
+    ]
+    desk = Desk(model="fake", adapter=FakeAdapter(responses), run_store=InMemoryRunStore())
+    paused_step = Step(Worker(name="Worker", tools=[risky], model="fake"))
+    steps = (paused_step, FailedStep()) if pause_first else (FailedStep(), paused_step)
+    flow = desk.flow([Parallel(*steps)])
+
+    report = flow.run(Job(input="run"))
+
+    assert report.status == "failed"
+    assert report.pending_action is None
+    assert report.errors == ["sibling failed"]
+    assert executed == []
+
+
 def test_loop_resume_finishes_paused_iteration() -> None:
     executed: list[int] = []
 
