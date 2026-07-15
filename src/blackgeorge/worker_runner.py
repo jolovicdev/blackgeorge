@@ -317,6 +317,7 @@ class WorkerRunner:
             def can_reuse_position(
                 state: dict[str, Any],
                 stable_keys: list[tuple[str, int | str]],
+                position: int,
                 name: str,
                 arguments_value: Any,
                 from_message_payload: bool,
@@ -326,6 +327,11 @@ class WorkerRunner:
                     existing[0] == incoming[0] and existing != incoming
                     for existing in existing_keys
                     for incoming in stable_keys
+                ):
+                    return False
+                # an unseen index that differs from this position belongs to a different tool
+                if any(
+                    incoming[0] == "index" and incoming[1] != position for incoming in stable_keys
                 ):
                     return False
                 existing_name = cast(str, state["name"])
@@ -387,6 +393,7 @@ class WorkerRunner:
                         if fallback_state is not None and can_reuse_position(
                             fallback_state,
                             stable_keys,
+                            position,
                             name,
                             arguments_value,
                             from_message_payload,
@@ -406,7 +413,10 @@ class WorkerRunner:
                     state_stable_keys.update(stable_keys)
                     for key in stable_keys:
                         keyed_states[key] = state
-                    keyed_states[fallback_key] = state
+                    # a keyed delta must not claim a position slot owned by a different tool
+                    occupant = keyed_states.get(fallback_key)
+                    if occupant is None or occupant is state or not stable_keys:
+                        keyed_states[fallback_key] = state
                     if isinstance(call_id_value, str) and call_id_value:
                         state["id"] = call_id_value
                     if isinstance(name_value, str) and name:

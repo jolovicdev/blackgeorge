@@ -2231,3 +2231,115 @@ def test_streamed_distinct_tool_call_does_not_reuse_anonymous_position() -> None
         ("tool_b", {"y": "2"}),
     ]
     assert executed == ["a:1", "b:2"]
+
+
+def test_streamed_unnamed_keyed_delta_does_not_merge_into_anonymous_tool() -> None:
+    from tests.utils import StreamingAdapter
+
+    @tool()
+    async def tool_a() -> str:
+        return "a"
+
+    @tool()
+    async def tool_b(y: str) -> str:
+        return f"b:{y}"
+
+    streams = [
+        [
+            {
+                "choices": [
+                    {"delta": {"tool_calls": [{"function": {"name": "tool_a", "arguments": ""}}]}}
+                ]
+            },
+            {
+                "choices": [
+                    {
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "index": 1,
+                                    "id": "call_b",
+                                    "function": {"arguments": '{"y":"2"}'},
+                                }
+                            ]
+                        }
+                    }
+                ]
+            },
+            {
+                "choices": [
+                    {"delta": {"tool_calls": [{"index": 1, "function": {"name": "tool_b"}}]}}
+                ]
+            },
+        ],
+        [{"choices": [{"delta": {"content": "done"}}]}],
+    ]
+    desk = Desk(
+        model="fake",
+        adapter=StreamingAdapter(streams),
+        run_store=InMemoryRunStore(),
+        stream=True,
+    )
+    worker = Worker(name="Worker", model="fake", tools=[tool_a, tool_b])
+
+    report = desk.run(worker, Job(input="run"), stream=True)
+
+    by_name = {call.name: call.arguments for call in report.tool_calls}
+    assert by_name.get("tool_b") == {"y": "2"}
+    assert "y" not in by_name.get("tool_a", {})
+
+
+def test_streamed_keyed_delta_does_not_steal_anonymous_tool_position() -> None:
+    from tests.utils import StreamingAdapter
+
+    @tool()
+    async def tool_a(x: str) -> str:
+        return f"a:{x}"
+
+    @tool()
+    async def tool_b(y: str) -> str:
+        return f"b:{y}"
+
+    streams = [
+        [
+            {
+                "choices": [
+                    {
+                        "delta": {
+                            "tool_calls": [{"function": {"name": "tool_a", "arguments": '{"x":'}}]
+                        }
+                    }
+                ]
+            },
+            {
+                "choices": [
+                    {
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "index": 1,
+                                    "id": "call_b",
+                                    "function": {"name": "tool_b", "arguments": '{"y":"2"}'},
+                                }
+                            ]
+                        }
+                    }
+                ]
+            },
+            {"choices": [{"delta": {"tool_calls": [{"function": {"arguments": '"1"}'}}]}}]},
+        ],
+        [{"choices": [{"delta": {"content": "done"}}]}],
+    ]
+    desk = Desk(
+        model="fake",
+        adapter=StreamingAdapter(streams),
+        run_store=InMemoryRunStore(),
+        stream=True,
+    )
+    worker = Worker(name="Worker", model="fake", tools=[tool_a, tool_b])
+
+    report = desk.run(worker, Job(input="run"), stream=True)
+
+    by_name = {call.name: call.arguments for call in report.tool_calls}
+    assert by_name.get("tool_a") == {"x": "1"}
+    assert by_name.get("tool_b") == {"y": "2"}
