@@ -2,6 +2,10 @@
 
 A `Workforce` coordinates multiple workers. It supports three modes: managed, collaborate, and swarm.
 
+Workforce reports carry run-level `usage` and `cost_usd` totals in `Report.metrics`, summed across
+every metered worker execution in the run. See [Configuration](configuration.md#cost-budgets) for
+how totals and budgets are computed.
+
 ## Create a workforce
 
 ```python

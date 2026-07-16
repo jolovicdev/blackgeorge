@@ -120,8 +120,9 @@ report, state = await worker.arun(config, job)
 | `num_retries` | int | 0 | LiteLLM-level retry count for failed calls |
 | `respect_context_window` | bool | True | Auto-summarize on context errors (Reactive) |
 | `max_context_messages` | int \| None | None | Auto-summarize when message count exceeds this limit (Proactive) |
-| `max_cost_usd` | float \| None | None | Cost budget per worker execution in USD |
+| `max_cost_usd` | float \| None | None | Cost budget for the whole run in USD |
 | `default_model` | str | None | Default model name |
+| `usage_totals` | dict | {} | Shared accumulator for run-level token and cost totals |
 
 ### RunConfig methods
 
@@ -173,22 +174,23 @@ On tool turns, streamed `stream.token` events contain tool argument deltas.
 | `max_iterations` | int | 10 | Maximum model turns per worker run |
 | `max_tool_calls` | int | 20 | Maximum tool calls per worker run |
 | `num_retries` | int | 0 | LiteLLM retry count for failed LLM calls (0 disables) |
-| `max_cost_usd` | float \| None | None | Cost budget per worker execution in USD (None disables) |
+| `max_cost_usd` | float \| None | None | Cost budget for the whole run in USD (None disables) |
 
 When these limits are exceeded, the run fails with an error in `Report.errors`.
 
 ### Cost budgets
 
-`max_cost_usd` caps how much a single worker execution may spend on LLM calls. After every model
-turn, Blackgeorge prices the reported token usage via LiteLLM model pricing and accumulates it in
-`Report.metrics["cost_usd"]` (the raw usage is in `Report.metrics["usage"]`). Before starting a new
-model turn, the worker checks the accumulated cost and fails the run with a "Cost budget exceeded"
-error once it is over budget. A single-turn run always finishes, because the check only runs before
-additional turns.
+`max_cost_usd` caps how much a run may spend on LLM calls. After every model turn, Blackgeorge
+prices the reported token usage via LiteLLM model pricing and accumulates it into run-level totals.
+Before starting a new model turn, the worker checks the accumulated run cost and fails the run with
+a "Cost budget exceeded" error once it is over budget. A single-turn run always finishes, because
+the check only runs before additional turns.
 
-- The budget applies per worker execution. In a workforce, each worker execution gets the full
-  configured budget.
-- Accumulated cost survives pause/resume, since it is stored in the run state metrics.
+- The budget applies to the whole run: for a workforce it is summed across all workers, and for a
+  workflow across all steps.
+- Accumulated totals survive pause/resume; they are stored in the run state.
+- Worker reports carry that worker's cumulative `usage` and `cost_usd` in `Report.metrics`.
+  Workforce reports carry the run totals instead.
 - Models without LiteLLM pricing metadata accumulate a cost of 0, so a budget never triggers for
   them. Register custom models in LiteLLM (see Model registration) to get cost tracking.
 - Cost is tracked from reported token usage of chat completions, including streamed calls.

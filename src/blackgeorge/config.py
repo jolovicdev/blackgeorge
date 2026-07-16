@@ -52,6 +52,7 @@ class RunConfig:
     max_context_messages: int | None = None
     max_cost_usd: float | None = None
     default_model: str | None = None
+    usage_totals: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         validate_execution_limits(
