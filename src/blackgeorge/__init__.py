@@ -25,6 +25,7 @@ from blackgeorge.core.report import Report
 from blackgeorge.core.tool_call import ToolCall
 from blackgeorge.core.types import MessageRole, PendingActionType, RunStatus, WorkforceMode
 from blackgeorge.desk import Desk
+from blackgeorge.evals import EvalCase, EvalResult, aevaluate, evaluate
 from blackgeorge.exceptions import (
     BlackgeorgeError,
     ContextLimitError,
@@ -52,6 +53,8 @@ __all__ = [
     "Brief",
     "ContextLimitError",
     "Desk",
+    "EvalCase",
+    "EvalResult",
     "EventEmitter",
     "EventHandlerError",
     "Event",
@@ -94,8 +97,10 @@ __all__ = [
     "WorkerFailedPayload",
     "WorkerPausedPayload",
     "WorkerSession",
+    "aevaluate",
     "agenerate_image",
     "encode_file",
+    "evaluate",
     "generate_image",
     "get_logger",
     "tool",

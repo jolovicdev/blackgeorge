@@ -112,3 +112,55 @@ Cost is priced from LiteLLM model metadata, so use a registered model name (for 
   and no `stream.token` events are emitted. Token-level streaming tests should use a custom adapter
   that yields chunks.
 - Pause/resume works, but script enough responses for the turns that happen after resuming.
+
+## Eval harness
+
+`evaluate` runs a list of cases against a worker or workforce and reports pass/fail per case. A
+case asserts substrings in the report content and/or a custom check; runs that do not complete fail
+the case.
+
+```python
+from blackgeorge import Desk, EvalCase, Job, Worker, evaluate
+
+desk = Desk(model="openai/gpt-5-nano")
+worker = Worker(name="Assistant")
+
+results = evaluate(
+    desk,
+    worker,
+    [
+        EvalCase(name="math", job=Job(input="What is 2+2?"), contains=("4",)),
+        EvalCase(
+            name="length",
+            job=Job(input="One sentence about rain."),
+            check=lambda report: len(report.content or "") < 200,
+        ),
+    ],
+)
+
+for result in results:
+    print(result.name, result.passed, result.failures)
+```
+
+Each `EvalResult` carries the full `Report`, so failures can be inspected with the CLI or the run
+store. Use `aevaluate` inside an existing event loop.
+
+### Judge scoring
+
+Pass a `judge` worker and a `rubric` to score answers with an LLM. The judge sees the rubric, the
+task input, and the answer, and returns a structured score from 0.0 to 1.0. A case fails when its
+score is below `min_score` (default 0.7):
+
+```python
+results = evaluate(
+    desk,
+    worker,
+    cases,
+    judge=Worker(name="Judge", instructions="Score answers strictly by the rubric."),
+    rubric="1.0 if the answer is correct and concise, 0.0 otherwise",
+    min_score=0.8,
+)
+```
+
+Judging only runs for completed reports. Judge calls are ordinary runs, so each gets its own
+`max_cost_usd` budget and its own entry in the run store.
