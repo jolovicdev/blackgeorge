@@ -50,6 +50,7 @@ plugins:
           - multimodal.md
         Advanced Features:
           - storage.md
+          - cli.md
           - memory.md
           - adapters.md
           - testing.md
@@ -94,6 +95,7 @@ nav:
   - Exceptions: exceptions.md
   - Multimodal: multimodal.md
   - Storage: storage.md
+  - CLI: cli.md
   - Memory: memory.md
   - Adapters: adapters.md
   - Testing: testing.md

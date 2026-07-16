@@ -26,6 +26,7 @@ If you want a fast start, read the quickstart first. If you want to understand h
 - [Tools](tools.md): tool definition, validation, and execution
 - [Events and streaming](events.md): event bus and runtime signals
 - [Storage](storage.md): run store and run state
+- [CLI](cli.md): inspect runs and sessions from the terminal
 - [Memory](memory.md): memory stores and scopes
 - [Adapters](adapters.md): model adapters and structured output integration
 - [Testing](testing.md): deterministic agent tests with ScriptedAdapter
