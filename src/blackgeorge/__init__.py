@@ -38,6 +38,7 @@ from blackgeorge.exceptions import (
 from blackgeorge.logging import StructuredLogger, get_logger
 from blackgeorge.multimodal import encode_file
 from blackgeorge.session import WorkerSession
+from blackgeorge.testing import ScriptedAdapter
 from blackgeorge.tools import Tool, Toolbelt, Toolkit, agenerate_image, generate_image, tool
 from blackgeorge.worker import Worker
 from blackgeorge.workforce import Workforce
@@ -69,6 +70,7 @@ __all__ = [
     "RunOutput",
     "RunStartedPayload",
     "RunStatus",
+    "ScriptedAdapter",
     "StreamingUnsupportedError",
     "StreamTokenPayload",
     "StructuredLogger",

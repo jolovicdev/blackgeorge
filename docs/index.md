@@ -20,6 +20,7 @@ If you want a fast start, read the quickstart first. If you want to understand h
 - [Storage](storage.md): run store and run state
 - [Memory](memory.md): memory stores and scopes
 - [Adapters](adapters.md): model adapters and structured output integration
+- [Testing](testing.md): deterministic agent tests with ScriptedAdapter
 - [Core types](core-types.md): Job, Report, Message, ToolCall, PendingAction
 
 ## Examples and development

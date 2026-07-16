@@ -52,6 +52,7 @@ plugins:
           - storage.md
           - memory.md
           - adapters.md
+          - testing.md
         Reference:
           - configuration.md
           - logging.md
@@ -95,6 +96,7 @@ nav:
   - Storage: storage.md
   - Memory: memory.md
   - Adapters: adapters.md
+  - Testing: testing.md
   - Core types: core-types.md
   - Configuration: configuration.md
   - Logging: logging.md
