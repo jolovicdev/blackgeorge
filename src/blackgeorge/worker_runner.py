@@ -5,6 +5,7 @@ from collections.abc import Callable, Iterable
 from typing import Any, cast
 
 from blackgeorge.adapters.base import ModelResponse
+from blackgeorge.adapters.cost import get_completion_cost, get_prompt_cost
 from blackgeorge.async_utils import ensure_not_running_loop
 from blackgeorge.config import RunConfig
 from blackgeorge.core.event_types import EventType
@@ -94,6 +95,20 @@ def _confirmation_approved(decision: Any) -> bool:
             return False
         return bool(normalized)
     return bool(decision)
+
+
+def _record_usage(ctx: CompletionContext, usage: dict[str, Any]) -> None:
+    ctx.state.metrics["usage"] = usage
+    if not usage:
+        return
+    prompt_tokens = usage.get("prompt_tokens")
+    completion_tokens = usage.get("completion_tokens")
+    turn_cost = 0.0
+    if isinstance(prompt_tokens, (int, float)):
+        turn_cost += get_prompt_cost(ctx.model_name, int(prompt_tokens)) or 0.0
+    if isinstance(completion_tokens, (int, float)):
+        turn_cost += get_completion_cost(ctx.model_name, int(completion_tokens)) or 0.0
+    ctx.state.metrics["cost_usd"] = ctx.state.metrics.get("cost_usd", 0.0) + turn_cost
 
 
 class WorkerRunner:
@@ -561,7 +576,7 @@ class WorkerRunner:
                     raise
                 report = await self._retry_context_or_report(ctx)
                 return None, report
-            ctx.state.metrics["usage"] = streamed.usage
+            _record_usage(ctx, streamed.usage)
             try:
                 data = parse_structured_stream_json(response_schema, streamed.content or "")
             except Exception:
@@ -620,7 +635,7 @@ class WorkerRunner:
         response_schema: Any,
         allowed_tools: dict[str, Tool],
     ) -> tuple[Report | None, RunState | None, bool]:
-        ctx.state.metrics["usage"] = response.usage
+        _record_usage(ctx, response.usage)
         if response.tool_calls:
             assistant_message = Message(
                 role="assistant",
@@ -698,6 +713,12 @@ class WorkerRunner:
 
         while ctx.state.iteration < ctx.config.max_iterations:
             ctx.state.increment_iteration()
+            budget = ctx.config.max_cost_usd
+            spent = ctx.state.metrics.get("cost_usd", 0.0)
+            if budget is not None and spent > budget:
+                return ctx.fail(
+                    f"Cost budget exceeded: ${spent:.6g} spent, budget is ${budget:.6g}"
+                ), None
             if (
                 ctx.config.max_context_messages is not None
                 and len(ctx.state.messages) > ctx.config.max_context_messages

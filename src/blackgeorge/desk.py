@@ -70,6 +70,7 @@ class Desk:
         num_retries: int = 0,
         respect_context_window: bool = True,
         max_context_messages: int | None = None,
+        max_cost_usd: float | None = None,
         event_bus: EventBus | None = None,
         run_store: RunStore | None = None,
         memory_store: MemoryStore | None = None,
@@ -87,6 +88,7 @@ class Desk:
             max_tool_calls=max_tool_calls,
             num_retries=num_retries,
             max_context_messages=max_context_messages,
+            max_cost_usd=max_cost_usd,
         )
         self.model = model
         self.temperature = temperature
@@ -101,6 +103,7 @@ class Desk:
         self.num_retries = num_retries
         self.respect_context_window = respect_context_window
         self.max_context_messages = max_context_messages
+        self.max_cost_usd = max_cost_usd
         self.event_bus = event_bus or EventBus()
         self.adapter = adapter or LiteLLMAdapter()
         self.storage_dir = storage_dir or ".blackgeorge"
@@ -257,6 +260,7 @@ class Desk:
             num_retries=self.num_retries,
             respect_context_window=self.respect_context_window,
             max_context_messages=self.max_context_messages,
+            max_cost_usd=self.max_cost_usd,
             default_model=self.model,
         )
 

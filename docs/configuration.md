@@ -57,6 +57,7 @@ desk = Desk(
     max_iterations=10,
     max_tool_calls=20,
     num_retries=0,
+    max_cost_usd=0.50,
 
     # Context window handling
     respect_context_window=True,
@@ -119,6 +120,7 @@ report, state = await worker.arun(config, job)
 | `num_retries` | int | 0 | LiteLLM-level retry count for failed calls |
 | `respect_context_window` | bool | True | Auto-summarize on context errors (Reactive) |
 | `max_context_messages` | int \| None | None | Auto-summarize when message count exceeds this limit (Proactive) |
+| `max_cost_usd` | float \| None | None | Cost budget per worker execution in USD |
 | `default_model` | str | None | Default model name |
 
 ### RunConfig methods
@@ -171,8 +173,26 @@ On tool turns, streamed `stream.token` events contain tool argument deltas.
 | `max_iterations` | int | 10 | Maximum model turns per worker run |
 | `max_tool_calls` | int | 20 | Maximum tool calls per worker run |
 | `num_retries` | int | 0 | LiteLLM retry count for failed LLM calls (0 disables) |
+| `max_cost_usd` | float \| None | None | Cost budget per worker execution in USD (None disables) |
 
 When these limits are exceeded, the run fails with an error in `Report.errors`.
+
+### Cost budgets
+
+`max_cost_usd` caps how much a single worker execution may spend on LLM calls. After every model
+turn, Blackgeorge prices the reported token usage via LiteLLM model pricing and accumulates it in
+`Report.metrics["cost_usd"]` (the raw usage is in `Report.metrics["usage"]`). Before starting a new
+model turn, the worker checks the accumulated cost and fails the run with a "Cost budget exceeded"
+error once it is over budget. A single-turn run always finishes, because the check only runs before
+additional turns.
+
+- The budget applies per worker execution. In a workforce, each worker execution gets the full
+  configured budget.
+- Accumulated cost survives pause/resume, since it is stored in the run state metrics.
+- Models without LiteLLM pricing metadata accumulate a cost of 0, so a budget never triggers for
+  them. Register custom models in LiteLLM (see Model registration) to get cost tracking.
+- Cost is tracked from reported token usage of chat completions, including streamed calls.
+  Structured-output validation calls made through Instructor are not metered.
 
 ### Context window handling
 
@@ -200,9 +220,9 @@ When `max_context_messages` is configured, workers summarize conversation proact
 | `storage_dir` | str | ".blackgeorge" | Directory for SQLite run store |
 
 Execution limits are validated when `Desk` or `RunConfig` is created: token and iteration limits must
-be positive, while retry and tool-call counts may be zero but not negative. A closed desk rejects new
-runs, resumes, flows, and sessions. Injected run and memory stores are caller-owned and are not closed
-with the desk.
+be positive, while retry counts, tool-call counts, and cost budgets may be zero but not negative. A
+closed desk rejects new runs, resumes, flows, and sessions. Injected run and memory stores are
+caller-owned and are not closed with the desk.
 
 ## Worker configuration
 
@@ -467,6 +487,15 @@ class CustomRunStore(RunStore):
         pass
 
     def get_run(self, run_id: str) -> RunRecord | None:
+        # Implementation
+        pass
+
+    def list_runs(
+        self,
+        status: RunStatus | None = None,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[RunRecord]:
         # Implementation
         pass
 
