@@ -32,6 +32,24 @@ def _deserialize_event(payload: str) -> Event:
     return Event.model_validate(json.loads(payload))
 
 
+def _row_to_record(row: Any) -> RunRecord:
+    input_payload = json.loads(row[2]) if row[2] else None
+    output_json = json.loads(row[4]) if row[4] else None
+    state = _deserialize_state(row[5])
+    created_at = datetime.fromisoformat(row[6])
+    updated_at = datetime.fromisoformat(row[7])
+    return RunRecord(
+        run_id=row[0],
+        status=row[1],
+        input=input_payload,
+        output=row[3],
+        output_json=output_json,
+        created_at=created_at,
+        updated_at=updated_at,
+        state=state,
+    )
+
+
 class SQLiteRunStore(RunStore):
     def __init__(self, path: str) -> None:
         self._path = path
@@ -135,21 +153,44 @@ class SQLiteRunStore(RunStore):
             row = cursor.fetchone()
         if not row:
             return None
-        input_payload = json.loads(row[2]) if row[2] else None
-        output_json = json.loads(row[4]) if row[4] else None
-        state = _deserialize_state(row[5])
-        created_at = datetime.fromisoformat(row[6])
-        updated_at = datetime.fromisoformat(row[7])
-        return RunRecord(
-            run_id=row[0],
-            status=row[1],
-            input=input_payload,
-            output=row[3],
-            output_json=output_json,
-            created_at=created_at,
-            updated_at=updated_at,
-            state=state,
-        )
+        return _row_to_record(row)
+
+    def list_runs(
+        self,
+        status: RunStatus | None = None,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[RunRecord]:
+        if limit is not None and limit < 0:
+            raise ValueError("limit must be non-negative")
+        if offset < 0:
+            raise ValueError("offset must be non-negative")
+        row_limit = -1 if limit is None else limit
+        with self._lock:
+            if status is not None:
+                cursor = self._conn.execute(
+                    """
+                    SELECT id, status, input, output, output_json, state_json,
+                           created_at, updated_at
+                    FROM runs WHERE status = ?
+                    ORDER BY created_at DESC, rowid DESC
+                    LIMIT ? OFFSET ?
+                    """,
+                    (status, row_limit, offset),
+                )
+            else:
+                cursor = self._conn.execute(
+                    """
+                    SELECT id, status, input, output, output_json, state_json,
+                           created_at, updated_at
+                    FROM runs
+                    ORDER BY created_at DESC, rowid DESC
+                    LIMIT ? OFFSET ?
+                    """,
+                    (row_limit, offset),
+                )
+            rows = cursor.fetchall()
+        return [_row_to_record(row) for row in rows]
 
     def add_event(self, event: Event) -> None:
         with self._lock, self._conn:

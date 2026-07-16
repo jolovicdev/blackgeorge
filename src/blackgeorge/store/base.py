@@ -36,6 +36,14 @@ class RunStore:
     def get_run(self, run_id: str) -> RunRecord | None:
         raise NotImplementedError
 
+    def list_runs(
+        self,
+        status: RunStatus | None = None,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[RunRecord]:
+        raise NotImplementedError
+
     def add_event(self, event: Event) -> None:
         raise NotImplementedError
 

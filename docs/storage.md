@@ -9,8 +9,32 @@ A run store supports:
 - create_run(run_id, input_payload)
 - update_run(run_id, status, output, output_json, state)
 - get_run(run_id)
+- list_runs(status, limit, offset)
 - add_event(event)
 - get_events(run_id)
+
+## Listing runs
+
+`list_runs` returns stored runs, most recently created first. Filter by status and page with
+`limit`/`offset`:
+
+```python
+from blackgeorge import Desk
+
+desk = Desk(model="openai/gpt-5-nano")
+
+# Everything, newest first
+records = desk.run_store.list_runs()
+
+# Failed runs only, one page of 20
+failed = desk.run_store.list_runs(status="failed", limit=20, offset=0)
+
+for record in failed:
+    print(record.run_id, record.status, record.created_at)
+```
+
+Custom stores support the same queries by implementing the method. `limit` and `offset` must be
+non-negative.
 
 ## RunRecord
 

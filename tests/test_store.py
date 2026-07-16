@@ -230,3 +230,53 @@ def test_run_state_response_schema_round_trip(tmp_path) -> None:
     assert record is not None
     assert record.state is not None
     assert record.state.job.response_schema is ReportModel
+
+
+def _make_run_store(store_kind: str, tmp_path: Path) -> InMemoryRunStore | SQLiteRunStore:
+    if store_kind == "memory":
+        return InMemoryRunStore()
+    return SQLiteRunStore(str(tmp_path / "list_runs.db"))
+
+
+@pytest.mark.parametrize("store_kind", ["memory", "sqlite"])
+def test_list_runs_orders_newest_first(tmp_path: Path, store_kind: str) -> None:
+    store = _make_run_store(store_kind, tmp_path)
+    for run_id in ["run-1", "run-2", "run-3"]:
+        store.create_run(run_id, {"input": run_id})
+    records = store.list_runs()
+    assert [record.run_id for record in records] == ["run-3", "run-2", "run-1"]
+    store.close()
+
+
+@pytest.mark.parametrize("store_kind", ["memory", "sqlite"])
+def test_list_runs_filters_by_status(tmp_path: Path, store_kind: str) -> None:
+    store = _make_run_store(store_kind, tmp_path)
+    store.create_run("run-1", {"input": "a"})
+    store.create_run("run-2", {"input": "b"})
+    store.update_run("run-1", "completed", "done", None, None)
+    completed = store.list_runs(status="completed")
+    assert [record.run_id for record in completed] == ["run-1"]
+    running = store.list_runs(status="running")
+    assert [record.run_id for record in running] == ["run-2"]
+    store.close()
+
+
+@pytest.mark.parametrize("store_kind", ["memory", "sqlite"])
+def test_list_runs_limit_and_offset(tmp_path: Path, store_kind: str) -> None:
+    store = _make_run_store(store_kind, tmp_path)
+    for index in range(5):
+        store.create_run(f"run-{index}", {"input": index})
+    page = store.list_runs(limit=2, offset=1)
+    assert [record.run_id for record in page] == ["run-3", "run-2"]
+    assert len(store.list_runs(limit=0)) == 0
+    store.close()
+
+
+@pytest.mark.parametrize("store_kind", ["memory", "sqlite"])
+def test_list_runs_rejects_negative_pagination(tmp_path: Path, store_kind: str) -> None:
+    store = _make_run_store(store_kind, tmp_path)
+    with pytest.raises(ValueError, match="limit must be non-negative"):
+        store.list_runs(limit=-1)
+    with pytest.raises(ValueError, match="offset must be non-negative"):
+        store.list_runs(offset=-1)
+    store.close()

@@ -64,6 +64,25 @@ class InMemoryRunStore(RunStore):
     def get_run(self, run_id: str) -> RunRecord | None:
         return self._runs.get(run_id)
 
+    def list_runs(
+        self,
+        status: RunStatus | None = None,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[RunRecord]:
+        if limit is not None and limit < 0:
+            raise ValueError("limit must be non-negative")
+        if offset < 0:
+            raise ValueError("offset must be non-negative")
+        records = [
+            record for record in self._runs.values() if status is None or record.status == status
+        ]
+        records.sort(key=lambda record: record.created_at, reverse=True)
+        records = records[offset:]
+        if limit is not None:
+            records = records[:limit]
+        return records
+
     def add_event(self, event: Event) -> None:
         self._events.setdefault(event.run_id, []).append(event)
 
