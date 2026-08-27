@@ -33,6 +33,7 @@ class Flow:
         self.name = name or "flow"
         self._run_id = ""
         self._events: list[Event] = []
+        self._usage_totals: dict[str, Any] = {}
         self._stream: bool = False
 
     def emit(self, event_type: str, source: str, payload: dict[str, Any]) -> None:
@@ -58,6 +59,7 @@ class Flow:
             max_context_messages=self.desk.max_context_messages,
             max_cost_usd=self.desk.max_cost_usd,
             default_model=self.desk.model,
+            usage_totals=self._usage_totals,
         )
 
     async def run_runner(
@@ -371,6 +373,7 @@ class Flow:
             raise RuntimeError("Desk is closed")
         self._run_id = new_id()
         self._events = []
+        self._usage_totals = {}
         self._stream = self.desk.stream
         self.desk.run_store.create_run(self._run_id, job.model_dump(mode="json"))
         self.desk.register_flow_run(self._run_id, self)

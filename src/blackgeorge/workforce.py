@@ -26,6 +26,7 @@ from blackgeorge.workforce_helpers import (
     merge_swarm_reports,
     root_job,
     select_worker_name,
+    with_run_metrics,
 )
 
 Reducer = Callable[[list[Report]], Report]
@@ -138,6 +139,7 @@ class Workforce:
                             ],
                             "pending_worker_index": len(reports),
                         },
+                        usage_totals=dict(config.usage_totals),
                     )
                     return report, state
                 reports.append((worker, report))
@@ -168,6 +170,7 @@ class Workforce:
 
     def _build_paused_state(
         self,
+        config: "RunConfig",
         run_id: str,
         job: Job,
         worker_state: RunState,
@@ -182,6 +185,7 @@ class Workforce:
             worker_state,
             stage,
             payload=payload,
+            usage_totals=dict(config.usage_totals),
         )
 
     def _swarm_worker(self, name: str | None) -> Worker:
@@ -315,6 +319,7 @@ class Workforce:
                     continue
             if worker_state:
                 return report, self._build_paused_state(
+                    config,
                     config.run_id,
                     current_job,
                     worker_state,
@@ -340,6 +345,7 @@ class Workforce:
         manager_report, manager_state = await manager.arun(config, manager_job)
         if manager_state:
             return manager_report, self._build_paused_state(
+                config,
                 config.run_id,
                 job,
                 manager_state,
@@ -354,6 +360,7 @@ class Workforce:
         worker_report, worker_state = await selected_worker.arun(config, job)
         if worker_state:
             return worker_report, self._build_paused_state(
+                config,
                 config.run_id,
                 job,
                 worker_state,
@@ -378,6 +385,7 @@ class Workforce:
             report, worker_state = await worker.arun(config, job)
             if worker_state:
                 return report, self._build_paused_state(
+                    config,
                     config.run_id,
                     job,
                     worker_state,
@@ -440,6 +448,7 @@ class Workforce:
                     continue
             if worker_state:
                 return report, self._build_paused_state(
+                    config,
                     state.run_id,
                     current_job,
                     worker_state,
@@ -468,6 +477,7 @@ class Workforce:
         )
         if manager_state:
             return manager_report, self._build_paused_state(
+                config,
                 state.run_id,
                 resumed_job,
                 manager_state,
@@ -480,6 +490,7 @@ class Workforce:
         report, next_state = await worker.arun(config, resumed_job)
         if next_state:
             return report, self._build_paused_state(
+                config,
                 state.run_id,
                 resumed_job,
                 next_state,
@@ -504,6 +515,7 @@ class Workforce:
         report, next_state = await worker.aresume(config, stored_worker_state, decision_or_input)
         if next_state:
             return report, self._build_paused_state(
+                config,
                 state.run_id,
                 resumed_job,
                 next_state,
@@ -538,6 +550,7 @@ class Workforce:
         )
         if next_state:
             return report, self._build_paused_state(
+                config,
                 state.run_id,
                 resumed_job,
                 next_state,
@@ -568,6 +581,7 @@ class Workforce:
             rep, next_state = await worker.arun(config, resumed_job)
             if next_state:
                 return rep, self._build_paused_state(
+                    config,
                     state.run_id,
                     resumed_job,
                     next_state,
@@ -602,13 +616,15 @@ class Workforce:
     ) -> tuple[Report, RunState | None]:
         config.emit(EventType.WORKFORCE_STARTED, self.name, {})
         if self.mode == "swarm":
-            result = await self._arun_swarm_mode(config, job)
+            report, state = await self._arun_swarm_mode(config, job)
         elif self.mode == "managed":
-            result = await self._arun_managed_mode(config, job)
+            report, state = await self._arun_managed_mode(config, job)
         else:
-            result = await self._arun_collaborate_mode(config, job, drain_async_handlers)
+            report, state = await self._arun_collaborate_mode(config, job, drain_async_handlers)
+        if state is None:
+            report = with_run_metrics(report, config.usage_totals)
         config.emit(EventType.WORKFORCE_COMPLETED, self.name, {})
-        return result
+        return report, state
 
     def resume(
         self, config: "RunConfig", state: RunState, decision_or_input: Any
@@ -621,25 +637,32 @@ class Workforce:
     ) -> tuple[Report, RunState | None]:
         if config.run_id != state.run_id:
             config = config.with_overrides(run_id=state.run_id)
+        stored_totals = state.payload.get("usage_totals")
+        if isinstance(stored_totals, dict):
+            config.usage_totals.update(stored_totals)
         payload, stage = state.payload, state.payload.get("stage")
         worker_state_payload = payload.get("worker_state")
         if worker_state_payload is None:
             return self._resume_failed_report(state, config, "Missing worker state"), None
         stored_worker_state = RunState.model_validate(worker_state_payload)
         if stage == "swarm":
-            return await self._aresume_swarm_stage(
+            report, next_state = await self._aresume_swarm_stage(
                 config, state, payload, stored_worker_state, decision_or_input
             )
-        if stage == "manager":
-            return await self._aresume_manager_stage(
+        elif stage == "manager":
+            report, next_state = await self._aresume_manager_stage(
                 config, state, payload, stored_worker_state, decision_or_input
             )
-        if stage == "worker":
-            return await self._aresume_worker_stage(
+        elif stage == "worker":
+            report, next_state = await self._aresume_worker_stage(
                 config, state, payload, stored_worker_state, decision_or_input
             )
-        if stage == "collaborate":
-            return await self._aresume_collaborate_stage(
+        elif stage == "collaborate":
+            report, next_state = await self._aresume_collaborate_stage(
                 config, state, payload, stored_worker_state, decision_or_input
             )
-        return self._resume_failed_report(state, config, "Unknown workflow stage"), None
+        else:
+            return self._resume_failed_report(state, config, "Unknown workflow stage"), None
+        if next_state is None:
+            report = with_run_metrics(report, config.usage_totals)
+        return report, next_state

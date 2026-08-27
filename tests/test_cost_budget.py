@@ -9,11 +9,18 @@ from blackgeorge.tools import tool
 
 MODEL = "deepseek/deepseek-v4-flash"
 USAGE = {"prompt_tokens": 1000, "completion_tokens": 500, "total_tokens": 1500}
-PRICING = litellm.model_cost[MODEL]
-TURN_COST = (
-    USAGE["prompt_tokens"] * PRICING["input_cost_per_token"]
-    + USAGE["completion_tokens"] * PRICING["output_cost_per_token"]
-)
+INPUT_RATE = 1.4e-07
+OUTPUT_RATE = 2.8e-07
+TURN_COST = USAGE["prompt_tokens"] * INPUT_RATE + USAGE["completion_tokens"] * OUTPUT_RATE
+
+
+@pytest.fixture(autouse=True)
+def _pricing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(
+        litellm.model_cost,
+        MODEL,
+        {"input_cost_per_token": INPUT_RATE, "output_cost_per_token": OUTPUT_RATE},
+    )
 
 
 def _response(

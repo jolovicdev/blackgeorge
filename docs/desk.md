@@ -36,7 +36,7 @@ desk = Desk(
 - num_retries: LiteLLM-level retry count for failed calls (0 disables retries)
 - respect_context_window: when True, auto-summarize and retry on context length errors (Reactive)
 - max_context_messages: auto-summarize when message count exceeds this limit (Proactive)
-- max_cost_usd: cost budget per worker execution in USD; the run fails before another model turn once accumulated cost (tracked in `Report.metrics["cost_usd"]`) exceeds it
+- max_cost_usd: cost budget for the whole run in USD (summed across workers and flow steps); the run fails before another model turn once the accumulated cost in the run totals exceeds it
 - event_bus: custom event bus implementation
 - run_store: custom run store implementation
 - memory_store: custom memory store implementation

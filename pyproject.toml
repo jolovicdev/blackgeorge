@@ -18,6 +18,9 @@ dependencies = [
 [project.optional-dependencies]
 vector = ["chromadb>=1.5.8"]
 
+[project.scripts]
+blackgeorge = "blackgeorge.cli:main"
+
 [dependency-groups]
 dev = [
     "chromadb>=1.5.8",

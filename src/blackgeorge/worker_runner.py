@@ -98,7 +98,6 @@ def _confirmation_approved(decision: Any) -> bool:
 
 
 def _record_usage(ctx: CompletionContext, usage: dict[str, Any]) -> None:
-    ctx.state.metrics["usage"] = usage
     if not usage:
         return
     prompt_tokens = usage.get("prompt_tokens")
@@ -108,7 +107,16 @@ def _record_usage(ctx: CompletionContext, usage: dict[str, Any]) -> None:
         turn_cost += get_prompt_cost(ctx.model_name, int(prompt_tokens)) or 0.0
     if isinstance(completion_tokens, (int, float)):
         turn_cost += get_completion_cost(ctx.model_name, int(completion_tokens)) or 0.0
-    ctx.state.metrics["cost_usd"] = ctx.state.metrics.get("cost_usd", 0.0) + turn_cost
+    metrics = ctx.state.metrics
+    metrics["cost_usd"] = metrics.get("cost_usd", 0.0) + turn_cost
+    metrics_usage = metrics.setdefault("usage", {})
+    totals = ctx.config.usage_totals
+    totals["cost_usd"] = totals.get("cost_usd", 0.0) + turn_cost
+    for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+        value = usage.get(key)
+        if isinstance(value, (int, float)):
+            metrics_usage[key] = metrics_usage.get(key, 0) + value
+            totals[key] = totals.get(key, 0) + value
 
 
 class WorkerRunner:
@@ -714,7 +722,7 @@ class WorkerRunner:
         while ctx.state.iteration < ctx.config.max_iterations:
             ctx.state.increment_iteration()
             budget = ctx.config.max_cost_usd
-            spent = ctx.state.metrics.get("cost_usd", 0.0)
+            spent = ctx.config.usage_totals.get("cost_usd", 0.0)
             if budget is not None and spent > budget:
                 return ctx.fail(
                     f"Cost budget exceeded: ${spent:.6g} spent, budget is ${budget:.6g}"
@@ -801,6 +809,16 @@ class WorkerRunner:
     ) -> tuple[Report, RunState | None]:
         if config.run_id != state.run_id:
             config = config.with_overrides(run_id=state.run_id)
+        if not config.usage_totals:
+            restored_cost = state.metrics.get("cost_usd")
+            if isinstance(restored_cost, (int, float)):
+                config.usage_totals["cost_usd"] = restored_cost
+            restored_usage = state.metrics.get("usage")
+            if isinstance(restored_usage, dict):
+                for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+                    value = restored_usage.get(key)
+                    if isinstance(value, (int, float)):
+                        config.usage_totals[key] = value
         pending = state.pending_action
         if pending is None:
             return build_report(

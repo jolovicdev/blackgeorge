@@ -19,6 +19,7 @@ def build_workforce_state(
     worker_state: RunState,
     stage: str,
     payload: dict[str, Any] | None = None,
+    usage_totals: dict[str, Any] | None = None,
 ) -> RunState:
     return RunState(
         run_id=run_id,
@@ -34,9 +35,22 @@ def build_workforce_state(
         payload={
             "stage": stage,
             "worker_state": worker_state.model_dump(mode="json"),
+            "usage_totals": usage_totals or {},
             **(payload or {}),
         },
     )
+
+
+def with_run_metrics(report: Report, totals: dict[str, Any]) -> Report:
+    usage = {
+        key: totals[key]
+        for key in ("prompt_tokens", "completion_tokens", "total_tokens")
+        if key in totals
+    }
+    metrics: dict[str, Any] = {**report.metrics, "cost_usd": totals.get("cost_usd", 0.0)}
+    if usage:
+        metrics["usage"] = usage
+    return report.model_copy(update={"metrics": metrics})
 
 
 def select_worker_name(report: Report, workers: list[Worker]) -> str:
