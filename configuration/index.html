@@ -1,0 +1,3616 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Code-first agentic framework built around Desk, Worker, and Workforce.">
+      
+      
+      
+        <link rel="canonical" href="https://jolovicdev.github.io/blackgeorge/configuration/">
+      
+      
+        <link rel="prev" href="../core-types/">
+      
+      
+        <link rel="next" href="../logging/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Configuration - Blackgeorge</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="blue-grey" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#configuration" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="Blackgeorge" class="md-header__button md-logo" aria-label="Blackgeorge" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Blackgeorge
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Configuration
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="blue-grey" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="blue-grey" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href=".." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../quickstart/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Quickstart
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../tutorials/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Tutorials
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../concepts/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Concepts
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../desk/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Desk
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../worker/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Worker
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../workforce/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Workforce
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../session/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  WorkerSession
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../workflow/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Workflow
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../tools/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Tools
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../subworkers/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Subworkers
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../tool-hooks/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Tool hooks
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../collaboration/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Collaboration
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../events/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Events and streaming
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../event-payloads/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Event payloads
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../exceptions/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Exceptions
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../multimodal/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Multimodal
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../storage/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Storage
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../cli/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  CLI
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../memory/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Memory
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../adapters/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Adapters
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../testing/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Testing
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../core-types/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Core types
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    <li class="md-tabs__item md-tabs__item--active">
+      <a href="./" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Configuration
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../logging/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Logging
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../examples/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Examples
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../development/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Development
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../agents-md/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  AGENTS.md
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="Blackgeorge" class="md-nav__button md-logo" aria-label="Blackgeorge" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Blackgeorge
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tutorials/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tutorials
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../concepts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Concepts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../desk/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Desk
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../worker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Worker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../workforce/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Workforce
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../session/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    WorkerSession
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../workflow/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Workflow
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tools/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tools
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../subworkers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Subworkers
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tool-hooks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tool hooks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../collaboration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Collaboration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../events/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Events and streaming
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../event-payloads/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Event payloads
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../exceptions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Exceptions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../multimodal/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multimodal
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../storage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Storage
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../memory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../adapters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Adapters
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../testing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Testing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../core-types/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core types
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#environment-variables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Environment variables
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Environment variables">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#provider-api-keys" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Provider API keys
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#example-changes-preservation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Example changes preservation
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#desk-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Desk configuration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#runconfig" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RunConfig
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="RunConfig">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#runconfig-fields" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RunConfig fields
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#runconfig-methods" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RunConfig methods
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#model-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Model configuration
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#streaming" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Streaming
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#structured-output" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Structured output
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#execution-limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Execution limits
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cost-budgets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cost budgets
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#context-window-handling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Context window handling
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#custom-components" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Custom components
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#storage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Storage
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#worker-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Worker configuration
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Worker configuration">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#worker-parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Worker parameters
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#workforce-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Workforce configuration
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Workforce configuration">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#workforce-parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Workforce parameters
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#managed-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Managed mode
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#collaborate-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Collaborate mode
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#swarm-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Swarm mode
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#context-window-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Context window configuration
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Context window configuration">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#model-registration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Model registration
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tool-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tool configuration
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Tool configuration">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#tool-parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tool parameters
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#memory-store-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Memory store configuration
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Memory store configuration">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#vectormemorystore" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        VectorMemoryStore
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#run-store-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Run store configuration
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Run store configuration">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#custom-run-store" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Custom run store
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#event-bus-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Event bus configuration
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Event bus configuration">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#custom-event-bus" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Custom event bus
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#adapter-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Adapter configuration
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Adapter configuration">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#custom-adapter" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Custom adapter
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#logging-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Logging configuration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#environment-variable-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Environment variable reference
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuration-best-practices" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration best practices
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../logging/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Logging
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../examples/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Examples
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../development/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../agents-md/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AGENTS.md
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#environment-variables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Environment variables
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Environment variables">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#provider-api-keys" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Provider API keys
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#example-changes-preservation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Example changes preservation
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#desk-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Desk configuration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#runconfig" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RunConfig
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="RunConfig">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#runconfig-fields" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RunConfig fields
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#runconfig-methods" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RunConfig methods
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#model-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Model configuration
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#streaming" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Streaming
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#structured-output" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Structured output
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#execution-limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Execution limits
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cost-budgets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cost budgets
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#context-window-handling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Context window handling
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#custom-components" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Custom components
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#storage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Storage
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#worker-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Worker configuration
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Worker configuration">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#worker-parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Worker parameters
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#workforce-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Workforce configuration
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Workforce configuration">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#workforce-parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Workforce parameters
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#managed-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Managed mode
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#collaborate-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Collaborate mode
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#swarm-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Swarm mode
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#context-window-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Context window configuration
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Context window configuration">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#model-registration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Model registration
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tool-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tool configuration
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Tool configuration">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#tool-parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tool parameters
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#memory-store-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Memory store configuration
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Memory store configuration">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#vectormemorystore" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        VectorMemoryStore
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#run-store-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Run store configuration
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Run store configuration">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#custom-run-store" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Custom run store
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#event-bus-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Event bus configuration
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Event bus configuration">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#custom-event-bus" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Custom event bus
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#adapter-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Adapter configuration
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Adapter configuration">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#custom-adapter" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Custom adapter
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#logging-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Logging configuration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#environment-variable-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Environment variable reference
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuration-best-practices" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration best practices
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="configuration">Configuration<a class="headerlink" href="#configuration" title="Permanent link">&para;</a></h1>
+<p>Blackgeorge provides extensive configuration options through environment variables, Desk parameters, and module-level constants.</p>
+<h2 id="environment-variables">Environment variables<a class="headerlink" href="#environment-variables" title="Permanent link">&para;</a></h2>
+<h3 id="provider-api-keys">Provider API keys<a class="headerlink" href="#provider-api-keys" title="Permanent link">&para;</a></h3>
+<p>Set the API key for your model provider:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__line-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># OpenAI</span>
+</span><span id="__line-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="nb">export</span><span class="w"> </span><span class="nv">OPENAI_API_KEY</span><span class="o">=</span><span class="s2">&quot;your-key&quot;</span>
+</span><span id="__line-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>
+</span><span id="__line-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="c1"># Anthropic</span>
+</span><span id="__line-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="nb">export</span><span class="w"> </span><span class="nv">ANTHROPIC_API_KEY</span><span class="o">=</span><span class="s2">&quot;your-key&quot;</span>
+</span><span id="__line-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>
+</span><span id="__line-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="c1"># DeepSeek</span>
+</span><span id="__line-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="nb">export</span><span class="w"> </span><span class="nv">DEEPSEEK_API_KEY</span><span class="o">=</span><span class="s2">&quot;your-key&quot;</span>
+</span><span id="__line-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>
+</span><span id="__line-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="c1"># Azure</span>
+</span><span id="__line-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="nb">export</span><span class="w"> </span><span class="nv">AZURE_API_KEY</span><span class="o">=</span><span class="s2">&quot;your-key&quot;</span>
+</span><span id="__line-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="nb">export</span><span class="w"> </span><span class="nv">AZURE_API_BASE</span><span class="o">=</span><span class="s2">&quot;https://your-resource.openai.azure.com&quot;</span>
+</span><span id="__line-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="nb">export</span><span class="w"> </span><span class="nv">AZURE_API_VERSION</span><span class="o">=</span><span class="s2">&quot;2023-07-01-preview&quot;</span>
+</span></code></pre></div>
+<h3 id="example-changes-preservation">Example changes preservation<a class="headerlink" href="#example-changes-preservation" title="Permanent link">&para;</a></h3>
+<p>For the coding agent example, control whether file changes are preserved:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__line-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1"># Preserve example changes (default: changes are restored)</span>
+</span><span id="__line-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="nb">export</span><span class="w"> </span><span class="nv">PRESERVE_EXAMPLE_CHANGES</span><span class="o">=</span><span class="s2">&quot;1&quot;</span>
+</span></code></pre></div>
+<h2 id="desk-configuration">Desk configuration<a class="headerlink" href="#desk-configuration" title="Permanent link">&para;</a></h2>
+<p>The <code>Desk</code> class accepts comprehensive configuration options:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__line-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">blackgeorge</span><span class="w"> </span><span class="kn">import</span> <span class="n">Desk</span>
+</span><span id="__line-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
+</span><span id="__line-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="n">desk</span> <span class="o">=</span> <span class="n">Desk</span><span class="p">(</span>
+</span><span id="__line-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    <span class="c1"># Model configuration</span>
+</span><span id="__line-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    <span class="n">model</span><span class="o">=</span><span class="s2">&quot;openai/gpt-5-nano&quot;</span><span class="p">,</span>
+</span><span id="__line-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>    <span class="n">temperature</span><span class="o">=</span><span class="mf">0.2</span><span class="p">,</span>
+</span><span id="__line-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>    <span class="n">max_tokens</span><span class="o">=</span><span class="mi">800</span><span class="p">,</span>
+</span><span id="__line-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>
+</span><span id="__line-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>    <span class="c1"># Streaming</span>
+</span><span id="__line-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>    <span class="n">stream</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+</span><span id="__line-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>
+</span><span id="__line-2-12"><a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a>    <span class="c1"># Structured output</span>
+</span><span id="__line-2-13"><a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a>    <span class="n">structured_stream_mode</span><span class="o">=</span><span class="s2">&quot;off&quot;</span><span class="p">,</span>
+</span><span id="__line-2-14"><a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a>    <span class="n">structured_output_retries</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
+</span><span id="__line-2-15"><a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a>
+</span><span id="__line-2-16"><a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a>    <span class="c1"># Limits</span>
+</span><span id="__line-2-17"><a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a>    <span class="n">max_iterations</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span>
+</span><span id="__line-2-18"><a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a>    <span class="n">max_tool_calls</span><span class="o">=</span><span class="mi">20</span><span class="p">,</span>
+</span><span id="__line-2-19"><a id="__codelineno-2-19" name="__codelineno-2-19" href="#__codelineno-2-19"></a>    <span class="n">num_retries</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span>
+</span><span id="__line-2-20"><a id="__codelineno-2-20" name="__codelineno-2-20" href="#__codelineno-2-20"></a>    <span class="n">max_cost_usd</span><span class="o">=</span><span class="mf">0.50</span><span class="p">,</span>
+</span><span id="__line-2-21"><a id="__codelineno-2-21" name="__codelineno-2-21" href="#__codelineno-2-21"></a>
+</span><span id="__line-2-22"><a id="__codelineno-2-22" name="__codelineno-2-22" href="#__codelineno-2-22"></a>    <span class="c1"># Context window handling</span>
+</span><span id="__line-2-23"><a id="__codelineno-2-23" name="__codelineno-2-23" href="#__codelineno-2-23"></a>    <span class="n">respect_context_window</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__line-2-24"><a id="__codelineno-2-24" name="__codelineno-2-24" href="#__codelineno-2-24"></a>    <span class="n">max_context_messages</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span>
+</span><span id="__line-2-25"><a id="__codelineno-2-25" name="__codelineno-2-25" href="#__codelineno-2-25"></a>
+</span><span id="__line-2-26"><a id="__codelineno-2-26" name="__codelineno-2-26" href="#__codelineno-2-26"></a>    <span class="c1"># Custom components</span>
+</span><span id="__line-2-27"><a id="__codelineno-2-27" name="__codelineno-2-27" href="#__codelineno-2-27"></a>    <span class="n">event_bus</span><span class="o">=</span><span class="n">custom_event_bus</span><span class="p">,</span>
+</span><span id="__line-2-28"><a id="__codelineno-2-28" name="__codelineno-2-28" href="#__codelineno-2-28"></a>    <span class="n">run_store</span><span class="o">=</span><span class="n">custom_run_store</span><span class="p">,</span>
+</span><span id="__line-2-29"><a id="__codelineno-2-29" name="__codelineno-2-29" href="#__codelineno-2-29"></a>    <span class="n">memory_store</span><span class="o">=</span><span class="n">custom_memory_store</span><span class="p">,</span>
+</span><span id="__line-2-30"><a id="__codelineno-2-30" name="__codelineno-2-30" href="#__codelineno-2-30"></a>    <span class="n">adapter</span><span class="o">=</span><span class="n">custom_adapter</span><span class="p">,</span>
+</span><span id="__line-2-31"><a id="__codelineno-2-31" name="__codelineno-2-31" href="#__codelineno-2-31"></a>
+</span><span id="__line-2-32"><a id="__codelineno-2-32" name="__codelineno-2-32" href="#__codelineno-2-32"></a>    <span class="c1"># Storage</span>
+</span><span id="__line-2-33"><a id="__codelineno-2-33" name="__codelineno-2-33" href="#__codelineno-2-33"></a>    <span class="n">storage_dir</span><span class="o">=</span><span class="s2">&quot;.blackgeorge&quot;</span><span class="p">,</span>
+</span><span id="__line-2-34"><a id="__codelineno-2-34" name="__codelineno-2-34" href="#__codelineno-2-34"></a><span class="p">)</span>
+</span></code></pre></div>
+<h2 id="runconfig">RunConfig<a class="headerlink" href="#runconfig" title="Permanent link">&para;</a></h2>
+<p>For programmatic control, use <code>RunConfig</code> to bundle run parameters:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__line-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">blackgeorge</span><span class="w"> </span><span class="kn">import</span> <span class="n">Job</span><span class="p">,</span> <span class="n">Worker</span><span class="p">,</span> <span class="n">RunConfig</span>
+</span><span id="__line-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">blackgeorge.adapters</span><span class="w"> </span><span class="kn">import</span> <span class="n">LiteLLMAdapter</span>
+</span><span id="__line-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>
+</span><span id="__line-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="n">adapter</span> <span class="o">=</span> <span class="n">LiteLLMAdapter</span><span class="p">()</span>
+</span><span id="__line-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="n">worker</span> <span class="o">=</span> <span class="n">Worker</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;analyst&quot;</span><span class="p">)</span>
+</span><span id="__line-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="n">job</span> <span class="o">=</span> <span class="n">Job</span><span class="p">(</span><span class="nb">input</span><span class="o">=</span><span class="s2">&quot;Summarize the latest incident report&quot;</span><span class="p">)</span>
+</span><span id="__line-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>
+</span><span id="__line-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="n">config</span> <span class="o">=</span> <span class="n">RunConfig</span><span class="p">(</span>
+</span><span id="__line-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>    <span class="n">adapter</span><span class="o">=</span><span class="n">adapter</span><span class="p">,</span>
+</span><span id="__line-3-10"><a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a>    <span class="n">emit</span><span class="o">=</span><span class="k">lambda</span> <span class="nb">type</span><span class="p">,</span> <span class="n">source</span><span class="p">,</span> <span class="n">payload</span><span class="p">:</span> <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="nb">type</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">source</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">),</span>
+</span><span id="__line-3-11"><a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a>    <span class="n">run_id</span><span class="o">=</span><span class="s2">&quot;run-123&quot;</span><span class="p">,</span>
+</span><span id="__line-3-12"><a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a>    <span class="n">temperature</span><span class="o">=</span><span class="mf">0.7</span><span class="p">,</span>
+</span><span id="__line-3-13"><a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a>    <span class="n">max_tokens</span><span class="o">=</span><span class="mi">1000</span><span class="p">,</span>
+</span><span id="__line-3-14"><a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a>    <span class="n">max_iterations</span><span class="o">=</span><span class="mi">5</span><span class="p">,</span>
+</span><span id="__line-3-15"><a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a>    <span class="n">max_tool_calls</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span>
+</span><span id="__line-3-16"><a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a>    <span class="n">default_model</span><span class="o">=</span><span class="s2">&quot;openai/gpt-5-nano&quot;</span><span class="p">,</span>
+</span><span id="__line-3-17"><a id="__codelineno-3-17" name="__codelineno-3-17" href="#__codelineno-3-17"></a><span class="p">)</span>
+</span><span id="__line-3-18"><a id="__codelineno-3-18" name="__codelineno-3-18" href="#__codelineno-3-18"></a>
+</span><span id="__line-3-19"><a id="__codelineno-3-19" name="__codelineno-3-19" href="#__codelineno-3-19"></a><span class="c1"># Use config-based execution</span>
+</span><span id="__line-3-20"><a id="__codelineno-3-20" name="__codelineno-3-20" href="#__codelineno-3-20"></a><span class="n">report</span><span class="p">,</span> <span class="n">state</span> <span class="o">=</span> <span class="n">worker</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="n">job</span><span class="p">)</span>
+</span><span id="__line-3-21"><a id="__codelineno-3-21" name="__codelineno-3-21" href="#__codelineno-3-21"></a><span class="n">report</span><span class="p">,</span> <span class="n">state</span> <span class="o">=</span> <span class="k">await</span> <span class="n">worker</span><span class="o">.</span><span class="n">arun</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="n">job</span><span class="p">)</span>
+</span></code></pre></div>
+<h3 id="runconfig-fields">RunConfig fields<a class="headerlink" href="#runconfig-fields" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>adapter</code></td>
+<td>BaseModelAdapter</td>
+<td>Required</td>
+<td>LLM adapter for model calls</td>
+</tr>
+<tr>
+<td><code>emit</code></td>
+<td>EventEmitter</td>
+<td>Required</td>
+<td>Event emission callback</td>
+</tr>
+<tr>
+<td><code>run_id</code></td>
+<td>str</td>
+<td>Required</td>
+<td>Unique run identifier</td>
+</tr>
+<tr>
+<td><code>events</code></td>
+<td>list[Event]</td>
+<td>[]</td>
+<td>Event list for the run</td>
+</tr>
+<tr>
+<td><code>temperature</code></td>
+<td>float</td>
+<td>None</td>
+<td>Model temperature</td>
+</tr>
+<tr>
+<td><code>max_tokens</code></td>
+<td>int</td>
+<td>None</td>
+<td>Maximum completion tokens</td>
+</tr>
+<tr>
+<td><code>stream</code></td>
+<td>bool</td>
+<td>False</td>
+<td>Enable streaming</td>
+</tr>
+<tr>
+<td><code>stream_options</code></td>
+<td>dict</td>
+<td>None</td>
+<td>Streaming options</td>
+</tr>
+<tr>
+<td><code>structured_output_retries</code></td>
+<td>int</td>
+<td>3</td>
+<td>Structured output retry count</td>
+</tr>
+<tr>
+<td><code>max_iterations</code></td>
+<td>int</td>
+<td>10</td>
+<td>Maximum model turns</td>
+</tr>
+<tr>
+<td><code>max_tool_calls</code></td>
+<td>int</td>
+<td>20</td>
+<td>Maximum tool calls</td>
+</tr>
+<tr>
+<td><code>num_retries</code></td>
+<td>int</td>
+<td>0</td>
+<td>LiteLLM-level retry count for failed calls</td>
+</tr>
+<tr>
+<td><code>respect_context_window</code></td>
+<td>bool</td>
+<td>True</td>
+<td>Auto-summarize on context errors (Reactive)</td>
+</tr>
+<tr>
+<td><code>max_context_messages</code></td>
+<td>int | None</td>
+<td>None</td>
+<td>Auto-summarize when message count exceeds this limit (Proactive)</td>
+</tr>
+<tr>
+<td><code>max_cost_usd</code></td>
+<td>float | None</td>
+<td>None</td>
+<td>Cost budget for the whole run in USD</td>
+</tr>
+<tr>
+<td><code>default_model</code></td>
+<td>str</td>
+<td>None</td>
+<td>Default model name</td>
+</tr>
+<tr>
+<td><code>usage_totals</code></td>
+<td>dict</td>
+<td>{}</td>
+<td>Shared accumulator for run-level token and cost totals</td>
+</tr>
+</tbody>
+</table>
+<h3 id="runconfig-methods">RunConfig methods<a class="headerlink" href="#runconfig-methods" title="Permanent link">&para;</a></h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__line-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="c1"># Create a copy with overrides</span>
+</span><span id="__line-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="n">new_config</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="n">with_overrides</span><span class="p">(</span><span class="n">temperature</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span> <span class="n">max_tokens</span><span class="o">=</span><span class="mi">500</span><span class="p">)</span>
+</span><span id="__line-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>
+</span><span id="__line-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="c1"># Get effective model name (worker model or default)</span>
+</span><span id="__line-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="n">model</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="n">model_name</span><span class="p">(</span><span class="n">worker</span><span class="o">.</span><span class="n">model</span><span class="p">)</span>
+</span></code></pre></div>
+<h3 id="model-configuration">Model configuration<a class="headerlink" href="#model-configuration" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>model</code></td>
+<td>str</td>
+<td>Required</td>
+<td>Default model name for workers without their own model</td>
+</tr>
+<tr>
+<td><code>temperature</code></td>
+<td>float</td>
+<td>None</td>
+<td>Model temperature (0.0-1.0)</td>
+</tr>
+<tr>
+<td><code>max_tokens</code></td>
+<td>int</td>
+<td>None</td>
+<td>Maximum tokens for completion requests</td>
+</tr>
+</tbody>
+</table>
+<p>Model names follow LiteLLM provider prefixes:
+- <code>openai/gpt-5-nano</code>
+- <code>anthropic/claude-3-opus</code>
+- <code>deepseek/deepseek-chat</code></p>
+<h3 id="streaming">Streaming<a class="headerlink" href="#streaming" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>stream</code></td>
+<td>bool</td>
+<td>False</td>
+<td>Enable streaming for eligible workers</td>
+</tr>
+</tbody>
+</table>
+<p>Streaming occurs when:
+- Desk or desk.run() has <code>stream=True</code>
+- No response schema is set
+- Or <code>structured_stream_mode="preview"</code> with a response schema</p>
+<p>On tool turns, streamed <code>stream.token</code> events contain tool argument deltas.</p>
+<h3 id="structured-output">Structured output<a class="headerlink" href="#structured-output" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>structured_stream_mode</code></td>
+<td>str</td>
+<td>"off"</td>
+<td>Structured output mode: "off" (strict non-stream) or "preview" (stream tokens, then validate/fallback)</td>
+</tr>
+<tr>
+<td><code>structured_output_retries</code></td>
+<td>int</td>
+<td>3</td>
+<td>Retries for structured output validation failures</td>
+</tr>
+</tbody>
+</table>
+<h3 id="execution-limits">Execution limits<a class="headerlink" href="#execution-limits" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>max_iterations</code></td>
+<td>int</td>
+<td>10</td>
+<td>Maximum model turns per worker run</td>
+</tr>
+<tr>
+<td><code>max_tool_calls</code></td>
+<td>int</td>
+<td>20</td>
+<td>Maximum tool calls per worker run</td>
+</tr>
+<tr>
+<td><code>num_retries</code></td>
+<td>int</td>
+<td>0</td>
+<td>LiteLLM retry count for failed LLM calls (0 disables)</td>
+</tr>
+<tr>
+<td><code>max_cost_usd</code></td>
+<td>float | None</td>
+<td>None</td>
+<td>Cost budget for the whole run in USD (None disables)</td>
+</tr>
+</tbody>
+</table>
+<p>When these limits are exceeded, the run fails with an error in <code>Report.errors</code>.</p>
+<h3 id="cost-budgets">Cost budgets<a class="headerlink" href="#cost-budgets" title="Permanent link">&para;</a></h3>
+<p><code>max_cost_usd</code> caps how much a run may spend on LLM calls. After every model turn, Blackgeorge
+prices the reported token usage via LiteLLM model pricing and accumulates it into run-level totals.
+Before starting a new model turn, the worker checks the accumulated run cost and fails the run with
+a "Cost budget exceeded" error once it is over budget. A single-turn run always finishes, because
+the check only runs before additional turns.</p>
+<ul>
+<li>The budget applies to the whole run: for a workforce it is summed across all workers, and for a
+  workflow across all steps.</li>
+<li>Accumulated totals survive pause/resume; they are stored in the run state.</li>
+<li>Worker reports carry that worker's cumulative <code>usage</code> and <code>cost_usd</code> in <code>Report.metrics</code>.
+  Workforce reports carry the run totals instead.</li>
+<li>Models without LiteLLM pricing metadata accumulate a cost of 0, so a budget never triggers for
+  them. Register custom models in LiteLLM (see Model registration) to get cost tracking.</li>
+<li>Cost is tracked from reported token usage of chat completions, including streamed calls.
+  Structured-output validation calls made through Instructor are not metered.</li>
+</ul>
+<h3 id="context-window-handling">Context window handling<a class="headerlink" href="#context-window-handling" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>respect_context_window</code></td>
+<td>bool</td>
+<td>True</td>
+<td>Auto-summarize on context length errors (Reactive)</td>
+</tr>
+<tr>
+<td><code>max_context_messages</code></td>
+<td>int | None</td>
+<td>None</td>
+<td>Auto-summarize when message count exceeds this limit (Proactive)</td>
+</tr>
+</tbody>
+</table>
+<p>When <code>respect_context_window</code> is enabled, workers summarize conversation history and retry on context limit errors (Reactive).
+When <code>max_context_messages</code> is configured, workers summarize conversation proactively when the number of messages exceeds the limit. The preserved recent tail shrinks for small limits so compaction still occurs.</p>
+<h3 id="custom-components">Custom components<a class="headerlink" href="#custom-components" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>event_bus</code></td>
+<td>EventBus</td>
+<td>None</td>
+<td>Custom event bus implementation</td>
+</tr>
+<tr>
+<td><code>run_store</code></td>
+<td>RunStore</td>
+<td>None</td>
+<td>Custom run store implementation</td>
+</tr>
+<tr>
+<td><code>memory_store</code></td>
+<td>MemoryStore</td>
+<td>None</td>
+<td>Custom memory store implementation</td>
+</tr>
+<tr>
+<td><code>adapter</code></td>
+<td>BaseModelAdapter</td>
+<td>None</td>
+<td>Custom model adapter</td>
+</tr>
+</tbody>
+</table>
+<h3 id="storage">Storage<a class="headerlink" href="#storage" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>storage_dir</code></td>
+<td>str</td>
+<td>".blackgeorge"</td>
+<td>Directory for SQLite run store</td>
+</tr>
+</tbody>
+</table>
+<p>Execution limits are validated when <code>Desk</code> or <code>RunConfig</code> is created: token and iteration limits must
+be positive, while retry counts, tool-call counts, and cost budgets may be zero but not negative. A
+closed desk rejects new runs, resumes, flows, and sessions. Injected run and memory stores are
+caller-owned and are not closed with the desk.</p>
+<h2 id="worker-configuration">Worker configuration<a class="headerlink" href="#worker-configuration" title="Permanent link">&para;</a></h2>
+<p>Workers can be configured with several options:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__line-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">blackgeorge</span><span class="w"> </span><span class="kn">import</span> <span class="n">Worker</span>
+</span><span id="__line-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>
+</span><span id="__line-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="n">worker</span> <span class="o">=</span> <span class="n">Worker</span><span class="p">(</span>
+</span><span id="__line-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>    <span class="c1"># Identity</span>
+</span><span id="__line-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;Analyst&quot;</span><span class="p">,</span>
+</span><span id="__line-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>
+</span><span id="__line-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>    <span class="c1"># Model</span>
+</span><span id="__line-5-8"><a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a>    <span class="n">model</span><span class="o">=</span><span class="s2">&quot;openai/gpt-5-nano&quot;</span><span class="p">,</span>
+</span><span id="__line-5-9"><a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a>    <span class="n">instructions</span><span class="o">=</span><span class="s2">&quot;You are a data analyst.&quot;</span><span class="p">,</span>
+</span><span id="__line-5-10"><a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a>
+</span><span id="__line-5-11"><a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a>    <span class="c1"># Tools</span>
+</span><span id="__line-5-12"><a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a>    <span class="n">tools</span><span class="o">=</span><span class="p">[</span><span class="n">tool1</span><span class="p">,</span> <span class="n">tool2</span><span class="p">],</span>
+</span><span id="__line-5-13"><a id="__codelineno-5-13" name="__codelineno-5-13" href="#__codelineno-5-13"></a>
+</span><span id="__line-5-14"><a id="__codelineno-5-14" name="__codelineno-5-14" href="#__codelineno-5-14"></a>    <span class="c1"># Memory</span>
+</span><span id="__line-5-15"><a id="__codelineno-5-15" name="__codelineno-5-15" href="#__codelineno-5-15"></a>    <span class="n">memory_scope</span><span class="o">=</span><span class="s2">&quot;analyst:session-1&quot;</span><span class="p">,</span>
+</span><span id="__line-5-16"><a id="__codelineno-5-16" name="__codelineno-5-16" href="#__codelineno-5-16"></a><span class="p">)</span>
+</span></code></pre></div>
+<h3 id="worker-parameters">Worker parameters<a class="headerlink" href="#worker-parameters" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Type</th>
+<th>Required</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>name</code></td>
+<td>str</td>
+<td>Yes</td>
+<td>Worker name used in events and selection</td>
+</tr>
+<tr>
+<td><code>model</code></td>
+<td>str</td>
+<td>No</td>
+<td>Model name override (uses desk default if None)</td>
+</tr>
+<tr>
+<td><code>instructions</code></td>
+<td>str</td>
+<td>No</td>
+<td>System instructions for the worker</td>
+</tr>
+<tr>
+<td><code>tools</code></td>
+<td>list[Tool]</td>
+<td>No</td>
+<td>Tools this worker can use</td>
+</tr>
+<tr>
+<td><code>memory_scope</code></td>
+<td>str</td>
+<td>No</td>
+<td>Namespace for external memory usage</td>
+</tr>
+</tbody>
+</table>
+<h2 id="workforce-configuration">Workforce configuration<a class="headerlink" href="#workforce-configuration" title="Permanent link">&para;</a></h2>
+<p>Workforces support multiple coordination modes:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__line-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">blackgeorge</span><span class="w"> </span><span class="kn">import</span> <span class="n">Worker</span><span class="p">,</span> <span class="n">Workforce</span>
+</span><span id="__line-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>
+</span><span id="__line-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="n">workers</span> <span class="o">=</span> <span class="p">[</span><span class="n">Worker</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;a&quot;</span><span class="p">),</span> <span class="n">Worker</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;b&quot;</span><span class="p">)]</span>
+</span><span id="__line-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>
+</span><span id="__line-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="n">workforce</span> <span class="o">=</span> <span class="n">Workforce</span><span class="p">(</span>
+</span><span id="__line-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>    <span class="n">workers</span><span class="o">=</span><span class="n">workers</span><span class="p">,</span>
+</span><span id="__line-6-7"><a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a>    <span class="n">mode</span><span class="o">=</span><span class="s2">&quot;managed&quot;</span><span class="p">,</span>           <span class="c1"># &quot;managed&quot;, &quot;collaborate&quot;, or &quot;swarm&quot;</span>
+</span><span id="__line-6-8"><a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a>    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;team&quot;</span><span class="p">,</span>
+</span><span id="__line-6-9"><a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a>    <span class="n">manager</span><span class="o">=</span><span class="n">manager_worker</span><span class="p">,</span>   <span class="c1"># Only for managed mode</span>
+</span><span id="__line-6-10"><a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a>    <span class="n">reducer</span><span class="o">=</span><span class="n">custom_reducer</span><span class="p">,</span>   <span class="c1"># Only for collaborate mode</span>
+</span><span id="__line-6-11"><a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a>    <span class="n">channel</span><span class="o">=</span><span class="n">channel</span><span class="p">,</span>          <span class="c1"># Optional</span>
+</span><span id="__line-6-12"><a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a>    <span class="n">blackboard</span><span class="o">=</span><span class="n">blackboard</span><span class="p">,</span>    <span class="c1"># Optional</span>
+</span><span id="__line-6-13"><a id="__codelineno-6-13" name="__codelineno-6-13" href="#__codelineno-6-13"></a><span class="p">)</span>
+</span></code></pre></div>
+<h3 id="workforce-parameters">Workforce parameters<a class="headerlink" href="#workforce-parameters" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Type</th>
+<th>Required</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>workers</code></td>
+<td>list[Worker]</td>
+<td>Yes</td>
+<td>Workers in the workforce</td>
+</tr>
+<tr>
+<td><code>mode</code></td>
+<td>str</td>
+<td>No</td>
+<td>"managed", "collaborate", or "swarm" (default: "managed")</td>
+</tr>
+<tr>
+<td><code>name</code></td>
+<td>str</td>
+<td>No</td>
+<td>Workforce name for events</td>
+</tr>
+<tr>
+<td><code>manager</code></td>
+<td>Worker</td>
+<td>No</td>
+<td>Manager for worker selection (managed mode)</td>
+</tr>
+<tr>
+<td><code>reducer</code></td>
+<td>Callable</td>
+<td>No</td>
+<td>Function to combine worker reports (collaborate mode)</td>
+</tr>
+<tr>
+<td><code>channel</code></td>
+<td>Channel</td>
+<td>No</td>
+<td>Communication channel between workers</td>
+</tr>
+<tr>
+<td><code>blackboard</code></td>
+<td>Blackboard</td>
+<td>No</td>
+<td>Shared state for workers</td>
+</tr>
+</tbody>
+</table>
+<h3 id="managed-mode">Managed mode<a class="headerlink" href="#managed-mode" title="Permanent link">&para;</a></h3>
+<p>In managed mode, a manager worker selects one worker, and the selected worker's report is returned.
+The <code>reducer</code> is not used in managed mode.</p>
+<h3 id="collaborate-mode">Collaborate mode<a class="headerlink" href="#collaborate-mode" title="Permanent link">&para;</a></h3>
+<p>In collaborate mode, workers without tools run concurrently, while workers with tools run
+sequentially to preserve deterministic pause/resume semantics. Provide a custom reducer to control
+how reports are combined:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__line-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">blackgeorge</span><span class="w"> </span><span class="kn">import</span> <span class="n">Report</span>
+</span><span id="__line-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>
+</span><span id="__line-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="k">def</span><span class="w"> </span><span class="nf">custom_reducer</span><span class="p">(</span><span class="n">reports</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Report</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n">Report</span><span class="p">:</span>
+</span><span id="__line-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>    <span class="n">combined_content</span> <span class="o">=</span> <span class="s2">&quot;</span><span class="se">\n\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">r</span><span class="o">.</span><span class="n">content</span> <span class="ow">or</span> <span class="s2">&quot;&quot;</span> <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">reports</span><span class="p">)</span>
+</span><span id="__line-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>    <span class="n">merged_errors</span> <span class="o">=</span> <span class="p">[</span><span class="n">error</span> <span class="k">for</span> <span class="n">report</span> <span class="ow">in</span> <span class="n">reports</span> <span class="k">for</span> <span class="n">error</span> <span class="ow">in</span> <span class="n">report</span><span class="o">.</span><span class="n">errors</span><span class="p">]</span>
+</span><span id="__line-7-6"><a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a>    <span class="k">return</span> <span class="n">reports</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">model_copy</span><span class="p">(</span>
+</span><span id="__line-7-7"><a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a>        <span class="n">update</span><span class="o">=</span><span class="p">{</span>
+</span><span id="__line-7-8"><a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a>            <span class="s2">&quot;status&quot;</span><span class="p">:</span> <span class="s2">&quot;failed&quot;</span> <span class="k">if</span> <span class="n">merged_errors</span> <span class="k">else</span> <span class="s2">&quot;completed&quot;</span><span class="p">,</span>
+</span><span id="__line-7-9"><a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a>            <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="n">combined_content</span><span class="p">,</span>
+</span><span id="__line-7-10"><a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a>            <span class="s2">&quot;errors&quot;</span><span class="p">:</span> <span class="n">merged_errors</span><span class="p">,</span>
+</span><span id="__line-7-11"><a id="__codelineno-7-11" name="__codelineno-7-11" href="#__codelineno-7-11"></a>            <span class="s2">&quot;pending_action&quot;</span><span class="p">:</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__line-7-12"><a id="__codelineno-7-12" name="__codelineno-7-12" href="#__codelineno-7-12"></a>        <span class="p">}</span>
+</span><span id="__line-7-13"><a id="__codelineno-7-13" name="__codelineno-7-13" href="#__codelineno-7-13"></a>    <span class="p">)</span>
+</span><span id="__line-7-14"><a id="__codelineno-7-14" name="__codelineno-7-14" href="#__codelineno-7-14"></a>
+</span><span id="__line-7-15"><a id="__codelineno-7-15" name="__codelineno-7-15" href="#__codelineno-7-15"></a><span class="n">workforce</span> <span class="o">=</span> <span class="n">Workforce</span><span class="p">(</span>
+</span><span id="__line-7-16"><a id="__codelineno-7-16" name="__codelineno-7-16" href="#__codelineno-7-16"></a>    <span class="n">workers</span><span class="o">=</span><span class="p">[</span><span class="n">w1</span><span class="p">,</span> <span class="n">w2</span><span class="p">],</span>
+</span><span id="__line-7-17"><a id="__codelineno-7-17" name="__codelineno-7-17" href="#__codelineno-7-17"></a>    <span class="n">mode</span><span class="o">=</span><span class="s2">&quot;collaborate&quot;</span><span class="p">,</span>
+</span><span id="__line-7-18"><a id="__codelineno-7-18" name="__codelineno-7-18" href="#__codelineno-7-18"></a>    <span class="n">reducer</span><span class="o">=</span><span class="n">custom_reducer</span><span class="p">,</span>
+</span><span id="__line-7-19"><a id="__codelineno-7-19" name="__codelineno-7-19" href="#__codelineno-7-19"></a><span class="p">)</span>
+</span></code></pre></div>
+<h3 id="swarm-mode">Swarm mode<a class="headerlink" href="#swarm-mode" title="Permanent link">&para;</a></h3>
+<p>In swarm mode, workers can hand off execution to another worker at runtime with
+<code>transfer_to_agent_tool</code>. The workforce keeps execution inside a single run while switching
+the active worker and passing the handoff context.</p>
+<h2 id="context-window-configuration">Context window configuration<a class="headerlink" href="#context-window-configuration" title="Permanent link">&para;</a></h2>
+<p>Module-level constants control context summarization behavior in <code>src/blackgeorge/worker_context.py</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Constant</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>SUMMARY_CHUNK_TOKENS</code></td>
+<td>2000</td>
+<td>Target token count for summarization chunks</td>
+</tr>
+<tr>
+<td><code>SUMMARY_TAIL_MESSAGES</code></td>
+<td>4</td>
+<td>Number of recent messages to keep unsummarized</td>
+</tr>
+<tr>
+<td><code>SUMMARY_ATTEMPT_LIMIT</code></td>
+<td>2</td>
+<td>Maximum summarization attempts before failing</td>
+</tr>
+<tr>
+<td><code>SUMMARY_MAX_OUTPUT_TOKENS</code></td>
+<td>800</td>
+<td>Maximum tokens in summary output</td>
+</tr>
+</tbody>
+</table>
+<p>These constants affect worker context summarization for both reactive retries
+(<code>respect_context_window=True</code>) and proactive compaction (<code>max_context_messages</code>).</p>
+<h3 id="model-registration">Model registration<a class="headerlink" href="#model-registration" title="Permanent link">&para;</a></h3>
+<p>For accurate context window handling, register your models in LiteLLM:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__line-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">litellm</span>
+</span><span id="__line-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>
+</span><span id="__line-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="n">litellm</span><span class="o">.</span><span class="n">model_cost</span> <span class="o">=</span> <span class="p">{</span>
+</span><span id="__line-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>    <span class="o">**</span><span class="n">litellm</span><span class="o">.</span><span class="n">model_cost</span><span class="p">,</span>
+</span><span id="__line-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>    <span class="s2">&quot;my-model&quot;</span><span class="p">:</span> <span class="p">{</span>
+</span><span id="__line-8-6"><a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>        <span class="s2">&quot;input_cost_per_token&quot;</span><span class="p">:</span> <span class="mf">0.00001</span><span class="p">,</span>
+</span><span id="__line-8-7"><a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a>        <span class="s2">&quot;output_cost_per_token&quot;</span><span class="p">:</span> <span class="mf">0.00002</span><span class="p">,</span>
+</span><span id="__line-8-8"><a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a>        <span class="s2">&quot;max_tokens&quot;</span><span class="p">:</span> <span class="mi">128000</span><span class="p">,</span>
+</span><span id="__line-8-9"><a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a>    <span class="p">},</span>
+</span><span id="__line-8-10"><a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a><span class="p">}</span>
+</span></code></pre></div>
+<p>You can also register models programmatically:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__line-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">litellm</span>
+</span><span id="__line-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>
+</span><span id="__line-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="n">litellm</span><span class="o">.</span><span class="n">register_model</span><span class="p">(</span>
+</span><span id="__line-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>    <span class="p">{</span>
+</span><span id="__line-9-5"><a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>        <span class="s2">&quot;my-provider/my-model&quot;</span><span class="p">:</span> <span class="p">{</span>
+</span><span id="__line-9-6"><a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a>            <span class="s2">&quot;litellm_provider&quot;</span><span class="p">:</span> <span class="s2">&quot;my-provider&quot;</span><span class="p">,</span>
+</span><span id="__line-9-7"><a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a>            <span class="s2">&quot;input_cost_per_token&quot;</span><span class="p">:</span> <span class="mf">0.00001</span><span class="p">,</span>
+</span><span id="__line-9-8"><a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a>            <span class="s2">&quot;output_cost_per_token&quot;</span><span class="p">:</span> <span class="mf">0.00002</span><span class="p">,</span>
+</span><span id="__line-9-9"><a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a>            <span class="s2">&quot;max_tokens&quot;</span><span class="p">:</span> <span class="mi">128000</span><span class="p">,</span>
+</span><span id="__line-9-10"><a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a>            <span class="s2">&quot;mode&quot;</span><span class="p">:</span> <span class="s2">&quot;chat&quot;</span><span class="p">,</span>
+</span><span id="__line-9-11"><a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a>        <span class="p">},</span>
+</span><span id="__line-9-12"><a id="__codelineno-9-12" name="__codelineno-9-12" href="#__codelineno-9-12"></a>    <span class="p">}</span>
+</span><span id="__line-9-13"><a id="__codelineno-9-13" name="__codelineno-9-13" href="#__codelineno-9-13"></a><span class="p">)</span>
+</span></code></pre></div>
+<p>Model registration only adds pricing/context metadata. The provider prefix still has to be a
+LiteLLM-supported provider (or routed through LiteLLM proxy or a custom adapter) to make calls.
+For provider-prefixed model names such as <code>openai/gpt-5</code>, Blackgeorge checks both the full
+name and the unprefixed suffix when deciding whether context metadata is registered.</p>
+<h2 id="tool-configuration">Tool configuration<a class="headerlink" href="#tool-configuration" title="Permanent link">&para;</a></h2>
+<p>Tools accept several configuration options:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__line-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">blackgeorge.tools</span><span class="w"> </span><span class="kn">import</span> <span class="n">tool</span>
+</span><span id="__line-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>
+</span><span id="__line-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="k">def</span><span class="w"> </span><span class="nf">pre_hook</span><span class="p">(</span><span class="n">call</span><span class="p">):</span>
+</span><span id="__line-10-4"><a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;calling </span><span class="si">{</span><span class="n">call</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</span><span id="__line-10-5"><a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a>
+</span><span id="__line-10-6"><a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a><span class="k">def</span><span class="w"> </span><span class="nf">post_hook</span><span class="p">(</span><span class="n">call</span><span class="p">,</span> <span class="n">result</span><span class="p">):</span>
+</span><span id="__line-10-7"><a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">call</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2"> done: </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">error</span><span class="w"> </span><span class="ow">is</span><span class="w"> </span><span class="kc">None</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</span><span id="__line-10-8"><a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a>
+</span><span id="__line-10-9"><a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a><span class="nd">@tool</span><span class="p">(</span>
+</span><span id="__line-10-10"><a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a>    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;my_tool&quot;</span><span class="p">,</span>
+</span><span id="__line-10-11"><a id="__codelineno-10-11" name="__codelineno-10-11" href="#__codelineno-10-11"></a>    <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Does something useful&quot;</span><span class="p">,</span>
+</span><span id="__line-10-12"><a id="__codelineno-10-12" name="__codelineno-10-12" href="#__codelineno-10-12"></a>    <span class="n">requires_confirmation</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+</span><span id="__line-10-13"><a id="__codelineno-10-13" name="__codelineno-10-13" href="#__codelineno-10-13"></a>    <span class="n">requires_user_input</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+</span><span id="__line-10-14"><a id="__codelineno-10-14" name="__codelineno-10-14" href="#__codelineno-10-14"></a>    <span class="n">external_execution</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+</span><span id="__line-10-15"><a id="__codelineno-10-15" name="__codelineno-10-15" href="#__codelineno-10-15"></a>    <span class="n">pre</span><span class="o">=</span><span class="p">(</span><span class="n">pre_hook</span><span class="p">,),</span>
+</span><span id="__line-10-16"><a id="__codelineno-10-16" name="__codelineno-10-16" href="#__codelineno-10-16"></a>    <span class="n">post</span><span class="o">=</span><span class="p">(</span><span class="n">post_hook</span><span class="p">,),</span>
+</span><span id="__line-10-17"><a id="__codelineno-10-17" name="__codelineno-10-17" href="#__codelineno-10-17"></a>    <span class="n">confirmation_prompt</span><span class="o">=</span><span class="s2">&quot;Proceed?&quot;</span><span class="p">,</span>
+</span><span id="__line-10-18"><a id="__codelineno-10-18" name="__codelineno-10-18" href="#__codelineno-10-18"></a>    <span class="n">user_input_prompt</span><span class="o">=</span><span class="s2">&quot;Enter value:&quot;</span><span class="p">,</span>
+</span><span id="__line-10-19"><a id="__codelineno-10-19" name="__codelineno-10-19" href="#__codelineno-10-19"></a>    <span class="n">timeout</span><span class="o">=</span><span class="mf">30.0</span><span class="p">,</span>
+</span><span id="__line-10-20"><a id="__codelineno-10-20" name="__codelineno-10-20" href="#__codelineno-10-20"></a>    <span class="n">retries</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
+</span><span id="__line-10-21"><a id="__codelineno-10-21" name="__codelineno-10-21" href="#__codelineno-10-21"></a>    <span class="n">retry_delay</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span>
+</span><span id="__line-10-22"><a id="__codelineno-10-22" name="__codelineno-10-22" href="#__codelineno-10-22"></a><span class="p">)</span>
+</span><span id="__line-10-23"><a id="__codelineno-10-23" name="__codelineno-10-23" href="#__codelineno-10-23"></a><span class="k">def</span><span class="w"> </span><span class="nf">my_function</span><span class="p">(</span><span class="n">param</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+</span><span id="__line-10-24"><a id="__codelineno-10-24" name="__codelineno-10-24" href="#__codelineno-10-24"></a>    <span class="k">return</span> <span class="n">param</span>
+</span></code></pre></div>
+<h3 id="tool-parameters">Tool parameters<a class="headerlink" href="#tool-parameters" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>name</code></td>
+<td>str</td>
+<td>Function name</td>
+<td>Tool name</td>
+</tr>
+<tr>
+<td><code>description</code></td>
+<td>str</td>
+<td>Auto-generated</td>
+<td>Tool description for the model</td>
+</tr>
+<tr>
+<td><code>requires_confirmation</code></td>
+<td>bool</td>
+<td>False</td>
+<td>Requires user confirmation before execution</td>
+</tr>
+<tr>
+<td><code>requires_user_input</code></td>
+<td>bool</td>
+<td>False</td>
+<td>Requires user input before execution</td>
+</tr>
+<tr>
+<td><code>external_execution</code></td>
+<td>bool</td>
+<td>False</td>
+<td>Mark as external tool</td>
+</tr>
+<tr>
+<td><code>pre</code></td>
+<td>tuple[ToolPreHook, ...]</td>
+<td>()</td>
+<td>Pre-execution hooks</td>
+</tr>
+<tr>
+<td><code>post</code></td>
+<td>tuple[ToolPostHook, ...]</td>
+<td>()</td>
+<td>Post-execution hooks</td>
+</tr>
+<tr>
+<td><code>confirmation_prompt</code></td>
+<td>str</td>
+<td>Auto-generated</td>
+<td>Custom confirmation prompt</td>
+</tr>
+<tr>
+<td><code>user_input_prompt</code></td>
+<td>str</td>
+<td>Auto-generated</td>
+<td>Custom input prompt</td>
+</tr>
+<tr>
+<td><code>input_key</code></td>
+<td>str</td>
+<td>None</td>
+<td>Field name to receive resume user input (default key: <code>user_input</code>)</td>
+</tr>
+<tr>
+<td><code>timeout</code></td>
+<td>float</td>
+<td>None</td>
+<td>Execution timeout in seconds</td>
+</tr>
+<tr>
+<td><code>retries</code></td>
+<td>int</td>
+<td>0</td>
+<td>Number of retry attempts</td>
+</tr>
+<tr>
+<td><code>retry_delay</code></td>
+<td>float</td>
+<td>1.0</td>
+<td>Delay between retries (exponential backoff)</td>
+</tr>
+</tbody>
+</table>
+<h2 id="memory-store-configuration">Memory store configuration<a class="headerlink" href="#memory-store-configuration" title="Permanent link">&para;</a></h2>
+<h3 id="vectormemorystore">VectorMemoryStore<a class="headerlink" href="#vectormemorystore" title="Permanent link">&para;</a></h3>
+<p>Install the optional ChromaDB dependencies before configuring vector memory:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__line-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>uv<span class="w"> </span>add<span class="w"> </span><span class="s2">&quot;blackgeorge[vector]&quot;</span>
+</span></code></pre></div>
+<div class="language-python highlight"><pre><span></span><code><span id="__line-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">blackgeorge.memory</span><span class="w"> </span><span class="kn">import</span> <span class="n">VectorMemoryStore</span>
+</span><span id="__line-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>
+</span><span id="__line-12-3"><a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="n">store</span> <span class="o">=</span> <span class="n">VectorMemoryStore</span><span class="p">(</span>
+</span><span id="__line-12-4"><a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a>    <span class="n">path</span><span class="o">=</span><span class="s2">&quot;/path/to/db&quot;</span><span class="p">,</span>
+</span><span id="__line-12-5"><a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a>    <span class="n">chunk_size</span><span class="o">=</span><span class="mi">8000</span><span class="p">,</span>
+</span><span id="__line-12-6"><a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a>    <span class="n">chunk_overlap</span><span class="o">=</span><span class="mi">200</span><span class="p">,</span>
+</span><span id="__line-12-7"><a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a><span class="p">)</span>
+</span></code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>path</code></td>
+<td>str</td>
+<td>Required</td>
+<td>Storage path for ChromaDB</td>
+</tr>
+<tr>
+<td><code>chunk_size</code></td>
+<td>int</td>
+<td>8000</td>
+<td>Chunk size for long documents</td>
+</tr>
+<tr>
+<td><code>chunk_overlap</code></td>
+<td>int</td>
+<td>200</td>
+<td>Overlap between chunks</td>
+</tr>
+</tbody>
+</table>
+<h2 id="run-store-configuration">Run store configuration<a class="headerlink" href="#run-store-configuration" title="Permanent link">&para;</a></h2>
+<h3 id="custom-run-store">Custom run store<a class="headerlink" href="#custom-run-store" title="Permanent link">&para;</a></h3>
+<p>Implement the <code>RunStore</code> interface:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__line-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span>
+</span><span id="__line-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>
+</span><span id="__line-13-3"><a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">blackgeorge.core.event</span><span class="w"> </span><span class="kn">import</span> <span class="n">Event</span>
+</span><span id="__line-13-4"><a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="kn">from</span><span class="w"> </span><span class="nn">blackgeorge.core.types</span><span class="w"> </span><span class="kn">import</span> <span class="n">RunStatus</span>
+</span><span id="__line-13-5"><a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="kn">from</span><span class="w"> </span><span class="nn">blackgeorge.store</span><span class="w"> </span><span class="kn">import</span> <span class="n">RunRecord</span><span class="p">,</span> <span class="n">RunState</span><span class="p">,</span> <span class="n">RunStore</span>
+</span><span id="__line-13-6"><a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a>
+</span><span id="__line-13-7"><a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a><span class="k">class</span><span class="w"> </span><span class="nc">CustomRunStore</span><span class="p">(</span><span class="n">RunStore</span><span class="p">):</span>
+</span><span id="__line-13-8"><a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">create_run</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">run_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">input_payload</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__line-13-9"><a id="__codelineno-13-9" name="__codelineno-13-9" href="#__codelineno-13-9"></a>        <span class="c1"># Implementation</span>
+</span><span id="__line-13-10"><a id="__codelineno-13-10" name="__codelineno-13-10" href="#__codelineno-13-10"></a>        <span class="k">pass</span>
+</span><span id="__line-13-11"><a id="__codelineno-13-11" name="__codelineno-13-11" href="#__codelineno-13-11"></a>
+</span><span id="__line-13-12"><a id="__codelineno-13-12" name="__codelineno-13-12" href="#__codelineno-13-12"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">update_run</span><span class="p">(</span>
+</span><span id="__line-13-13"><a id="__codelineno-13-13" name="__codelineno-13-13" href="#__codelineno-13-13"></a>        <span class="bp">self</span><span class="p">,</span>
+</span><span id="__line-13-14"><a id="__codelineno-13-14" name="__codelineno-13-14" href="#__codelineno-13-14"></a>        <span class="n">run_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+</span><span id="__line-13-15"><a id="__codelineno-13-15" name="__codelineno-13-15" href="#__codelineno-13-15"></a>        <span class="n">status</span><span class="p">:</span> <span class="n">RunStatus</span><span class="p">,</span>
+</span><span id="__line-13-16"><a id="__codelineno-13-16" name="__codelineno-13-16" href="#__codelineno-13-16"></a>        <span class="n">output</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__line-13-17"><a id="__codelineno-13-17" name="__codelineno-13-17" href="#__codelineno-13-17"></a>        <span class="n">output_json</span><span class="p">:</span> <span class="n">Any</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__line-13-18"><a id="__codelineno-13-18" name="__codelineno-13-18" href="#__codelineno-13-18"></a>        <span class="n">state</span><span class="p">:</span> <span class="n">RunState</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__line-13-19"><a id="__codelineno-13-19" name="__codelineno-13-19" href="#__codelineno-13-19"></a>    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__line-13-20"><a id="__codelineno-13-20" name="__codelineno-13-20" href="#__codelineno-13-20"></a>        <span class="c1"># Implementation</span>
+</span><span id="__line-13-21"><a id="__codelineno-13-21" name="__codelineno-13-21" href="#__codelineno-13-21"></a>        <span class="k">pass</span>
+</span><span id="__line-13-22"><a id="__codelineno-13-22" name="__codelineno-13-22" href="#__codelineno-13-22"></a>
+</span><span id="__line-13-23"><a id="__codelineno-13-23" name="__codelineno-13-23" href="#__codelineno-13-23"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">get_run</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">run_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">RunRecord</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__line-13-24"><a id="__codelineno-13-24" name="__codelineno-13-24" href="#__codelineno-13-24"></a>        <span class="c1"># Implementation</span>
+</span><span id="__line-13-25"><a id="__codelineno-13-25" name="__codelineno-13-25" href="#__codelineno-13-25"></a>        <span class="k">pass</span>
+</span><span id="__line-13-26"><a id="__codelineno-13-26" name="__codelineno-13-26" href="#__codelineno-13-26"></a>
+</span><span id="__line-13-27"><a id="__codelineno-13-27" name="__codelineno-13-27" href="#__codelineno-13-27"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">list_runs</span><span class="p">(</span>
+</span><span id="__line-13-28"><a id="__codelineno-13-28" name="__codelineno-13-28" href="#__codelineno-13-28"></a>        <span class="bp">self</span><span class="p">,</span>
+</span><span id="__line-13-29"><a id="__codelineno-13-29" name="__codelineno-13-29" href="#__codelineno-13-29"></a>        <span class="n">status</span><span class="p">:</span> <span class="n">RunStatus</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__line-13-30"><a id="__codelineno-13-30" name="__codelineno-13-30" href="#__codelineno-13-30"></a>        <span class="n">limit</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__line-13-31"><a id="__codelineno-13-31" name="__codelineno-13-31" href="#__codelineno-13-31"></a>        <span class="n">offset</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span>
+</span><span id="__line-13-32"><a id="__codelineno-13-32" name="__codelineno-13-32" href="#__codelineno-13-32"></a>    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">RunRecord</span><span class="p">]:</span>
+</span><span id="__line-13-33"><a id="__codelineno-13-33" name="__codelineno-13-33" href="#__codelineno-13-33"></a>        <span class="c1"># Implementation</span>
+</span><span id="__line-13-34"><a id="__codelineno-13-34" name="__codelineno-13-34" href="#__codelineno-13-34"></a>        <span class="k">pass</span>
+</span><span id="__line-13-35"><a id="__codelineno-13-35" name="__codelineno-13-35" href="#__codelineno-13-35"></a>
+</span><span id="__line-13-36"><a id="__codelineno-13-36" name="__codelineno-13-36" href="#__codelineno-13-36"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">add_event</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">event</span><span class="p">:</span> <span class="n">Event</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__line-13-37"><a id="__codelineno-13-37" name="__codelineno-13-37" href="#__codelineno-13-37"></a>        <span class="c1"># Implementation</span>
+</span><span id="__line-13-38"><a id="__codelineno-13-38" name="__codelineno-13-38" href="#__codelineno-13-38"></a>        <span class="k">pass</span>
+</span><span id="__line-13-39"><a id="__codelineno-13-39" name="__codelineno-13-39" href="#__codelineno-13-39"></a>
+</span><span id="__line-13-40"><a id="__codelineno-13-40" name="__codelineno-13-40" href="#__codelineno-13-40"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">get_events</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">run_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">Event</span><span class="p">]:</span>
+</span><span id="__line-13-41"><a id="__codelineno-13-41" name="__codelineno-13-41" href="#__codelineno-13-41"></a>        <span class="c1"># Implementation</span>
+</span><span id="__line-13-42"><a id="__codelineno-13-42" name="__codelineno-13-42" href="#__codelineno-13-42"></a>        <span class="k">pass</span>
+</span><span id="__line-13-43"><a id="__codelineno-13-43" name="__codelineno-13-43" href="#__codelineno-13-43"></a>
+</span><span id="__line-13-44"><a id="__codelineno-13-44" name="__codelineno-13-44" href="#__codelineno-13-44"></a><span class="n">desk</span> <span class="o">=</span> <span class="n">Desk</span><span class="p">(</span><span class="n">run_store</span><span class="o">=</span><span class="n">CustomRunStore</span><span class="p">())</span>
+</span></code></pre></div>
+<h2 id="event-bus-configuration">Event bus configuration<a class="headerlink" href="#event-bus-configuration" title="Permanent link">&para;</a></h2>
+<h3 id="custom-event-bus">Custom event bus<a class="headerlink" href="#custom-event-bus" title="Permanent link">&para;</a></h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__line-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">blackgeorge.event_bus</span><span class="w"> </span><span class="kn">import</span> <span class="n">EventBus</span>
+</span><span id="__line-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">blackgeorge</span><span class="w"> </span><span class="kn">import</span> <span class="n">Desk</span>
+</span><span id="__line-14-3"><a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>
+</span><span id="__line-14-4"><a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="n">bus</span> <span class="o">=</span> <span class="n">EventBus</span><span class="p">()</span>
+</span><span id="__line-14-5"><a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a>
+</span><span id="__line-14-6"><a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a><span class="c1"># Subscribe to events before passing to desk</span>
+</span><span id="__line-14-7"><a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a><span class="k">def</span><span class="w"> </span><span class="nf">log_events</span><span class="p">(</span><span class="n">event</span><span class="p">):</span>
+</span><span id="__line-14-8"><a id="__codelineno-14-8" name="__codelineno-14-8" href="#__codelineno-14-8"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">event</span><span class="o">.</span><span class="n">type</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">event</span><span class="o">.</span><span class="n">payload</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</span><span id="__line-14-9"><a id="__codelineno-14-9" name="__codelineno-14-9" href="#__codelineno-14-9"></a>
+</span><span id="__line-14-10"><a id="__codelineno-14-10" name="__codelineno-14-10" href="#__codelineno-14-10"></a><span class="k">for</span> <span class="n">event_type</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;run.started&quot;</span><span class="p">,</span> <span class="s2">&quot;run.completed&quot;</span><span class="p">,</span> <span class="s2">&quot;run.failed&quot;</span><span class="p">):</span>
+</span><span id="__line-14-11"><a id="__codelineno-14-11" name="__codelineno-14-11" href="#__codelineno-14-11"></a>    <span class="n">bus</span><span class="o">.</span><span class="n">subscribe</span><span class="p">(</span><span class="n">event_type</span><span class="p">,</span> <span class="n">log_events</span><span class="p">)</span>
+</span><span id="__line-14-12"><a id="__codelineno-14-12" name="__codelineno-14-12" href="#__codelineno-14-12"></a>
+</span><span id="__line-14-13"><a id="__codelineno-14-13" name="__codelineno-14-13" href="#__codelineno-14-13"></a><span class="n">desk</span> <span class="o">=</span> <span class="n">Desk</span><span class="p">(</span><span class="n">event_bus</span><span class="o">=</span><span class="n">bus</span><span class="p">)</span>
+</span></code></pre></div>
+<h2 id="adapter-configuration">Adapter configuration<a class="headerlink" href="#adapter-configuration" title="Permanent link">&para;</a></h2>
+<h3 id="custom-adapter">Custom adapter<a class="headerlink" href="#custom-adapter" title="Permanent link">&para;</a></h3>
+<p>Implement the <code>BaseModelAdapter</code> interface:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__line-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span>
+</span><span id="__line-15-2"><a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>
+</span><span id="__line-15-3"><a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">blackgeorge.adapters.base</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseModelAdapter</span><span class="p">,</span> <span class="n">ModelResponse</span>
+</span><span id="__line-15-4"><a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a>
+</span><span id="__line-15-5"><a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a><span class="k">class</span><span class="w"> </span><span class="nc">CustomAdapter</span><span class="p">(</span><span class="n">BaseModelAdapter</span><span class="p">):</span>
+</span><span id="__line-15-6"><a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">complete</span><span class="p">(</span>
+</span><span id="__line-15-7"><a id="__codelineno-15-7" name="__codelineno-15-7" href="#__codelineno-15-7"></a>        <span class="bp">self</span><span class="p">,</span>
+</span><span id="__line-15-8"><a id="__codelineno-15-8" name="__codelineno-15-8" href="#__codelineno-15-8"></a>        <span class="o">*</span><span class="p">,</span>
+</span><span id="__line-15-9"><a id="__codelineno-15-9" name="__codelineno-15-9" href="#__codelineno-15-9"></a>        <span class="n">model</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+</span><span id="__line-15-10"><a id="__codelineno-15-10" name="__codelineno-15-10" href="#__codelineno-15-10"></a>        <span class="n">messages</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]],</span>
+</span><span id="__line-15-11"><a id="__codelineno-15-11" name="__codelineno-15-11" href="#__codelineno-15-11"></a>        <span class="n">tools</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__line-15-12"><a id="__codelineno-15-12" name="__codelineno-15-12" href="#__codelineno-15-12"></a>        <span class="n">tool_choice</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__line-15-13"><a id="__codelineno-15-13" name="__codelineno-15-13" href="#__codelineno-15-13"></a>        <span class="n">temperature</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__line-15-14"><a id="__codelineno-15-14" name="__codelineno-15-14" href="#__codelineno-15-14"></a>        <span class="n">max_tokens</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__line-15-15"><a id="__codelineno-15-15" name="__codelineno-15-15" href="#__codelineno-15-15"></a>        <span class="n">stream</span><span class="p">:</span> <span class="nb">bool</span><span class="p">,</span>
+</span><span id="__line-15-16"><a id="__codelineno-15-16" name="__codelineno-15-16" href="#__codelineno-15-16"></a>        <span class="n">stream_options</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__line-15-17"><a id="__codelineno-15-17" name="__codelineno-15-17" href="#__codelineno-15-17"></a>        <span class="n">thinking</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__line-15-18"><a id="__codelineno-15-18" name="__codelineno-15-18" href="#__codelineno-15-18"></a>        <span class="n">drop_params</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__line-15-19"><a id="__codelineno-15-19" name="__codelineno-15-19" href="#__codelineno-15-19"></a>        <span class="n">extra_body</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__line-15-20"><a id="__codelineno-15-20" name="__codelineno-15-20" href="#__codelineno-15-20"></a>        <span class="n">num_retries</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__line-15-21"><a id="__codelineno-15-21" name="__codelineno-15-21" href="#__codelineno-15-21"></a>    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ModelResponse</span><span class="p">:</span>
+</span><span id="__line-15-22"><a id="__codelineno-15-22" name="__codelineno-15-22" href="#__codelineno-15-22"></a>        <span class="c1"># Implementation</span>
+</span><span id="__line-15-23"><a id="__codelineno-15-23" name="__codelineno-15-23" href="#__codelineno-15-23"></a>        <span class="k">pass</span>
+</span><span id="__line-15-24"><a id="__codelineno-15-24" name="__codelineno-15-24" href="#__codelineno-15-24"></a>
+</span><span id="__line-15-25"><a id="__codelineno-15-25" name="__codelineno-15-25" href="#__codelineno-15-25"></a>    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">acomplete</span><span class="p">(</span>
+</span><span id="__line-15-26"><a id="__codelineno-15-26" name="__codelineno-15-26" href="#__codelineno-15-26"></a>        <span class="bp">self</span><span class="p">,</span>
+</span><span id="__line-15-27"><a id="__codelineno-15-27" name="__codelineno-15-27" href="#__codelineno-15-27"></a>        <span class="o">*</span><span class="p">,</span>
+</span><span id="__line-15-28"><a id="__codelineno-15-28" name="__codelineno-15-28" href="#__codelineno-15-28"></a>        <span class="n">model</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+</span><span id="__line-15-29"><a id="__codelineno-15-29" name="__codelineno-15-29" href="#__codelineno-15-29"></a>        <span class="n">messages</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]],</span>
+</span><span id="__line-15-30"><a id="__codelineno-15-30" name="__codelineno-15-30" href="#__codelineno-15-30"></a>        <span class="n">tools</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__line-15-31"><a id="__codelineno-15-31" name="__codelineno-15-31" href="#__codelineno-15-31"></a>        <span class="n">tool_choice</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__line-15-32"><a id="__codelineno-15-32" name="__codelineno-15-32" href="#__codelineno-15-32"></a>        <span class="n">temperature</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__line-15-33"><a id="__codelineno-15-33" name="__codelineno-15-33" href="#__codelineno-15-33"></a>        <span class="n">max_tokens</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__line-15-34"><a id="__codelineno-15-34" name="__codelineno-15-34" href="#__codelineno-15-34"></a>        <span class="n">stream</span><span class="p">:</span> <span class="nb">bool</span><span class="p">,</span>
+</span><span id="__line-15-35"><a id="__codelineno-15-35" name="__codelineno-15-35" href="#__codelineno-15-35"></a>        <span class="n">stream_options</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__line-15-36"><a id="__codelineno-15-36" name="__codelineno-15-36" href="#__codelineno-15-36"></a>        <span class="n">thinking</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__line-15-37"><a id="__codelineno-15-37" name="__codelineno-15-37" href="#__codelineno-15-37"></a>        <span class="n">drop_params</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__line-15-38"><a id="__codelineno-15-38" name="__codelineno-15-38" href="#__codelineno-15-38"></a>        <span class="n">extra_body</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__line-15-39"><a id="__codelineno-15-39" name="__codelineno-15-39" href="#__codelineno-15-39"></a>        <span class="n">num_retries</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+</span><span id="__line-15-40"><a id="__codelineno-15-40" name="__codelineno-15-40" href="#__codelineno-15-40"></a>    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ModelResponse</span><span class="p">:</span>
+</span><span id="__line-15-41"><a id="__codelineno-15-41" name="__codelineno-15-41" href="#__codelineno-15-41"></a>        <span class="c1"># Implementation</span>
+</span><span id="__line-15-42"><a id="__codelineno-15-42" name="__codelineno-15-42" href="#__codelineno-15-42"></a>        <span class="k">pass</span>
+</span><span id="__line-15-43"><a id="__codelineno-15-43" name="__codelineno-15-43" href="#__codelineno-15-43"></a>
+</span><span id="__line-15-44"><a id="__codelineno-15-44" name="__codelineno-15-44" href="#__codelineno-15-44"></a><span class="n">desk</span> <span class="o">=</span> <span class="n">Desk</span><span class="p">(</span><span class="n">adapter</span><span class="o">=</span><span class="n">CustomAdapter</span><span class="p">())</span>
+</span></code></pre></div>
+<h2 id="logging-configuration">Logging configuration<a class="headerlink" href="#logging-configuration" title="Permanent link">&para;</a></h2>
+<p>Blackgeorge uses the <code>StructuredLogger</code> for JSON-formatted logs:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__line-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">logging</span>
+</span><span id="__line-16-2"><a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>
+</span><span id="__line-16-3"><a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">blackgeorge.logging</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_logger</span>
+</span><span id="__line-16-4"><a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a>
+</span><span id="__line-16-5"><a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a><span class="n">logger</span> <span class="o">=</span> <span class="n">get_logger</span><span class="p">(</span><span class="s2">&quot;my_app&quot;</span><span class="p">,</span> <span class="n">level</span><span class="o">=</span><span class="n">logging</span><span class="o">.</span><span class="n">INFO</span><span class="p">)</span>
+</span><span id="__line-16-6"><a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a>
+</span><span id="__line-16-7"><a id="__codelineno-16-7" name="__codelineno-16-7" href="#__codelineno-16-7"></a><span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Application started&quot;</span><span class="p">,</span> <span class="n">user_id</span><span class="o">=</span><span class="s2">&quot;123&quot;</span><span class="p">)</span>
+</span><span id="__line-16-8"><a id="__codelineno-16-8" name="__codelineno-16-8" href="#__codelineno-16-8"></a><span class="c1"># {&quot;timestamp&quot;: &quot;2024-01-19T...&quot;, &quot;level&quot;: &quot;INFO&quot;, &quot;message&quot;: &quot;Application started&quot;, &quot;user_id&quot;: &quot;123&quot;}</span>
+</span></code></pre></div>
+<p>See <a href="../logging/">Logging</a> for more details.</p>
+<h2 id="environment-variable-reference">Environment variable reference<a class="headerlink" href="#environment-variable-reference" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>OPENAI_API_KEY</code></td>
+<td>OpenAI API key</td>
+</tr>
+<tr>
+<td><code>ANTHROPIC_API_KEY</code></td>
+<td>Anthropic API key</td>
+</tr>
+<tr>
+<td><code>DEEPSEEK_API_KEY</code></td>
+<td>DeepSeek API key</td>
+</tr>
+<tr>
+<td><code>AZURE_API_KEY</code></td>
+<td>Azure OpenAI API key</td>
+</tr>
+<tr>
+<td><code>AZURE_API_BASE</code></td>
+<td>Azure OpenAI endpoint</td>
+</tr>
+<tr>
+<td><code>AZURE_API_VERSION</code></td>
+<td>Azure API version</td>
+</tr>
+<tr>
+<td><code>PRESERVE_EXAMPLE_CHANGES</code></td>
+<td>Preserve coding-agent example file changes ("1")</td>
+</tr>
+</tbody>
+</table>
+<h2 id="configuration-best-practices">Configuration best practices<a class="headerlink" href="#configuration-best-practices" title="Permanent link">&para;</a></h2>
+<ol>
+<li><strong>Use environment variables for secrets</strong>: Never hardcode API keys</li>
+<li><strong>Set appropriate limits</strong>: Adjust <code>max_iterations</code> and <code>max_tool_calls</code> based on your use case</li>
+<li><strong>Enable context window handling</strong>: Keep <code>respect_context_window=True</code> for production</li>
+<li><strong>Configure storage_dir</strong>: Use a dedicated directory for run storage</li>
+<li><strong>Use memory_scope</strong>: Isolate worker memory when using multiple workers</li>
+<li><strong>Register models</strong>: Register custom models in LiteLLM for accurate context handling</li>
+</ol>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.tabs", "navigation.top", "toc.follow", "search.highlight", "search.suggest", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>
