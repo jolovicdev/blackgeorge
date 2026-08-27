@@ -16,6 +16,7 @@ def validate_execution_limits(
     max_tool_calls: int,
     num_retries: int,
     max_context_messages: int | None,
+    max_cost_usd: float | None,
 ) -> None:
     if max_tokens is not None and max_tokens < 1:
         raise ValueError("max_tokens must be >= 1")
@@ -29,6 +30,8 @@ def validate_execution_limits(
         raise ValueError("num_retries must be >= 0")
     if max_context_messages is not None and max_context_messages < 1:
         raise ValueError("max_context_messages must be >= 1")
+    if max_cost_usd is not None and max_cost_usd < 0:
+        raise ValueError("max_cost_usd must be >= 0")
 
 
 @dataclass(frozen=True)
@@ -47,6 +50,7 @@ class RunConfig:
     num_retries: int = 0
     respect_context_window: bool = True
     max_context_messages: int | None = None
+    max_cost_usd: float | None = None
     default_model: str | None = None
 
     def __post_init__(self) -> None:
@@ -57,6 +61,7 @@ class RunConfig:
             max_tool_calls=self.max_tool_calls,
             num_retries=self.num_retries,
             max_context_messages=self.max_context_messages,
+            max_cost_usd=self.max_cost_usd,
         )
 
     def with_overrides(self, **kwargs: Any) -> "RunConfig":

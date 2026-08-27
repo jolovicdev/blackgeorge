@@ -56,6 +56,7 @@ class Flow:
             num_retries=self.desk.num_retries,
             respect_context_window=self.desk.respect_context_window,
             max_context_messages=self.desk.max_context_messages,
+            max_cost_usd=self.desk.max_cost_usd,
             default_model=self.desk.model,
         )
 
