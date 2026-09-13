@@ -54,7 +54,9 @@ Structured output uses LiteLLM JSON schema response formats when possible and fa
 - `instructor.from_provider("litellm/<model>", async_client=True)`
 
 If the LiteLLM structured response fails or is unavailable, the worker calls `chat.completions.create(..., response_model=YourModel)` and returns the validated Pydantic object as `Report.data`.
-Structured output retries are clamped to a minimum of 3 attempts for resilience (`retries=0` still performs 3 retries after the first failed attempt).
+`structured_output_retries` sets how many extra attempts follow a failed validation. With
+`retries=0` a single attempt is made. Provider errors other than an unsupported response format
+are raised immediately and never retried.
 
 ## Adapter hooks for structured output
 

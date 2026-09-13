@@ -60,6 +60,10 @@ The desk applies simple read/write memory behavior for workers:
 - Before a worker run, it reads `context` from the store using `worker.memory_scope` and inserts it as a system message after any existing leading system messages.
 - After a completed run, it writes `last_output` (structured data or content) using the same scope.
 
+The same two hooks run for every worker `Step` inside a flow, so flow steps read `context` and
+write `last_output` exactly like `desk.run`. `desk.prepare_job(runner, job)` and
+`desk.record_memory(runner, report)` expose this behavior for custom runners.
+
 This is intentionally minimal so you can build your own memory workflows on top.
 
 ## Context window handling
@@ -173,6 +177,9 @@ If you create many temporary workers or workforces, unregister them when you are
 desk.unregister_worker(worker)
 desk.unregister_workforce(workforce)
 ```
+
+`desk.get_worker(name)` and `desk.get_workforce(name)` return the registered runner or `None`.
+Flows use them to find the runner for a paused step when resuming.
 
 ## Events
 

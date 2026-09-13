@@ -193,8 +193,8 @@ the check only runs before additional turns.
   Workforce reports carry the run totals instead.
 - Models without LiteLLM pricing metadata accumulate a cost of 0, so a budget never triggers for
   them. Register custom models in LiteLLM (see Model registration) to get cost tracking.
-- Cost is tracked from reported token usage of chat completions, including streamed calls.
-  Structured-output validation calls made through Instructor are not metered.
+- Cost is tracked from reported token usage of every model call: chat completions, streamed
+  calls, and structured-output calls including their JSON and Instructor fallbacks.
 
 ### Context window handling
 
