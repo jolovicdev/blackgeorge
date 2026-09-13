@@ -46,6 +46,8 @@ def print_event(event) -> None:
     from blackgeorge import EventType
 
     if event.type == EventType.STREAM_TOKEN:
+        if event.payload.get("type") == "tool_argument":
+            return
         token = event.payload.get("token", "")
         if token:
             sys.stdout.write(token)
@@ -155,6 +157,7 @@ def main() -> None:
         model=MODEL_NAME,
         storage_dir=storage_dir,
         max_iterations=35,
+        max_tool_calls=60,
         stream=stream_enabled,
         max_context_messages=15,
     )
@@ -188,7 +191,7 @@ def main() -> None:
 
     desk.event_bus.subscribe("*", on_event)
 
-    handoff_tool = transfer_to_agent_tool(["Coder", "Reviewer"])
+    handoff_tools = [transfer_to_agent_tool(["Coder", "Reviewer"])] if use_swarm else []
 
     manager = Worker(
         name="Manager",
@@ -213,7 +216,7 @@ def main() -> None:
             remember,
             recall,
             coder_channel_send,
-            handoff_tool,
+            *handoff_tools,
         ],
         instructions=(
             "You are a coding agent working inside a small project. "
@@ -238,7 +241,7 @@ def main() -> None:
             recall,
             reviewer_channel_receive,
             reviewer_blackboard_write,
-            handoff_tool,
+            *handoff_tools,
         ],
         instructions=(
             "You summarize the changes and provide a structured report. "
@@ -319,7 +322,10 @@ def main() -> None:
                 report = desk.resume(report, decision, stream=stream_enabled)
             else:
                 if auto_confirm:
-                    default_response = "proceed with safe defaults"
+                    default_response = (
+                        "Raise ZeroDivisionError for division by zero and "
+                        "ValueError for an empty average."
+                    )
                     print(f"[AUTO-INPUT] {action.prompt} -> {default_response}")
                     decision = default_response
                 else:
@@ -381,8 +387,15 @@ def main() -> None:
         for key in bb_keys:
             print(f"  {key}: {blackboard.read(key)}")
 
+        for entry in flow_report.data or []:
+            if isinstance(entry, dict) and isinstance(entry.get("data"), ChangeReport):
+                print("\n--- Change Report ---")
+                print(entry["data"].model_dump_json(indent=2))
+
         print("\nFinal report status:", flow_report.status)
         print("Final report content:\n", flow_report.content)
+        total_cost = report.metrics.get("cost_usd", 0.0) + flow_report.metrics.get("cost_usd", 0.0)
+        print(f"Total cost (USD): {total_cost:.6f}")
         print("Run store path:", desk.db_path)
         print("Events stored:", len(desk.run_store.get_events(report.run_id)))
     except ToolExecutionError as e:
