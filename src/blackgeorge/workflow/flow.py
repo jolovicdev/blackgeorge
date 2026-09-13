@@ -1,5 +1,5 @@
 import asyncio
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any
 
 from blackgeorge.async_utils import ensure_not_running_loop
 from blackgeorge.config import RunConfig
@@ -13,6 +13,7 @@ from blackgeorge.utils import new_id
 from blackgeorge.worker import Worker
 from blackgeorge.workflow.context import WorkflowContext
 from blackgeorge.workflow.nodes import (
+    Executable,
     OutputContinuation,
     Step,
     WorkflowGraph,
@@ -26,9 +27,12 @@ from blackgeorge.workflow.result import (
 )
 from blackgeorge.workforce import Workforce
 
+if TYPE_CHECKING:
+    from blackgeorge.desk import Desk
+
 
 class Flow:
-    def __init__(self, desk: Any, steps: list[Any], name: str | None = None) -> None:
+    def __init__(self, desk: "Desk", steps: list[Executable], name: str | None = None) -> None:
         self.desk = desk
         self.steps = list(steps)
         self.name = name or "flow"
@@ -101,7 +105,6 @@ class Flow:
                     errors=["Worker not registered"],
                 )
                 return report, None
-            worker = cast(Worker, worker)
             return await worker.aresume(config, state, decision_or_input)
         if state.runner_type == "workforce":
             workforce = self.desk._workforces.get(state.runner_name)
@@ -119,7 +122,6 @@ class Flow:
                     errors=["Workforce not registered"],
                 )
                 return report, None
-            workforce = cast(Workforce, workforce)
             return await workforce.aresume(config, state, decision_or_input)
         report = Report(
             run_id=state.run_id,
@@ -170,7 +172,7 @@ class Flow:
             payload=payload,
         )
 
-    def _restore_outputs(self, payload: Any) -> list[Report]:
+    def _restore_outputs(self, payload: object) -> list[Report]:
         if payload is None:
             return []
         if not isinstance(payload, list):
@@ -330,7 +332,7 @@ class Flow:
 
     async def _run_steps(
         self,
-        steps: list[Any],
+        steps: list[Executable],
         context: WorkflowContext,
         all_reports: list[Report],
         job: Job,

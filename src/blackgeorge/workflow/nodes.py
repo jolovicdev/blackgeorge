@@ -5,7 +5,7 @@ from collections.abc import Awaitable, Callable, Iterator, Sequence
 from dataclasses import dataclass, replace
 from inspect import isawaitable
 from itertools import count
-from typing import Any, Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from blackgeorge.core.event_types import EventType
 from blackgeorge.core.job import Job
@@ -18,9 +18,14 @@ from blackgeorge.workflow.result import (
     WorkflowContinuation,
 )
 
+if TYPE_CHECKING:
+    from blackgeorge.worker import Worker
+    from blackgeorge.workflow.flow import Flow
+    from blackgeorge.workforce import Workforce
+
 
 class Executable(Protocol):
-    async def execute(self, flow: Any, context: WorkflowContext) -> list[StepOutput]: ...
+    async def execute(self, flow: "Flow", context: WorkflowContext) -> list[StepOutput]: ...
 
 
 def report_for(output: StepOutput) -> Report:
@@ -42,7 +47,7 @@ def publish_outputs(context: WorkflowContext, outputs: list[StepOutput]) -> None
 class SequenceContinuation:
     steps: tuple[Executable, ...]
 
-    async def __call__(self, flow: Any, context: WorkflowContext) -> list[StepOutput]:
+    async def __call__(self, flow: "Flow", context: WorkflowContext) -> list[StepOutput]:
         return await execute_sequence(flow, context, self.steps)
 
 
@@ -50,7 +55,7 @@ class SequenceContinuation:
 class OutputContinuation:
     outputs: tuple[StepOutput, ...]
 
-    async def __call__(self, flow: Any, context: Any) -> list[StepOutput]:
+    async def __call__(self, flow: "Flow", context: WorkflowContext) -> list[StepOutput]:
         return list(self.outputs)
 
 
@@ -75,7 +80,7 @@ def defer_after_pause(
 
 
 async def execute_sequence(
-    flow: Any,
+    flow: "Flow",
     context: WorkflowContext,
     steps: tuple[Executable, ...] | list[Executable],
 ) -> list[StepOutput]:
@@ -98,15 +103,15 @@ async def execute_sequence(
 class Step:
     def __init__(
         self,
-        runner: Any,
+        runner: "Worker | Workforce",
         name: str | None = None,
         job_builder: Callable[[WorkflowContext], Job] | None = None,
     ) -> None:
         self.runner = runner
-        self.name = name or getattr(runner, "name", "step")
+        self.name = name or runner.name
         self.job_builder = job_builder
 
-    async def execute(self, flow: Any, context: WorkflowContext) -> list[StepOutput]:
+    async def execute(self, flow: "Flow", context: WorkflowContext) -> list[StepOutput]:
         job = self.job_builder(context) if self.job_builder else context.job
         flow.emit(EventType.STEP_STARTED, self.name, {})
         report, state = await flow.run_runner(self.runner, job)
@@ -125,7 +130,7 @@ class Parallel:
             raise ValueError("Parallel requires at least one step")
         self.steps = tuple(steps)
 
-    async def execute(self, flow: Any, context: WorkflowContext) -> list[StepOutput]:
+    async def execute(self, flow: "Flow", context: WorkflowContext) -> list[StepOutput]:
         groups = await asyncio.gather(*(step.execute(flow, context) for step in self.steps))
         return defer_after_pause([output for group in groups for output in group])
 
@@ -141,7 +146,7 @@ class Condition:
         self.if_true = tuple(if_true)
         self.if_false = tuple(if_false or [])
 
-    async def execute(self, flow: Any, context: WorkflowContext) -> list[StepOutput]:
+    async def execute(self, flow: "Flow", context: WorkflowContext) -> list[StepOutput]:
         selected = self.predicate(context)
         if isawaitable(selected):
             selected = await cast(Awaitable[bool], selected)
@@ -162,7 +167,7 @@ class Router:
         self.selector = selector
         self.routes = {key: tuple(steps) for key, steps in routes.items()}
 
-    async def execute(self, flow: Any, context: WorkflowContext) -> list[StepOutput]:
+    async def execute(self, flow: "Flow", context: WorkflowContext) -> list[StepOutput]:
         return await execute_sequence(flow, context, self.routes.get(self.selector(context), ()))
 
 
@@ -189,13 +194,13 @@ class Loop:
         self._explicit_name = name is not None
         self.name = name if name is not None else f"{self.name_prefix}_{next(self.counter)}"
 
-    async def execute(self, flow: Any, context: WorkflowContext) -> list[StepOutput]:
+    async def execute(self, flow: "Flow", context: WorkflowContext) -> list[StepOutput]:
         context.set_loop_iteration(self.name, 0)
         return await self.run_iterations(flow, context, 0, False)
 
     async def run_iterations(
         self,
-        flow: Any,
+        flow: "Flow",
         context: WorkflowContext,
         start_index: int,
         iteration_started: bool,
@@ -231,7 +236,7 @@ class LoopContinuation:
     start_index: int
     previous_name: str | None = None
 
-    async def __call__(self, flow: Any, context: WorkflowContext) -> list[StepOutput]:
+    async def __call__(self, flow: "Flow", context: WorkflowContext) -> list[StepOutput]:
         if self.previous_name is not None and self.previous_name != self.loop.name:
             iteration = context.loop_iteration(self.previous_name)
             context.set_loop_iteration(self.loop.name, iteration)
@@ -342,7 +347,7 @@ def serialize_step_output(graph: WorkflowGraph, output: StepOutput) -> dict[str,
     }
 
 
-def restore_step_output(graph: WorkflowGraph, payload: Any) -> StepResult:
+def restore_step_output(graph: WorkflowGraph, payload: object) -> StepResult:
     if not isinstance(payload, dict):
         raise ValueError("Invalid workflow continuation output")
     report = Report.model_validate(payload.get("report"))
@@ -383,7 +388,7 @@ def serialize_continuations(
     return [serialize_continuation(graph, continuation) for continuation in continuations]
 
 
-def parse_step_path(payload: Any) -> StepPath:
+def parse_step_path(payload: object) -> StepPath:
     if not isinstance(payload, list):
         raise ValueError("Invalid workflow continuation path")
     if any(isinstance(part, bool) or not isinstance(part, (str, int)) for part in payload):
@@ -393,7 +398,7 @@ def parse_step_path(payload: Any) -> StepPath:
 
 def restore_continuation(
     graph: WorkflowGraph,
-    payload: Any,
+    payload: object,
 ) -> WorkflowContinuation:
     if not isinstance(payload, dict):
         raise ValueError("Invalid workflow continuation")
@@ -427,7 +432,7 @@ def restore_continuation(
 
 def restore_continuations(
     graph: WorkflowGraph,
-    payload: Any,
+    payload: object,
 ) -> list[WorkflowContinuation]:
     if not isinstance(payload, list):
         raise ValueError("Invalid workflow continuations")

@@ -47,7 +47,7 @@ class WorkflowContext:
         cls,
         job: Job,
         outputs: list[Report],
-        payload: Any,
+        payload: object,
     ) -> "WorkflowContext":
         if payload is None:
             return cls(job=job, outputs=list(outputs))

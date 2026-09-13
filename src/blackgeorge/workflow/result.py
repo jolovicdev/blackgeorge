@@ -1,8 +1,12 @@
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from blackgeorge.core.report import Report
 from blackgeorge.store.state import RunState
+
+if TYPE_CHECKING:
+    from blackgeorge.workflow.context import WorkflowContext
+    from blackgeorge.workflow.flow import Flow
 
 
 @dataclass(frozen=True)
@@ -16,4 +20,4 @@ type StepOutput = Report | StepResult
 
 
 class WorkflowContinuation(Protocol):
-    async def __call__(self, flow: Any, context: Any) -> list[StepOutput]: ...
+    async def __call__(self, flow: "Flow", context: "WorkflowContext") -> list[StepOutput]: ...

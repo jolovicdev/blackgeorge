@@ -25,6 +25,7 @@ from blackgeorge.tools.base import Tool
 from blackgeorge.utils import new_id, utc_now
 from blackgeorge.worker import Worker
 from blackgeorge.workflow.flow import Flow
+from blackgeorge.workflow.nodes import Executable
 from blackgeorge.workforce import Workforce
 
 if TYPE_CHECKING:
@@ -143,7 +144,7 @@ class Desk:
     def unregister_flow_run(self, run_id: str) -> None:
         self._flow_runs.pop(run_id, None)
 
-    def flow(self, steps: list[Any], name: str | None = None) -> Flow:
+    def flow(self, steps: list[Executable], name: str | None = None) -> Flow:
         self._ensure_open()
         return Flow(self, steps, name=name)
 
