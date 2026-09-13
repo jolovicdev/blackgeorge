@@ -47,7 +47,7 @@ python examples/coding_agent/run.py --no-stream --prompt "Read spec.txt"
 
 | Flag | Description |
 |------|-------------|
-| `--prompt TEXT` | Run non-interactively with the given prompt (auto-confirms tool actions) |
+| `--prompt TEXT` | Run non-interactively with the given prompt (auto-confirms writes and answers `ask_user` with the spec's defaults: `ZeroDivisionError` on divide by zero, `ValueError` on empty average) |
 | `--swarm` | Use swarm mode instead of managed mode (dynamic worker handoffs) |
 | `--no-stream` | Disable token streaming |
 
@@ -59,7 +59,7 @@ python examples/coding_agent/run.py --no-stream --prompt "Read spec.txt"
 | `BLACKGEORGE_STREAM` | `1` | Set to `0` to disable streaming |
 | `PRESERVE_EXAMPLE_CHANGES` | `0` | Set to `1` to keep file edits after run |
 
-The script pauses for confirmations and user input when tools require it (interactive mode only). By default it restores any edits under `examples/coding_agent/project` after the run.
+The script pauses for confirmations and user input when tools require it (interactive mode only). By default it restores any edits under `examples/coding_agent/project` after the run. The desk runs with `max_tool_calls=60`, since a full run uses roughly 20 to 30 tool calls across the Coder, Reviewer, and Narrator.
 
 ## Sample project
 
@@ -120,5 +120,6 @@ except ToolExecutionError as e:
 - Tool timing includes cancellation status
 - Blackboard state printed after run and after flow summary
 - Channel messages printed after run
+- The Reviewer's structured `ChangeReport` and the total run cost printed after the flow
 - Run data persists to `examples/coding_agent/.blackgeorge/blackgeorge.db`
 - Vector memory at `examples/coding_agent/.blackgeorge/memory/`
