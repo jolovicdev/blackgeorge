@@ -19,6 +19,7 @@ from blackgeorge.adapters.litellm_callbacks import (
 )
 from blackgeorge.core.tool_arguments import parse_tool_arguments
 from blackgeorge.core.tool_call import ToolCall
+from blackgeorge.core.usage import add_token_usage
 from blackgeorge.utils import new_id
 
 _litellm_runtime_configured = False
@@ -122,12 +123,6 @@ def _response_usage(response: Any) -> dict[str, Any]:
     if isinstance(usage, BaseModel):
         usage = usage.model_dump(mode="json", warnings=False)
     return usage if isinstance(usage, dict) else {}
-
-
-def _add_usage(totals: dict[str, Any], response: Any) -> None:
-    for key, value in _response_usage(response).items():
-        if isinstance(value, (int, float)) and not isinstance(value, bool):
-            totals[key] = totals.get(key, 0) + value
 
 
 def _response_content(response: Any) -> str | None:
@@ -266,7 +261,7 @@ class _StructuredRequest:
         return params
 
     def _record(self, response: Any) -> None:
-        _add_usage(self.usage, response)
+        add_token_usage(self.usage, _response_usage(response))
         emit_llm_completed(self.model, response)
 
     def complete(self, call: _StructuredCall) -> Any:

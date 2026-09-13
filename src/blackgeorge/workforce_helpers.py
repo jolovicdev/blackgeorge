@@ -41,18 +41,6 @@ def build_workforce_state(
     )
 
 
-def with_run_metrics(report: Report, totals: dict[str, Any]) -> Report:
-    usage = {
-        key: totals[key]
-        for key in ("prompt_tokens", "completion_tokens", "total_tokens")
-        if key in totals
-    }
-    metrics: dict[str, Any] = {**report.metrics, "cost_usd": totals.get("cost_usd", 0.0)}
-    if usage:
-        metrics["usage"] = usage
-    return report.model_copy(update={"metrics": metrics})
-
-
 def select_worker_name(report: Report, workers: list[Worker]) -> str:
     worker_names = {worker.name for worker in workers}
     if isinstance(report.data, BaseModel) and hasattr(report.data, "worker"):

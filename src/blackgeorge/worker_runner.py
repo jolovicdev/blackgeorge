@@ -6,13 +6,14 @@ from collections.abc import Callable, Iterable
 from typing import Any, cast
 
 from blackgeorge.adapters.base import ModelResponse, StructuredResponse
-from blackgeorge.adapters.cost import get_completion_cost, get_prompt_cost
+from blackgeorge.adapters.cost import usage_cost
 from blackgeorge.async_utils import ensure_not_running_loop
 from blackgeorge.config import RunConfig
 from blackgeorge.core.event_types import EventType
 from blackgeorge.core.job import Job
 from blackgeorge.core.message import Message
 from blackgeorge.core.report import Report
+from blackgeorge.core.usage import record_turn, totals_from_metrics
 from blackgeorge.runner.loop_state import CompletionContext, LoopState
 from blackgeorge.runner.streaming import (
     append_tool_error,
@@ -108,23 +109,9 @@ def _supported_kwargs(method: Callable[..., Any], kwargs: dict[str, Any]) -> dic
 def _record_usage(ctx: CompletionContext, usage: dict[str, Any]) -> None:
     if not usage:
         return
-    prompt_tokens = usage.get("prompt_tokens")
-    completion_tokens = usage.get("completion_tokens")
-    turn_cost = 0.0
-    if isinstance(prompt_tokens, (int, float)):
-        turn_cost += get_prompt_cost(ctx.model_name, int(prompt_tokens)) or 0.0
-    if isinstance(completion_tokens, (int, float)):
-        turn_cost += get_completion_cost(ctx.model_name, int(completion_tokens)) or 0.0
-    metrics = ctx.state.metrics
-    metrics["cost_usd"] = metrics.get("cost_usd", 0.0) + turn_cost
-    metrics_usage = metrics.setdefault("usage", {})
-    totals = ctx.config.usage_totals
-    totals["cost_usd"] = totals.get("cost_usd", 0.0) + turn_cost
-    for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
-        value = usage.get(key)
-        if isinstance(value, (int, float)):
-            metrics_usage[key] = metrics_usage.get(key, 0) + value
-            totals[key] = totals.get(key, 0) + value
+    record_turn(
+        ctx.state.metrics, ctx.config.usage_totals, usage, usage_cost(ctx.model_name, usage)
+    )
 
 
 class WorkerRunner:
@@ -842,15 +829,7 @@ class WorkerRunner:
         if config.run_id != state.run_id:
             config = config.with_overrides(run_id=state.run_id)
         if not config.usage_totals:
-            restored_cost = state.metrics.get("cost_usd")
-            if isinstance(restored_cost, (int, float)):
-                config.usage_totals["cost_usd"] = restored_cost
-            restored_usage = state.metrics.get("usage")
-            if isinstance(restored_usage, dict):
-                for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
-                    value = restored_usage.get(key)
-                    if isinstance(value, (int, float)):
-                        config.usage_totals[key] = value
+            config.usage_totals.update(totals_from_metrics(state.metrics))
         pending = state.pending_action
         if pending is None:
             return build_report(

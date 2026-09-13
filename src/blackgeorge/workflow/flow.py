@@ -7,6 +7,7 @@ from blackgeorge.core.event import Event
 from blackgeorge.core.job import Job
 from blackgeorge.core.report import Report
 from blackgeorge.core.serialization import to_json_value
+from blackgeorge.core.usage import restore_totals, with_run_metrics
 from blackgeorge.store.state import RunState
 from blackgeorge.utils import new_id
 from blackgeorge.worker import Worker
@@ -24,7 +25,6 @@ from blackgeorge.workflow.result import (
     WorkflowContinuation,
 )
 from blackgeorge.workforce import Workforce
-from blackgeorge.workforce_helpers import with_run_metrics
 
 
 class Flow:
@@ -442,8 +442,8 @@ class Flow:
         except (TypeError, ValueError) as exc:
             return self._resume_failure(state, f"Invalid flow state: {exc}")
 
-        stored_totals = payload.get("usage_totals")
-        self._usage_totals = dict(stored_totals) if isinstance(stored_totals, dict) else {}
+        self._usage_totals = {}
+        restore_totals(self._usage_totals, payload.get("usage_totals"))
         self.desk.register_flow_run(self._run_id, self)
         self.desk.emit(self._events, self._run_id, "run.resumed", self.name, {})
 
