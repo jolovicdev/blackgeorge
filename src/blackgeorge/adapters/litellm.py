@@ -2,7 +2,7 @@ import asyncio
 import atexit
 import json
 import warnings
-from collections.abc import AsyncIterator, Callable, Iterator
+from collections.abc import AsyncIterator, Callable, Generator, Iterator
 from dataclasses import dataclass, field
 from typing import Any, cast
 
@@ -222,53 +222,114 @@ def _build_json_object_prompt(response_schema: Any) -> str:
     return f"Respond with valid JSON matching this schema: {json.dumps(schema, indent=2)}"
 
 
+type SchemaAttempt = tuple[bool, Any | None]
+
+
+def _schema_attempt_response(response: Any, response_schema: Any) -> SchemaAttempt:
+    content = _response_content(response)
+    if not content:
+        return False, None
+    try:
+        return False, _parse_structured_json(response_schema, content)
+    except Exception:
+        return True, None
+
+
+def _schema_attempt_error(exc: Exception) -> SchemaAttempt | None:
+    if _is_json_schema_unavailable_error(exc):
+        return True, None
+    if _is_response_format_unsupported_error(exc):
+        return False, None
+    return None
+
+
+@dataclass(frozen=True)
+class _StructuredCall:
+    messages: list[dict[str, Any]]
+    response_format: dict[str, Any] | None = None
+    instructor_model: type[BaseModel] | None = None
+
+
+type _StructuredPipeline = Generator[_StructuredCall, Any, Any]
+
+
 @dataclass
 class _StructuredRequest:
     model: str
     options: dict[str, Any]
     usage: dict[str, Any] = field(default_factory=dict)
 
-    def _params(
-        self, messages: list[dict[str, Any]], response_format: dict[str, Any] | None
-    ) -> dict[str, Any]:
-        params: dict[str, Any] = {"model": self.model, "messages": messages, **self.options}
-        if response_format is not None:
-            params["response_format"] = response_format
+    def _params(self, call: _StructuredCall) -> dict[str, Any]:
+        params: dict[str, Any] = {"model": self.model, "messages": call.messages, **self.options}
+        if call.response_format is not None:
+            params["response_format"] = call.response_format
         return params
 
-    def started(self, messages: list[dict[str, Any]]) -> None:
-        emit_llm_started(self.model, len(messages), 0)
-
-    def failed(self, exc: Exception) -> None:
-        emit_llm_failed(self.model, exc)
-
-    def record(self, response: Any) -> None:
+    def _record(self, response: Any) -> None:
         _add_usage(self.usage, response)
         emit_llm_completed(self.model, response)
 
-    def complete(
-        self, messages: list[dict[str, Any]], response_format: dict[str, Any] | None = None
-    ) -> Any:
-        self.started(messages)
+    def complete(self, call: _StructuredCall) -> Any:
+        emit_llm_started(self.model, len(call.messages), 0)
         try:
-            response = litellm.completion(**self._params(messages, response_format))
+            if call.instructor_model is None:
+                result = response = litellm.completion(**self._params(call))
+            else:
+                client = instructor_clients.get(self.model, async_client=False)
+                result, response = client.chat.completions.create_with_completion(
+                    model=self.model,
+                    messages=call.messages,
+                    response_model=call.instructor_model,
+                    **self.options,
+                )
         except Exception as exc:
-            self.failed(exc)
+            emit_llm_failed(self.model, exc)
             raise
-        self.record(response)
-        return response
+        self._record(response)
+        return result
 
-    async def acomplete(
-        self, messages: list[dict[str, Any]], response_format: dict[str, Any] | None = None
-    ) -> Any:
-        self.started(messages)
+    async def acomplete(self, call: _StructuredCall) -> Any:
+        emit_llm_started(self.model, len(call.messages), 0)
         try:
-            response = await litellm.acompletion(**self._params(messages, response_format))
+            if call.instructor_model is None:
+                result = response = await litellm.acompletion(**self._params(call))
+            else:
+                client = instructor_clients.get(self.model, async_client=True)
+                result, response = await client.chat.completions.create_with_completion(
+                    model=self.model,
+                    messages=call.messages,
+                    response_model=call.instructor_model,
+                    **self.options,
+                )
         except Exception as exc:
-            self.failed(exc)
+            emit_llm_failed(self.model, exc)
             raise
-        self.record(response)
-        return response
+        self._record(response)
+        return result
+
+    def run(self, pipeline: _StructuredPipeline) -> Any:
+        outcome: Any = None
+        try:
+            while True:
+                call = pipeline.send(outcome)
+                try:
+                    outcome = self.complete(call)
+                except Exception as exc:
+                    outcome = exc
+        except StopIteration as stop:
+            return stop.value
+
+    async def arun(self, pipeline: _StructuredPipeline) -> Any:
+        outcome: Any = None
+        try:
+            while True:
+                call = pipeline.send(outcome)
+                try:
+                    outcome = await self.acomplete(call)
+                except Exception as exc:
+                    outcome = exc
+        except StopIteration as stop:
+            return stop.value
 
 
 def _structured_request(
@@ -294,57 +355,6 @@ def _structured_request(
     )
 
 
-def _json_object_fallback_result(response: Any, response_schema: Any) -> Any | None:
-    content = _response_content(response)
-    if content:
-        return _parse_structured_json(response_schema, content)
-    return None
-
-
-def _try_json_object_fallback(
-    request: _StructuredRequest,
-    payload: list[dict[str, Any]],
-    response_schema: Any,
-) -> Any | None:
-    schema_prompt = _build_json_object_prompt(response_schema)
-    if not schema_prompt:
-        return None
-    augmented_payload = list(payload)
-    augmented_payload.append({"role": "user", "content": schema_prompt})
-    try:
-        response = request.complete(augmented_payload, {"type": "json_object"})
-    except Exception as exc:
-        if _is_response_format_unsupported_error(exc):
-            return None
-        raise
-    try:
-        return _json_object_fallback_result(response, response_schema)
-    except Exception:
-        return None
-
-
-async def _atry_json_object_fallback(
-    request: _StructuredRequest,
-    payload: list[dict[str, Any]],
-    response_schema: Any,
-) -> Any | None:
-    schema_prompt = _build_json_object_prompt(response_schema)
-    if not schema_prompt:
-        return None
-    augmented_payload = list(payload)
-    augmented_payload.append({"role": "user", "content": schema_prompt})
-    try:
-        response = await request.acomplete(augmented_payload, {"type": "json_object"})
-    except Exception as exc:
-        if _is_response_format_unsupported_error(exc):
-            return None
-        raise
-    try:
-        return _json_object_fallback_result(response, response_schema)
-    except Exception:
-        return None
-
-
 def _parse_completion_response(response: Any, response_schema: Any) -> Any:
     content = _response_content(response)
     if not content:
@@ -352,44 +362,65 @@ def _parse_completion_response(response: Any, response_schema: Any) -> Any:
     return _parse_structured_json(response_schema, content)
 
 
-def _structured_json_retry(
-    *,
-    request: _StructuredRequest,
+def _json_schema_attempt(outcome: Any, response_schema: Any) -> SchemaAttempt:
+    if not isinstance(outcome, Exception):
+        return _schema_attempt_response(outcome, response_schema)
+    attempt = _schema_attempt_error(outcome)
+    if attempt is None:
+        raise outcome
+    return attempt
+
+
+def _json_object_attempt(outcome: Any, response_schema: Any) -> Any | None:
+    if isinstance(outcome, Exception):
+        if _is_response_format_unsupported_error(outcome):
+            return None
+        raise outcome
+    content = _response_content(outcome)
+    if not content:
+        return None
+    try:
+        return _parse_structured_json(response_schema, content)
+    except Exception:
+        return None
+
+
+def _structured_pipeline(
     payload: list[dict[str, Any]],
     response_schema: Any,
     retries: int,
-    response_format: dict[str, Any] | None,
-) -> Any:
+) -> _StructuredPipeline:
+    response_format = _response_format(response_schema)
+    json_schema_failed = False
+    if response_format is not None:
+        outcome = yield _StructuredCall(payload, response_format)
+        json_schema_failed, result = _json_schema_attempt(outcome, response_schema)
+        if result is not None:
+            return result
+
+    schema_prompt = _build_json_object_prompt(response_schema) if json_schema_failed else ""
+    if schema_prompt:
+        prompted = [*payload, {"role": "user", "content": schema_prompt}]
+        outcome = yield _StructuredCall(prompted, {"type": "json_object"})
+        result = _json_object_attempt(outcome, response_schema)
+        if result is not None:
+            return result
+
+    instructor_model = response_schema if _is_base_model_schema(response_schema) else None
     attempts = 0
     while True:
-        try:
-            response = request.complete(payload, response_format)
-            return _parse_completion_response(response, response_schema)
-        except Exception as exc:
-            if attempts >= retries:
-                raise
-            payload.append({"role": "user", "content": _structured_retry_prompt(exc)})
-            attempts += 1
-
-
-async def _astructured_json_retry(
-    *,
-    request: _StructuredRequest,
-    payload: list[dict[str, Any]],
-    response_schema: Any,
-    retries: int,
-    response_format: dict[str, Any] | None,
-) -> Any:
-    attempts = 0
-    while True:
-        try:
-            response = await request.acomplete(payload, response_format)
-            return _parse_completion_response(response, response_schema)
-        except Exception as exc:
-            if attempts >= retries:
-                raise
-            payload.append({"role": "user", "content": _structured_retry_prompt(exc)})
-            attempts += 1
+        outcome = yield _StructuredCall(payload, instructor_model=instructor_model)
+        if not isinstance(outcome, Exception):
+            if instructor_model is not None:
+                return outcome
+            try:
+                return _parse_completion_response(outcome, response_schema)
+            except Exception as exc:
+                outcome = exc
+        if attempts >= retries:
+            raise outcome
+        payload.append({"role": "user", "content": _structured_retry_prompt(outcome)})
+        attempts += 1
 
 
 def _parse_tool_calls(message: Any) -> list[ToolCall]:
@@ -642,27 +673,6 @@ def _wrap_stream_with_events(model: str, response: Any, *, prefer_async: bool) -
     return response
 
 
-type SchemaAttempt = tuple[bool, Any | None]
-
-
-def _schema_attempt_response(response: Any, response_schema: Any) -> SchemaAttempt:
-    content = _response_content(response)
-    if not content:
-        return False, None
-    try:
-        return False, _parse_structured_json(response_schema, content)
-    except Exception:
-        return True, None
-
-
-def _schema_attempt_error(exc: Exception) -> SchemaAttempt | None:
-    if _is_json_schema_unavailable_error(exc):
-        return True, None
-    if _is_response_format_unsupported_error(exc):
-        return False, None
-    return None
-
-
 class LiteLLMAdapter(BaseModelAdapter):
     def __init__(self) -> None:
         _configure_litellm_runtime()
@@ -780,38 +790,6 @@ class LiteLLMAdapter(BaseModelAdapter):
             emit_llm_failed(model, exc)
             raise
 
-    def _attempt_schema_completion(
-        self,
-        request: _StructuredRequest,
-        payload: list[dict[str, Any]],
-        response_format: dict[str, Any] | None,
-        response_schema: Any,
-    ) -> tuple[bool, Any | None]:
-        try:
-            response = request.complete(payload, response_format)
-        except Exception as exc:
-            result = _schema_attempt_error(exc)
-            if result is not None:
-                return result
-            raise
-        return _schema_attempt_response(response, response_schema)
-
-    async def _aattempt_schema_completion(
-        self,
-        request: _StructuredRequest,
-        payload: list[dict[str, Any]],
-        response_format: dict[str, Any] | None,
-        response_schema: Any,
-    ) -> tuple[bool, Any | None]:
-        try:
-            response = await request.acomplete(payload, response_format)
-        except Exception as exc:
-            result = _schema_attempt_error(exc)
-            if result is not None:
-                return result
-            raise
-        return _schema_attempt_response(response, response_schema)
-
     def structured_complete(
         self,
         *,
@@ -835,64 +813,8 @@ class LiteLLMAdapter(BaseModelAdapter):
             extra_body=extra_body,
             num_retries=num_retries,
         )
-        data = self._structured_data(request, list(messages), response_schema, retries)
+        data = request.run(_structured_pipeline(list(messages), response_schema, retries))
         return StructuredResponse(data, request.usage)
-
-    def _structured_data(
-        self,
-        request: _StructuredRequest,
-        payload: list[dict[str, Any]],
-        response_schema: Any,
-        retries: int,
-    ) -> Any:
-        response_format = _response_format(response_schema)
-        json_schema_failed = False
-
-        if response_format is not None:
-            json_schema_failed, result = self._attempt_schema_completion(
-                request, payload, response_format, response_schema
-            )
-            if result is not None:
-                return result
-
-        if json_schema_failed:
-            result = _try_json_object_fallback(request, payload, response_schema)
-            if result is not None:
-                return result
-
-        if not _is_base_model_schema(response_schema):
-            return _structured_json_retry(
-                request=request,
-                payload=payload,
-                response_schema=response_schema,
-                retries=retries,
-                response_format=None,
-            )
-        client = instructor_clients.get(request.model, async_client=False)
-        attempts = 0
-        while True:
-            request.started(payload)
-            try:
-                result, completion = client.chat.completions.create_with_completion(
-                    model=request.model,
-                    messages=payload,
-                    response_model=response_schema,
-                    **request.options,
-                )
-            except Exception as exc:
-                request.failed(exc)
-                if attempts >= retries:
-                    raise
-                payload.append(
-                    {
-                        "role": "user",
-                        "content": _structured_retry_prompt(exc),
-                    }
-                )
-                attempts += 1
-                continue
-            request.record(completion)
-            return result
 
     async def astructured_complete(
         self,
@@ -917,61 +839,5 @@ class LiteLLMAdapter(BaseModelAdapter):
             extra_body=extra_body,
             num_retries=num_retries,
         )
-        data = await self._astructured_data(request, list(messages), response_schema, retries)
+        data = await request.arun(_structured_pipeline(list(messages), response_schema, retries))
         return StructuredResponse(data, request.usage)
-
-    async def _astructured_data(
-        self,
-        request: _StructuredRequest,
-        payload: list[dict[str, Any]],
-        response_schema: Any,
-        retries: int,
-    ) -> Any:
-        response_format = _response_format(response_schema)
-        json_schema_failed = False
-
-        if response_format is not None:
-            json_schema_failed, result = await self._aattempt_schema_completion(
-                request, payload, response_format, response_schema
-            )
-            if result is not None:
-                return result
-
-        if json_schema_failed:
-            result = await _atry_json_object_fallback(request, payload, response_schema)
-            if result is not None:
-                return result
-
-        if not _is_base_model_schema(response_schema):
-            return await _astructured_json_retry(
-                request=request,
-                payload=payload,
-                response_schema=response_schema,
-                retries=retries,
-                response_format=None,
-            )
-        client = instructor_clients.get(request.model, async_client=True)
-        attempts = 0
-        while True:
-            request.started(payload)
-            try:
-                result, completion = await client.chat.completions.create_with_completion(
-                    model=request.model,
-                    messages=payload,
-                    response_model=response_schema,
-                    **request.options,
-                )
-            except Exception as exc:
-                request.failed(exc)
-                if attempts >= retries:
-                    raise
-                payload.append(
-                    {
-                        "role": "user",
-                        "content": _structured_retry_prompt(exc),
-                    }
-                )
-                attempts += 1
-                continue
-            request.record(completion)
-            return result
