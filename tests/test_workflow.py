@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from pydantic import BaseModel
 
 from blackgeorge.adapters.base import ModelResponse
 from blackgeorge.core.job import Job
@@ -17,7 +18,7 @@ from blackgeorge.workflow import Condition, Loop, Parallel, Step
 from blackgeorge.workflow.context import WorkflowContext
 from blackgeorge.workflow.result import StepOutput
 from blackgeorge.workforce import Workforce
-from tests.utils import AsyncOnlyAdapter, FakeAdapter
+from tests.utils import AsyncOnlyAdapter, FakeAdapter, StreamingAdapter
 
 
 def test_flow_steps() -> None:
@@ -594,6 +595,26 @@ def test_flow_fails_cleanly_when_paused_context_cannot_be_serialized() -> None:
     assert record is not None
     assert record.status == "failed"
     assert not any(event.type == "run.paused" for event in run_store.get_events(report.run_id))
+
+
+def test_flow_applies_desk_structured_stream_mode() -> None:
+    class Answer(BaseModel):
+        answer: str
+
+    streams = [[{"choices": [{"delta": {"content": '{"answer": "ok"}'}}]}]]
+    desk = Desk(
+        model="fake",
+        adapter=StreamingAdapter(streams),
+        run_store=InMemoryRunStore(),
+        stream=True,
+        structured_stream_mode="preview",
+    )
+    flow = desk.flow([Step(Worker(name="Worker", model="fake"))])
+    report = flow.run(Job(input="run", response_schema=Answer))
+
+    assert report.status == "completed"
+    assert report.data == Answer(answer="ok")
+    assert any(event.type == "stream.token" for event in report.events)
 
 
 def test_loop_predicate_and_job_builder_see_outputs_from_earlier_iterations() -> None:

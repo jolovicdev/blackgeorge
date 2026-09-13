@@ -31,6 +31,9 @@ desk = Desk(
 - stream: enables streaming when the worker is eligible
 - structured_stream_mode: "off" (strict structured output) or "preview" (stream preview tokens for schema jobs)
 
+The desk setting applies to `desk.run`, `desk.arun`, and every step of a flow; a job's own
+`structured_stream_mode` overrides it.
+
 In preview mode the worker passes the job's `response_schema` to the adapter's streaming call, so
 the model streams JSON for that schema rather than free text. `LiteLLMAdapter` requests a
 `json_schema` response format and falls back to `json_object` plus a schema prompt when the

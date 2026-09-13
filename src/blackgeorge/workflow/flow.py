@@ -69,6 +69,7 @@ class Flow:
         job: Job,
     ) -> tuple[Report, RunState | None]:
         config = self._make_run_config(self._stream)
+        job = self.desk._resolve_structured_stream_mode(job)
         if isinstance(runner, Worker):
             self.desk.register_worker(runner)
             return await runner.arun(config, job)
