@@ -138,6 +138,12 @@ class Desk:
         name = workforce if isinstance(workforce, str) else workforce.name
         self._workforces.pop(name, None)
 
+    def get_worker(self, name: str) -> Worker | None:
+        return self._workers.get(name)
+
+    def get_workforce(self, name: str) -> Workforce | None:
+        return self._workforces.get(name)
+
     def register_flow_run(self, run_id: str, flow: Flow) -> None:
         self._flow_runs[run_id] = flow
 
@@ -228,6 +234,16 @@ class Desk:
             return job
         return job.model_copy(update={"structured_stream_mode": self.structured_stream_mode})
 
+    def prepare_job(self, runner: Worker | Workforce, job: Job) -> Job:
+        job = self._resolve_structured_stream_mode(job)
+        if isinstance(runner, Worker):
+            job = self._apply_memory(runner, job)
+        return job
+
+    def record_memory(self, runner: Worker | Workforce | None, report: Report) -> None:
+        if isinstance(runner, Worker):
+            self._write_memory(runner, report)
+
     def _write_memory(self, worker: Worker, report: Report) -> None:
         if self.memory_store is None:
             return
@@ -315,8 +331,7 @@ class Desk:
                 to_json_value(report.data),
                 None,
             )
-            if isinstance(runner, Worker):
-                self._write_memory(runner, report)
+            self.record_memory(runner, report)
         else:
             self._runtime_tools_overrides.pop(run_id, None)
             self.emit(events, run_id, "run.failed", "desk", {"errors": report.errors})
@@ -409,9 +424,7 @@ class Desk:
         run_id = run_id or new_id()
         events: list[Event] = []
         stream_enabled = self.stream if stream is None else stream
-        job = self._resolve_structured_stream_mode(job)
-        if isinstance(runner, Worker):
-            job = self._apply_memory(runner, job)
+        job = self.prepare_job(runner, job)
         self.run_store.create_run(run_id, job.model_dump(mode="json"))
         self.emit(events, run_id, "run.started", "desk", {"job_id": job.id})
 
@@ -491,12 +504,12 @@ class Desk:
 
         worker: Worker | None = None
         if state.runner_type == "worker":
-            worker = self._workers.get(state.runner_name)
+            worker = self.get_worker(state.runner_name)
             if worker is None:
                 return self._fail_resume(report, events, "Worker not registered")
             updated_report, updated_state = await worker.aresume(config, state, decision_or_input)
         elif state.runner_type == "workforce":
-            workforce = self._workforces.get(state.runner_name)
+            workforce = self.get_workforce(state.runner_name)
             if workforce is None:
                 return self._fail_resume(report, events, "Workforce not registered")
             updated_report, updated_state = await workforce.aresume(

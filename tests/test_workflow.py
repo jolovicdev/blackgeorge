@@ -10,6 +10,7 @@ from blackgeorge.core.job import Job
 from blackgeorge.core.report import Report
 from blackgeorge.core.tool_call import ToolCall
 from blackgeorge.desk import Desk
+from blackgeorge.memory import InMemoryMemoryStore
 from blackgeorge.store.in_memory import InMemoryRunStore
 from blackgeorge.store.sqlite import SQLiteRunStore
 from blackgeorge.tools import tool
@@ -595,6 +596,39 @@ def test_flow_fails_cleanly_when_paused_context_cannot_be_serialized() -> None:
     assert record is not None
     assert record.status == "failed"
     assert not any(event.type == "run.paused" for event in run_store.get_events(report.run_id))
+
+
+def test_desk_lookups_return_registered_runners() -> None:
+    desk = Desk(model="fake", adapter=FakeAdapter([]), run_store=InMemoryRunStore())
+    worker = Worker(name="W", model="fake")
+    workforce = Workforce([worker], mode="collaborate", name="team")
+    desk.register_worker(worker)
+    desk.register_workforce(workforce)
+    assert desk.get_worker("W") is worker
+    assert desk.get_workforce("team") is workforce
+    assert desk.get_worker("missing") is None
+    assert desk.get_workforce("missing") is None
+
+
+def test_flow_applies_worker_memory() -> None:
+    responses = [ModelResponse(content="remembered", tool_calls=[], usage={}, raw={})]
+    memory = InMemoryMemoryStore()
+    worker = Worker(name="Analyst", model="fake")
+    memory.write("context", "prior notes", worker.memory_scope)
+    desk = Desk(
+        model="fake",
+        adapter=FakeAdapter(responses),
+        run_store=InMemoryRunStore(),
+        memory_store=memory,
+    )
+    report = desk.flow([Step(worker)]).run(Job(input="go"))
+
+    assert report.status == "completed"
+    assert any(
+        message.role == "system" and "prior notes" in (message.content or "")
+        for message in report.messages
+    )
+    assert memory.read("last_output", worker.memory_scope) == "remembered"
 
 
 def test_flow_applies_desk_structured_stream_mode() -> None:

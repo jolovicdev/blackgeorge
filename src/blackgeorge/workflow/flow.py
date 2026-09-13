@@ -73,14 +73,15 @@ class Flow:
         job: Job,
     ) -> tuple[Report, RunState | None]:
         config = self._make_run_config(self._stream)
-        job = self.desk._resolve_structured_stream_mode(job)
         if isinstance(runner, Worker):
             self.desk.register_worker(runner)
-            return await runner.arun(config, job)
-        if isinstance(runner, Workforce):
+        elif isinstance(runner, Workforce):
             self.desk.register_workforce(runner)
-            return await runner.arun(config, job)
-        raise TypeError("Runner must be Worker or Workforce")
+        else:
+            raise TypeError("Runner must be Worker or Workforce")
+        report, state = await runner.arun(config, self.desk.prepare_job(runner, job))
+        self.desk.record_memory(runner, report)
+        return report, state
 
     async def _resume_runner(
         self,
@@ -90,7 +91,7 @@ class Flow:
     ) -> tuple[Report, RunState | None]:
         config = self._make_run_config(stream)
         if state.runner_type == "worker":
-            worker = self.desk._workers.get(state.runner_name)
+            worker = self.desk.get_worker(state.runner_name)
             if worker is None:
                 report = Report(
                     run_id=state.run_id,
@@ -105,9 +106,11 @@ class Flow:
                     errors=["Worker not registered"],
                 )
                 return report, None
-            return await worker.aresume(config, state, decision_or_input)
+            report, updated_state = await worker.aresume(config, state, decision_or_input)
+            self.desk.record_memory(worker, report)
+            return report, updated_state
         if state.runner_type == "workforce":
-            workforce = self.desk._workforces.get(state.runner_name)
+            workforce = self.desk.get_workforce(state.runner_name)
             if workforce is None:
                 report = Report(
                     run_id=state.run_id,
