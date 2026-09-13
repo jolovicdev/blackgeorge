@@ -533,19 +533,22 @@ def _build_litellm_params(
     return params
 
 
-def _json_object_fallback_params(
+def _response_format_fallback_params(
     params: dict[str, Any], response_schema: Any, exc: Exception
 ) -> dict[str, Any] | None:
-    if response_schema is None or not _is_json_schema_unavailable_error(exc):
+    if response_schema is None or "response_format" not in params:
         return None
-    schema_prompt = _build_json_object_prompt(response_schema)
-    if not schema_prompt:
-        return None
-    return {
-        **params,
-        "messages": [*params["messages"], {"role": "user", "content": schema_prompt}],
-        "response_format": {"type": "json_object"},
-    }
+    if _is_json_schema_unavailable_error(exc):
+        schema_prompt = _build_json_object_prompt(response_schema)
+        if schema_prompt:
+            return {
+                **params,
+                "messages": [*params["messages"], {"role": "user", "content": schema_prompt}],
+                "response_format": {"type": "json_object"},
+            }
+    if _is_response_format_unsupported_error(exc):
+        return {key: value for key, value in params.items() if key != "response_format"}
+    return None
 
 
 def _stream_usage(chunk: Any) -> dict[str, Any] | None:
@@ -719,7 +722,9 @@ class LiteLLMAdapter(BaseModelAdapter):
                 try:
                     response = litellm.completion(**litellm_params)
                 except Exception as exc:
-                    fallback = _json_object_fallback_params(litellm_params, response_schema, exc)
+                    fallback = _response_format_fallback_params(
+                        litellm_params, response_schema, exc
+                    )
                     if fallback is None:
                         raise
                     response = litellm.completion(**fallback)
@@ -773,7 +778,9 @@ class LiteLLMAdapter(BaseModelAdapter):
                 try:
                     response = await litellm.acompletion(**litellm_params)
                 except Exception as exc:
-                    fallback = _json_object_fallback_params(litellm_params, response_schema, exc)
+                    fallback = _response_format_fallback_params(
+                        litellm_params, response_schema, exc
+                    )
                     if fallback is None:
                         raise
                     response = await litellm.acompletion(**fallback)

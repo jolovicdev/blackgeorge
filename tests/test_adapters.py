@@ -416,6 +416,34 @@ def test_litellm_complete_falls_back_to_json_object_when_schema_unavailable(monk
     assert calls[1]["stream"] is True
 
 
+def test_litellm_complete_drops_response_format_when_provider_rejects_it(monkeypatch) -> None:
+    adapter = LiteLLMAdapter()
+    calls: list[dict[str, object]] = []
+
+    def fake_completion(**kwargs: object) -> dict[str, object]:
+        calls.append(kwargs)
+        if len(calls) == 1:
+            raise RuntimeError("model does not support response_format")
+        return {"choices": [{"message": {"content": "plain text"}}], "usage": {}}
+
+    monkeypatch.setattr(litellm, "completion", fake_completion)
+    adapter.complete(
+        model="openai/gpt-5-nano",
+        messages=[{"role": "user", "content": "hi"}],
+        tools=None,
+        tool_choice=None,
+        temperature=None,
+        max_tokens=None,
+        stream=True,
+        stream_options={"include_usage": True},
+        response_schema=AnswerModel,
+    )
+
+    assert len(calls) == 2
+    assert "response_format" not in calls[1]
+    assert calls[1]["messages"] == [{"role": "user", "content": "hi"}]
+
+
 def test_litellm_stream_emits_completed_after_consumption(monkeypatch) -> None:
     adapter = LiteLLMAdapter()
     events: list[str] = []
