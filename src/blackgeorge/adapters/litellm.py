@@ -254,6 +254,10 @@ class _StructuredRequest:
     options: dict[str, Any]
     usage: dict[str, Any] = field(default_factory=dict)
 
+    @property
+    def instructor_options(self) -> dict[str, Any]:
+        return {key: value for key, value in self.options.items() if key != "thinking"}
+
     def _params(self, call: _StructuredCall) -> dict[str, Any]:
         params: dict[str, Any] = {"model": self.model, "messages": call.messages, **self.options}
         if call.response_format is not None:
@@ -275,7 +279,7 @@ class _StructuredRequest:
                     model=self.model,
                     messages=call.messages,
                     response_model=call.instructor_model,
-                    **self.options,
+                    **self.instructor_options,
                 )
         except Exception as exc:
             emit_llm_failed(self.model, exc)
@@ -294,7 +298,7 @@ class _StructuredRequest:
                     model=self.model,
                     messages=call.messages,
                     response_model=call.instructor_model,
-                    **self.options,
+                    **self.instructor_options,
                 )
         except Exception as exc:
             emit_llm_failed(self.model, exc)

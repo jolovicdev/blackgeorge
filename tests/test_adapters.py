@@ -633,6 +633,40 @@ def test_structured_complete_sums_usage_and_emits_llm_events(monkeypatch) -> Non
     ]
 
 
+def test_structured_complete_instructor_call_omits_thinking(monkeypatch) -> None:
+    adapter = LiteLLMAdapter()
+    instructor_kwargs: dict[str, object] = {}
+
+    class FakeCompletions:
+        def create_with_completion(self, **kwargs: object) -> tuple[object, object]:
+            instructor_kwargs.update(kwargs)
+            return AnswerModel(answer="ok"), {"usage": {"total_tokens": 3}}
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.chat = type("Chat", (), {"completions": FakeCompletions()})()
+
+    def fake_completion(**kwargs: object) -> dict[str, object]:
+        raise RuntimeError("response_format unsupported")
+
+    monkeypatch.setattr(litellm, "completion", fake_completion)
+    monkeypatch.setattr(instructor_clients, "get", lambda model, async_client: FakeClient())
+
+    response = adapter.structured_complete(
+        model="anthropic/claude-sonnet-5",
+        messages=[{"role": "user", "content": "hi"}],
+        response_schema=AnswerModel,
+        retries=0,
+        thinking={"type": "enabled", "budget_tokens": 1024},
+        temperature=0.3,
+    )
+
+    assert response.data == AnswerModel(answer="ok")
+    assert response.usage == {"total_tokens": 3}
+    assert "thinking" not in instructor_kwargs
+    assert instructor_kwargs["temperature"] == 0.3
+
+
 def test_structured_complete_uses_response_format_type_adapter(monkeypatch) -> None:
     adapter = LiteLLMAdapter()
     response_schema = TypeAdapter(list[ItemModel])

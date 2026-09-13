@@ -71,7 +71,9 @@ Return a `StructuredResponse(data, usage)` from `blackgeorge.adapters` to have t
 call's token usage and cost to `Report.metrics` and the run's `max_cost_usd` budget. Returning the
 parsed data directly is still accepted, but such calls are not metered. `LiteLLMAdapter` returns
 `StructuredResponse` with usage summed over every attempt (schema, JSON fallback, retries) and emits
-`llm.started`, `llm.completed`, and `llm.failed` for each attempt.
+`llm.started`, `llm.completed`, and `llm.failed` for each attempt. The Instructor fallback forces a
+tool call, so `thinking` is not forwarded to it; providers such as Anthropic reject extended thinking
+combined with a forced tool choice.
 
 ## Cost tracking
 
