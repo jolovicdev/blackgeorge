@@ -43,6 +43,7 @@ class ScriptedAdapter(BaseModelAdapter):
         drop_params: bool | None = None,
         extra_body: dict[str, Any] | None = None,
         num_retries: int | None = None,
+        response_schema: Any = None,
     ) -> ModelResponse:
         self.calls.append(
             {
@@ -51,6 +52,7 @@ class ScriptedAdapter(BaseModelAdapter):
                 "messages": messages,
                 "tools": tools,
                 "stream": stream,
+                "response_schema": response_schema,
             }
         )
         return self._next_response("completion")
@@ -70,6 +72,7 @@ class ScriptedAdapter(BaseModelAdapter):
         drop_params: bool | None = None,
         extra_body: dict[str, Any] | None = None,
         num_retries: int | None = None,
+        response_schema: Any = None,
     ) -> ModelResponse:
         self.calls.append(
             {
@@ -78,6 +81,7 @@ class ScriptedAdapter(BaseModelAdapter):
                 "messages": messages,
                 "tools": tools,
                 "stream": stream,
+                "response_schema": response_schema,
             }
         )
         return self._next_response("completion")

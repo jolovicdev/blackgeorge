@@ -36,6 +36,7 @@ class BaseModelAdapter:
         drop_params: bool | None = None,
         extra_body: dict[str, Any] | None = None,
         num_retries: int | None = None,
+        response_schema: Any = None,
     ) -> ModelResponse | list[dict[str, Any]]:
         raise NotImplementedError
 
@@ -54,6 +55,7 @@ class BaseModelAdapter:
         drop_params: bool | None = None,
         extra_body: dict[str, Any] | None = None,
         num_retries: int | None = None,
+        response_schema: Any = None,
     ) -> ModelResponse | Any:
         raise NotImplementedError
 

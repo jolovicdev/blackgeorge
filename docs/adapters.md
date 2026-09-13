@@ -26,6 +26,8 @@ Key behaviors:
 - passes messages and optional model parameters (`temperature`, `max_tokens`, `thinking`, `extra_body`)
 - only sends `tools` and `tool_choice` when tools are present
 - supports streaming when requested
+- when `complete`/`acomplete` receive a `response_schema`, requests a `json_schema` response format
+  for it and retries with `json_object` plus a schema prompt if the provider rejects `json_schema`
 - enables `parallel_tool_calls` when model metadata indicates `supports_parallel_function_calling`
 - for streaming calls, emits `llm.completed` on stream exhaustion/close and `llm.failed` if stream iteration raises
 

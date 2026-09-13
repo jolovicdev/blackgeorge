@@ -474,12 +474,16 @@ def _build_litellm_params(
     drop_params: bool | None,
     extra_body: dict[str, Any] | None,
     num_retries: int | None,
+    response_schema: Any = None,
 ) -> dict[str, Any]:
     params: dict[str, Any] = {
         "model": model,
         "messages": messages,
         "stream": stream,
     }
+    response_format = _response_format(response_schema) if response_schema is not None else None
+    if response_format is not None:
+        params["response_format"] = response_format
     if tools:
         params["tools"] = tools
         if tool_choice is not None:
@@ -501,6 +505,21 @@ def _build_litellm_params(
     if tools and _supports_parallel_function_calling(model):
         params["parallel_tool_calls"] = True
     return params
+
+
+def _json_object_fallback_params(
+    params: dict[str, Any], response_schema: Any, exc: Exception
+) -> dict[str, Any] | None:
+    if response_schema is None or not _is_json_schema_unavailable_error(exc):
+        return None
+    schema_prompt = _build_json_object_prompt(response_schema)
+    if not schema_prompt:
+        return None
+    return {
+        **params,
+        "messages": [*params["messages"], {"role": "user", "content": schema_prompt}],
+        "response_format": {"type": "json_object"},
+    }
 
 
 def _stream_usage(chunk: Any) -> dict[str, Any] | None:
@@ -671,6 +690,7 @@ class LiteLLMAdapter(BaseModelAdapter):
         drop_params: bool | None = None,
         extra_body: dict[str, Any] | None = None,
         num_retries: int | None = None,
+        response_schema: Any = None,
     ) -> ModelResponse | list[dict[str, Any]]:
         litellm_params = _build_litellm_params(
             model=model,
@@ -685,12 +705,19 @@ class LiteLLMAdapter(BaseModelAdapter):
             drop_params=drop_params,
             extra_body=extra_body,
             num_retries=num_retries,
+            response_schema=response_schema,
         )
         emit_llm_started(model, len(messages), len(tools) if tools else 0)
         try:
             with warnings.catch_warnings():
                 warnings.filterwarnings("ignore", message="Pydantic serializer warnings")
-                response = litellm.completion(**litellm_params)
+                try:
+                    response = litellm.completion(**litellm_params)
+                except Exception as exc:
+                    fallback = _json_object_fallback_params(litellm_params, response_schema, exc)
+                    if fallback is None:
+                        raise
+                    response = litellm.completion(**fallback)
             if stream:
                 return cast(
                     list[dict[str, Any]],
@@ -717,6 +744,7 @@ class LiteLLMAdapter(BaseModelAdapter):
         drop_params: bool | None = None,
         extra_body: dict[str, Any] | None = None,
         num_retries: int | None = None,
+        response_schema: Any = None,
     ) -> ModelResponse | Any:
         litellm_params = _build_litellm_params(
             model=model,
@@ -731,12 +759,19 @@ class LiteLLMAdapter(BaseModelAdapter):
             drop_params=drop_params,
             extra_body=extra_body,
             num_retries=num_retries,
+            response_schema=response_schema,
         )
         emit_llm_started(model, len(messages), len(tools) if tools else 0)
         try:
             with warnings.catch_warnings():
                 warnings.filterwarnings("ignore", message="Pydantic serializer warnings")
-                response = await litellm.acompletion(**litellm_params)
+                try:
+                    response = await litellm.acompletion(**litellm_params)
+                except Exception as exc:
+                    fallback = _json_object_fallback_params(litellm_params, response_schema, exc)
+                    if fallback is None:
+                        raise
+                    response = await litellm.acompletion(**fallback)
             if stream:
                 return _wrap_stream_with_events(model, response, prefer_async=True)
             emit_llm_completed(model, response)

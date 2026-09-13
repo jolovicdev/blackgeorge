@@ -282,7 +282,9 @@ class WorkerRunner:
         thinking: dict[str, Any] | None = None,
         drop_params: bool | None = None,
         extra_body: dict[str, Any] | None = None,
+        response_schema: Any = None,
     ) -> ModelResponse:
+        schema_kwargs = {"response_schema": response_schema} if response_schema is not None else {}
         if hasattr(config.adapter, "set_callback_context"):
             config.adapter.set_callback_context(config.run_id, config.emit)
         try:
@@ -300,6 +302,7 @@ class WorkerRunner:
                     drop_params=drop_params,
                     extra_body=extra_body,
                     num_retries=config.num_retries,
+                    **_supported_kwargs(config.adapter.acomplete, schema_kwargs),
                 )
             except NotImplementedError:
                 try:
@@ -317,6 +320,7 @@ class WorkerRunner:
                         drop_params=drop_params,
                         extra_body=extra_body,
                         num_retries=config.num_retries,
+                        **_supported_kwargs(config.adapter.complete, schema_kwargs),
                     )
                 except Exception as exc:
                     if is_stream_unsupported_error(exc):
@@ -608,6 +612,7 @@ class WorkerRunner:
                     thinking=job.thinking,
                     drop_params=job.drop_params,
                     extra_body=job.extra_body,
+                    response_schema=response_schema,
                 )
             except Exception as exc:
                 if not is_context_limit_error(exc):

@@ -358,6 +358,64 @@ def test_litellm_omits_tool_params_when_tools_absent(monkeypatch) -> None:
     assert "stream_options" not in captured
 
 
+def test_litellm_complete_requests_json_schema_for_response_schema(monkeypatch) -> None:
+    adapter = LiteLLMAdapter()
+    captured: dict[str, object] = {}
+
+    def fake_completion(**kwargs: object) -> dict[str, object]:
+        captured.update(kwargs)
+        return {"choices": [{"message": {"content": '{"answer": "ok"}'}}], "usage": {}}
+
+    monkeypatch.setattr(litellm, "completion", fake_completion)
+    adapter.complete(
+        model="openai/gpt-5-nano",
+        messages=[{"role": "user", "content": "hi"}],
+        tools=None,
+        tool_choice=None,
+        temperature=None,
+        max_tokens=None,
+        stream=False,
+        stream_options=None,
+        response_schema=AnswerModel,
+    )
+
+    response_format = captured.get("response_format")
+    assert isinstance(response_format, dict)
+    assert response_format.get("type") == "json_schema"
+
+
+def test_litellm_complete_falls_back_to_json_object_when_schema_unavailable(monkeypatch) -> None:
+    adapter = LiteLLMAdapter()
+    calls: list[dict[str, object]] = []
+
+    def fake_completion(**kwargs: object) -> dict[str, object]:
+        calls.append(kwargs)
+        if len(calls) == 1:
+            raise RuntimeError("response_format type is unavailable")
+        return {"choices": [{"message": {"content": '{"answer": "ok"}'}}], "usage": {}}
+
+    monkeypatch.setattr(litellm, "completion", fake_completion)
+    adapter.complete(
+        model="deepseek/deepseek-chat",
+        messages=[{"role": "user", "content": "hi"}],
+        tools=None,
+        tool_choice=None,
+        temperature=None,
+        max_tokens=None,
+        stream=True,
+        stream_options={"include_usage": True},
+        response_schema=AnswerModel,
+    )
+
+    assert len(calls) == 2
+    assert calls[1]["response_format"] == {"type": "json_object"}
+    messages = calls[1]["messages"]
+    assert isinstance(messages, list)
+    assert len(messages) == 2
+    assert "JSON" in messages[-1]["content"]
+    assert calls[1]["stream"] is True
+
+
 def test_litellm_stream_emits_completed_after_consumption(monkeypatch) -> None:
     adapter = LiteLLMAdapter()
     events: list[str] = []

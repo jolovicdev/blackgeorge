@@ -30,6 +30,13 @@ desk = Desk(
 - max_tokens: max tokens for completion requests
 - stream: enables streaming when the worker is eligible
 - structured_stream_mode: "off" (strict structured output) or "preview" (stream preview tokens for schema jobs)
+
+In preview mode the worker passes the job's `response_schema` to the adapter's streaming call, so
+the model streams JSON for that schema rather than free text. `LiteLLMAdapter` requests a
+`json_schema` response format and falls back to `json_object` plus a schema prompt when the
+provider rejects `json_schema`. The streamed text is parsed tolerantly (code fences and
+surrounding prose are stripped). If it still does not validate, the worker makes one strict
+structured call and uses that result.
 - structured_output_retries: retries for structured output validation
 - max_iterations: max model turns per worker run
 - max_tool_calls: max tool calls per worker run
