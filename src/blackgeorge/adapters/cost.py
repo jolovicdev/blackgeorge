@@ -38,3 +38,14 @@ def get_completion_cost(model: str, tokens: int) -> float | None:
     if "output_cost_per_token" in pricing:
         return pricing["output_cost_per_token"] * tokens
     return None
+
+
+def usage_cost(model: str, usage: dict[str, Any]) -> float:
+    cost = 0.0
+    prompt_tokens = usage.get("prompt_tokens")
+    completion_tokens = usage.get("completion_tokens")
+    if isinstance(prompt_tokens, (int, float)):
+        cost += get_prompt_cost(model, int(prompt_tokens)) or 0.0
+    if isinstance(completion_tokens, (int, float)):
+        cost += get_completion_cost(model, int(completion_tokens)) or 0.0
+    return cost

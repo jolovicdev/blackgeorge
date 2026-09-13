@@ -2,13 +2,14 @@ import asyncio
 import atexit
 import json
 import warnings
-from collections.abc import AsyncIterator, Callable, Iterator
+from collections.abc import AsyncIterator, Callable, Generator, Iterator
+from dataclasses import dataclass, field
 from typing import Any, cast
 
 import litellm
 from pydantic import BaseModel, TypeAdapter
 
-from blackgeorge.adapters.base import BaseModelAdapter, ModelResponse
+from blackgeorge.adapters.base import BaseModelAdapter, ModelResponse, StructuredResponse
 from blackgeorge.adapters.instructor_client import instructor_clients
 from blackgeorge.adapters.litellm_callbacks import (
     callback_context,
@@ -18,6 +19,7 @@ from blackgeorge.adapters.litellm_callbacks import (
 )
 from blackgeorge.core.tool_arguments import parse_tool_arguments
 from blackgeorge.core.tool_call import ToolCall
+from blackgeorge.core.usage import add_token_usage
 from blackgeorge.utils import new_id
 
 _litellm_runtime_configured = False
@@ -116,6 +118,13 @@ def _get(obj: Any, key: str, default: Any = None) -> Any:
     return getattr(obj, key, default)
 
 
+def _response_usage(response: Any) -> dict[str, Any]:
+    usage = _get(response, "usage", {}) or {}
+    if isinstance(usage, BaseModel):
+        usage = usage.model_dump(mode="json", warnings=False)
+    return usage if isinstance(usage, dict) else {}
+
+
 def _response_content(response: Any) -> str | None:
     choices = _get(response, "choices", [])
     message = _get(choices[0], "message") if choices else None
@@ -208,63 +217,141 @@ def _build_json_object_prompt(response_schema: Any) -> str:
     return f"Respond with valid JSON matching this schema: {json.dumps(schema, indent=2)}"
 
 
-def _json_object_fallback_result(response: Any, response_schema: Any) -> Any | None:
+type SchemaAttempt = tuple[bool, Any | None]
+
+
+def _schema_attempt_response(response: Any, response_schema: Any) -> SchemaAttempt:
     content = _response_content(response)
-    if content:
-        return _parse_structured_json(response_schema, content)
+    if not content:
+        return False, None
+    try:
+        return False, _parse_structured_json(response_schema, content)
+    except Exception:
+        return True, None
+
+
+def _schema_attempt_error(exc: Exception) -> SchemaAttempt | None:
+    if _is_json_schema_unavailable_error(exc):
+        return True, None
+    if _is_response_format_unsupported_error(exc):
+        return False, None
     return None
 
 
-def _try_json_object_fallback(
-    model: str,
-    payload: list[dict[str, Any]],
-    response_schema: Any,
-) -> Any | None:
-    schema_prompt = _build_json_object_prompt(response_schema)
-    if not schema_prompt:
-        return None
-    augmented_payload = list(payload)
-    augmented_payload.append({"role": "user", "content": schema_prompt})
-    try:
-        response = litellm.completion(
-            model=model,
-            messages=augmented_payload,
-            response_format={"type": "json_object"},
-        )
-    except Exception as exc:
-        if _is_response_format_unsupported_error(exc):
-            return None
-        raise
-    try:
-        return _json_object_fallback_result(response, response_schema)
-    except Exception:
-        return None
+@dataclass(frozen=True)
+class _StructuredCall:
+    messages: list[dict[str, Any]]
+    response_format: dict[str, Any] | None = None
+    instructor_model: type[BaseModel] | None = None
 
 
-async def _atry_json_object_fallback(
+type _StructuredPipeline = Generator[_StructuredCall, Any, Any]
+
+
+@dataclass
+class _StructuredRequest:
+    model: str
+    options: dict[str, Any]
+    usage: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def instructor_options(self) -> dict[str, Any]:
+        return {key: value for key, value in self.options.items() if key != "thinking"}
+
+    def _params(self, call: _StructuredCall) -> dict[str, Any]:
+        params: dict[str, Any] = {"model": self.model, "messages": call.messages, **self.options}
+        if call.response_format is not None:
+            params["response_format"] = call.response_format
+        return params
+
+    def _record(self, response: Any) -> None:
+        add_token_usage(self.usage, _response_usage(response))
+        emit_llm_completed(self.model, response)
+
+    def complete(self, call: _StructuredCall) -> Any:
+        emit_llm_started(self.model, len(call.messages), 0)
+        try:
+            if call.instructor_model is None:
+                result = response = litellm.completion(**self._params(call))
+            else:
+                client = instructor_clients.get(self.model, async_client=False)
+                result, response = client.chat.completions.create_with_completion(
+                    model=self.model,
+                    messages=call.messages,
+                    response_model=call.instructor_model,
+                    **self.instructor_options,
+                )
+        except Exception as exc:
+            emit_llm_failed(self.model, exc)
+            raise
+        self._record(response)
+        return result
+
+    async def acomplete(self, call: _StructuredCall) -> Any:
+        emit_llm_started(self.model, len(call.messages), 0)
+        try:
+            if call.instructor_model is None:
+                result = response = await litellm.acompletion(**self._params(call))
+            else:
+                client = instructor_clients.get(self.model, async_client=True)
+                result, response = await client.chat.completions.create_with_completion(
+                    model=self.model,
+                    messages=call.messages,
+                    response_model=call.instructor_model,
+                    **self.instructor_options,
+                )
+        except Exception as exc:
+            emit_llm_failed(self.model, exc)
+            raise
+        self._record(response)
+        return result
+
+    def run(self, pipeline: _StructuredPipeline) -> Any:
+        outcome: Any = None
+        try:
+            while True:
+                call = pipeline.send(outcome)
+                try:
+                    outcome = self.complete(call)
+                except Exception as exc:
+                    outcome = exc
+        except StopIteration as stop:
+            return stop.value
+
+    async def arun(self, pipeline: _StructuredPipeline) -> Any:
+        outcome: Any = None
+        try:
+            while True:
+                call = pipeline.send(outcome)
+                try:
+                    outcome = await self.acomplete(call)
+                except Exception as exc:
+                    outcome = exc
+        except StopIteration as stop:
+            return stop.value
+
+
+def _structured_request(
     model: str,
-    payload: list[dict[str, Any]],
-    response_schema: Any,
-) -> Any | None:
-    schema_prompt = _build_json_object_prompt(response_schema)
-    if not schema_prompt:
-        return None
-    augmented_payload = list(payload)
-    augmented_payload.append({"role": "user", "content": schema_prompt})
-    try:
-        response = await litellm.acompletion(
-            model=model,
-            messages=augmented_payload,
-            response_format={"type": "json_object"},
-        )
-    except Exception as exc:
-        if _is_response_format_unsupported_error(exc):
-            return None
-        raise
-    try:
-        return _json_object_fallback_result(response, response_schema)
-    except Exception:
-        return None
+    *,
+    temperature: float | None,
+    max_tokens: int | None,
+    thinking: dict[str, Any] | None,
+    drop_params: bool | None,
+    extra_body: dict[str, Any] | None,
+    num_retries: int | None,
+) -> _StructuredRequest:
+    candidates = {
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+        "thinking": thinking,
+        "drop_params": drop_params,
+        "extra_body": extra_body,
+        "num_retries": num_retries,
+    }
+    return _StructuredRequest(
+        model, {key: value for key, value in candidates.items() if value is not None}
+    )
 
 
 def _parse_completion_response(response: Any, response_schema: Any) -> Any:
@@ -274,58 +361,65 @@ def _parse_completion_response(response: Any, response_schema: Any) -> Any:
     return _parse_structured_json(response_schema, content)
 
 
-def _structured_json_retry(
-    *,
-    model: str,
+def _json_schema_attempt(outcome: Any, response_schema: Any) -> SchemaAttempt:
+    if not isinstance(outcome, Exception):
+        return _schema_attempt_response(outcome, response_schema)
+    attempt = _schema_attempt_error(outcome)
+    if attempt is None:
+        raise outcome
+    return attempt
+
+
+def _json_object_attempt(outcome: Any, response_schema: Any) -> Any | None:
+    if isinstance(outcome, Exception):
+        if _is_response_format_unsupported_error(outcome):
+            return None
+        raise outcome
+    content = _response_content(outcome)
+    if not content:
+        return None
+    try:
+        return _parse_structured_json(response_schema, content)
+    except Exception:
+        return None
+
+
+def _structured_pipeline(
     payload: list[dict[str, Any]],
     response_schema: Any,
     retries: int,
-    response_format: dict[str, Any] | None,
-) -> Any:
+) -> _StructuredPipeline:
+    response_format = _response_format(response_schema)
+    json_schema_failed = False
+    if response_format is not None:
+        outcome = yield _StructuredCall(payload, response_format)
+        json_schema_failed, result = _json_schema_attempt(outcome, response_schema)
+        if result is not None:
+            return result
+
+    schema_prompt = _build_json_object_prompt(response_schema) if json_schema_failed else ""
+    if schema_prompt:
+        prompted = [*payload, {"role": "user", "content": schema_prompt}]
+        outcome = yield _StructuredCall(prompted, {"type": "json_object"})
+        result = _json_object_attempt(outcome, response_schema)
+        if result is not None:
+            return result
+
+    instructor_model = response_schema if _is_base_model_schema(response_schema) else None
     attempts = 0
     while True:
-        try:
-            if response_format is None:
-                response = litellm.completion(model=model, messages=payload)
-            else:
-                response = litellm.completion(
-                    model=model,
-                    messages=payload,
-                    response_format=response_format,
-                )
-            return _parse_completion_response(response, response_schema)
-        except Exception as exc:
-            if attempts >= retries:
-                raise
-            payload.append({"role": "user", "content": _structured_retry_prompt(exc)})
-            attempts += 1
-
-
-async def _astructured_json_retry(
-    *,
-    model: str,
-    payload: list[dict[str, Any]],
-    response_schema: Any,
-    retries: int,
-    response_format: dict[str, Any] | None,
-) -> Any:
-    attempts = 0
-    while True:
-        try:
-            if response_format is None:
-                response = await litellm.acompletion(model=model, messages=payload)
-            else:
-                response = await litellm.acompletion(
-                    model=model,
-                    messages=payload,
-                    response_format=response_format,
-                )
-            return _parse_completion_response(response, response_schema)
-        except Exception as exc:
-            if attempts >= retries:
-                raise
-            payload.append({"role": "user", "content": _structured_retry_prompt(exc)})
-            attempts += 1
+        outcome = yield _StructuredCall(payload, instructor_model=instructor_model)
+        if not isinstance(outcome, Exception):
+            if instructor_model is not None:
+                return outcome
+            try:
+                return _parse_completion_response(outcome, response_schema)
+            except Exception as exc:
+                outcome = exc
+        if attempts >= retries:
+            raise outcome
+        payload.append({"role": "user", "content": _structured_retry_prompt(outcome)})
+        attempts += 1
 
 
 def _parse_tool_calls(message: Any) -> list[ToolCall]:
@@ -386,15 +480,12 @@ def _parse_response(response: Any) -> ModelResponse:
     reasoning_content = _get(message, "reasoning_content") if message else None
     thinking_blocks = _get(message, "thinking_blocks") if message else None
     tool_calls = _parse_tool_calls(message) if message else []
-    usage = _get(response, "usage", {}) or {}
-    if isinstance(usage, BaseModel):
-        usage = usage.model_dump(mode="json", warnings=False)
     return ModelResponse(
         content=content,
         reasoning_content=reasoning_content,
         thinking_blocks=thinking_blocks,
         tool_calls=tool_calls,
-        usage=usage,
+        usage=_response_usage(response),
         raw=response,
     )
 
@@ -413,12 +504,16 @@ def _build_litellm_params(
     drop_params: bool | None,
     extra_body: dict[str, Any] | None,
     num_retries: int | None,
+    response_schema: Any = None,
 ) -> dict[str, Any]:
     params: dict[str, Any] = {
         "model": model,
         "messages": messages,
         "stream": stream,
     }
+    response_format = _response_format(response_schema) if response_schema is not None else None
+    if response_format is not None:
+        params["response_format"] = response_format
     if tools:
         params["tools"] = tools
         if tool_choice is not None:
@@ -440,6 +535,24 @@ def _build_litellm_params(
     if tools and _supports_parallel_function_calling(model):
         params["parallel_tool_calls"] = True
     return params
+
+
+def _response_format_fallback_params(
+    params: dict[str, Any], response_schema: Any, exc: Exception
+) -> dict[str, Any] | None:
+    if response_schema is None or "response_format" not in params:
+        return None
+    if _is_json_schema_unavailable_error(exc):
+        schema_prompt = _build_json_object_prompt(response_schema)
+        if schema_prompt:
+            return {
+                **params,
+                "messages": [*params["messages"], {"role": "user", "content": schema_prompt}],
+                "response_format": {"type": "json_object"},
+            }
+    if _is_response_format_unsupported_error(exc):
+        return {key: value for key, value in params.items() if key != "response_format"}
+    return None
 
 
 def _stream_usage(chunk: Any) -> dict[str, Any] | None:
@@ -562,27 +675,6 @@ def _wrap_stream_with_events(model: str, response: Any, *, prefer_async: bool) -
     return response
 
 
-type SchemaAttempt = tuple[bool, Any | None]
-
-
-def _schema_attempt_response(response: Any, response_schema: Any) -> SchemaAttempt:
-    content = _response_content(response)
-    if not content:
-        return False, None
-    try:
-        return False, _parse_structured_json(response_schema, content)
-    except Exception:
-        return True, None
-
-
-def _schema_attempt_error(exc: Exception) -> SchemaAttempt | None:
-    if _is_json_schema_unavailable_error(exc):
-        return True, None
-    if _is_response_format_unsupported_error(exc):
-        return False, None
-    return None
-
-
 class LiteLLMAdapter(BaseModelAdapter):
     def __init__(self) -> None:
         _configure_litellm_runtime()
@@ -610,6 +702,7 @@ class LiteLLMAdapter(BaseModelAdapter):
         drop_params: bool | None = None,
         extra_body: dict[str, Any] | None = None,
         num_retries: int | None = None,
+        response_schema: Any = None,
     ) -> ModelResponse | list[dict[str, Any]]:
         litellm_params = _build_litellm_params(
             model=model,
@@ -624,12 +717,21 @@ class LiteLLMAdapter(BaseModelAdapter):
             drop_params=drop_params,
             extra_body=extra_body,
             num_retries=num_retries,
+            response_schema=response_schema,
         )
         emit_llm_started(model, len(messages), len(tools) if tools else 0)
         try:
             with warnings.catch_warnings():
                 warnings.filterwarnings("ignore", message="Pydantic serializer warnings")
-                response = litellm.completion(**litellm_params)
+                try:
+                    response = litellm.completion(**litellm_params)
+                except Exception as exc:
+                    fallback = _response_format_fallback_params(
+                        litellm_params, response_schema, exc
+                    )
+                    if fallback is None:
+                        raise
+                    response = litellm.completion(**fallback)
             if stream:
                 return cast(
                     list[dict[str, Any]],
@@ -656,6 +758,7 @@ class LiteLLMAdapter(BaseModelAdapter):
         drop_params: bool | None = None,
         extra_body: dict[str, Any] | None = None,
         num_retries: int | None = None,
+        response_schema: Any = None,
     ) -> ModelResponse | Any:
         litellm_params = _build_litellm_params(
             model=model,
@@ -670,12 +773,21 @@ class LiteLLMAdapter(BaseModelAdapter):
             drop_params=drop_params,
             extra_body=extra_body,
             num_retries=num_retries,
+            response_schema=response_schema,
         )
         emit_llm_started(model, len(messages), len(tools) if tools else 0)
         try:
             with warnings.catch_warnings():
                 warnings.filterwarnings("ignore", message="Pydantic serializer warnings")
-                response = await litellm.acompletion(**litellm_params)
+                try:
+                    response = await litellm.acompletion(**litellm_params)
+                except Exception as exc:
+                    fallback = _response_format_fallback_params(
+                        litellm_params, response_schema, exc
+                    )
+                    if fallback is None:
+                        raise
+                    response = await litellm.acompletion(**fallback)
             if stream:
                 return _wrap_stream_with_events(model, response, prefer_async=True)
             emit_llm_completed(model, response)
@@ -684,46 +796,6 @@ class LiteLLMAdapter(BaseModelAdapter):
             emit_llm_failed(model, exc)
             raise
 
-    def _attempt_schema_completion(
-        self,
-        model: str,
-        payload: list[dict[str, Any]],
-        response_format: dict[str, Any] | None,
-        response_schema: Any,
-    ) -> tuple[bool, Any | None]:
-        try:
-            response = litellm.completion(
-                model=model,
-                messages=payload,
-                response_format=response_format,
-            )
-        except Exception as exc:
-            result = _schema_attempt_error(exc)
-            if result is not None:
-                return result
-            raise
-        return _schema_attempt_response(response, response_schema)
-
-    async def _aattempt_schema_completion(
-        self,
-        model: str,
-        payload: list[dict[str, Any]],
-        response_format: dict[str, Any] | None,
-        response_schema: Any,
-    ) -> tuple[bool, Any | None]:
-        try:
-            response = await litellm.acompletion(
-                model=model,
-                messages=payload,
-                response_format=response_format,
-            )
-        except Exception as exc:
-            result = _schema_attempt_error(exc)
-            if result is not None:
-                return result
-            raise
-        return _schema_attempt_response(response, response_schema)
-
     def structured_complete(
         self,
         *,
@@ -731,50 +803,24 @@ class LiteLLMAdapter(BaseModelAdapter):
         messages: list[dict[str, Any]],
         response_schema: Any,
         retries: int,
-    ) -> Any:
-        payload = list(messages)
-        response_format = _response_format(response_schema)
-        json_schema_failed = False
-
-        if response_format is not None:
-            json_schema_failed, result = self._attempt_schema_completion(
-                model, payload, response_format, response_schema
-            )
-            if result is not None:
-                return result
-
-        if json_schema_failed:
-            result = _try_json_object_fallback(model, payload, response_schema)
-            if result is not None:
-                return result
-
-        if not _is_base_model_schema(response_schema):
-            return _structured_json_retry(
-                model=model,
-                payload=payload,
-                response_schema=response_schema,
-                retries=retries,
-                response_format=None,
-            )
-        client = instructor_clients.get(model, async_client=False)
-        attempts = 0
-        while True:
-            try:
-                return client.chat.completions.create(
-                    model=model,
-                    messages=payload,
-                    response_model=response_schema,
-                )
-            except Exception as exc:
-                if attempts >= retries:
-                    raise
-                payload.append(
-                    {
-                        "role": "user",
-                        "content": _structured_retry_prompt(exc),
-                    }
-                )
-                attempts += 1
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        thinking: dict[str, Any] | None = None,
+        drop_params: bool | None = None,
+        extra_body: dict[str, Any] | None = None,
+        num_retries: int | None = None,
+    ) -> StructuredResponse:
+        request = _structured_request(
+            model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            thinking=thinking,
+            drop_params=drop_params,
+            extra_body=extra_body,
+            num_retries=num_retries,
+        )
+        data = request.run(_structured_pipeline(list(messages), response_schema, retries))
+        return StructuredResponse(data, request.usage)
 
     async def astructured_complete(
         self,
@@ -783,47 +829,21 @@ class LiteLLMAdapter(BaseModelAdapter):
         messages: list[dict[str, Any]],
         response_schema: Any,
         retries: int,
-    ) -> Any:
-        payload = list(messages)
-        response_format = _response_format(response_schema)
-        json_schema_failed = False
-
-        if response_format is not None:
-            json_schema_failed, result = await self._aattempt_schema_completion(
-                model, payload, response_format, response_schema
-            )
-            if result is not None:
-                return result
-
-        if json_schema_failed:
-            result = await _atry_json_object_fallback(model, payload, response_schema)
-            if result is not None:
-                return result
-
-        if not _is_base_model_schema(response_schema):
-            return await _astructured_json_retry(
-                model=model,
-                payload=payload,
-                response_schema=response_schema,
-                retries=retries,
-                response_format=None,
-            )
-        client = instructor_clients.get(model, async_client=True)
-        attempts = 0
-        while True:
-            try:
-                return await client.chat.completions.create(
-                    model=model,
-                    messages=payload,
-                    response_model=response_schema,
-                )
-            except Exception as exc:
-                if attempts >= retries:
-                    raise
-                payload.append(
-                    {
-                        "role": "user",
-                        "content": _structured_retry_prompt(exc),
-                    }
-                )
-                attempts += 1
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        thinking: dict[str, Any] | None = None,
+        drop_params: bool | None = None,
+        extra_body: dict[str, Any] | None = None,
+        num_retries: int | None = None,
+    ) -> StructuredResponse:
+        request = _structured_request(
+            model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            thinking=thinking,
+            drop_params=drop_params,
+            extra_body=extra_body,
+            num_retries=num_retries,
+        )
+        data = await request.arun(_structured_pipeline(list(messages), response_schema, retries))
+        return StructuredResponse(data, request.usage)

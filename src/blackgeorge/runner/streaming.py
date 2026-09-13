@@ -7,12 +7,25 @@ from blackgeorge.core.tool_call import ToolCall
 from blackgeorge.utils import new_id
 
 
+def extract_json_text(content: str) -> str:
+    text = content.strip()
+    if text.startswith("```"):
+        text = text.partition("\n")[2]
+        text = text.rstrip().removesuffix("```")
+    starts = [index for index in (text.find("{"), text.find("[")) if index != -1]
+    end = max(text.rfind("}"), text.rfind("]"))
+    if not starts or end < min(starts):
+        return text.strip()
+    return text[min(starts) : end + 1]
+
+
 def parse_structured_stream_json(response_schema: Any, content: str) -> Any:
+    text = extract_json_text(content)
     if isinstance(response_schema, TypeAdapter):
-        return response_schema.validate_json(content)
+        return response_schema.validate_json(text)
     if isinstance(response_schema, type) and issubclass(response_schema, BaseModel):
-        return response_schema.model_validate_json(content)
-    return TypeAdapter(response_schema).validate_json(content)
+        return response_schema.model_validate_json(text)
+    return TypeAdapter(response_schema).validate_json(text)
 
 
 def stream_value(value: Any, key: str, default: Any = None) -> Any:

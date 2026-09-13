@@ -19,6 +19,8 @@ report = flow.run(Job(input="Analyze feedback"))
 ```
 
 A flow produces a report. If there are multiple steps, the content is combined with step headers.
+`Report.metrics` carries the run's `usage` and `cost_usd` totals summed across every step, and
+those totals survive a pause and resume.
 
 ## Steps
 
@@ -45,6 +47,10 @@ def build_job(context):
 
 step = Step(worker, job_builder=build_job)
 ```
+
+`context.outputs` holds the completed reports so far. It grows as each step finishes, including
+steps nested inside `Condition`, `Router`, `Loop`, and `Parallel`, so job builders and predicates
+inside a composite see the results of the steps that ran before them.
 
 ### Parallel
 

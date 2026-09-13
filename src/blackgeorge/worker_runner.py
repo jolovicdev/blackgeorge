@@ -1,17 +1,19 @@
 import asyncio
+import inspect
 import json
 import warnings
 from collections.abc import Callable, Iterable
 from typing import Any, cast
 
-from blackgeorge.adapters.base import ModelResponse
-from blackgeorge.adapters.cost import get_completion_cost, get_prompt_cost
+from blackgeorge.adapters.base import ModelResponse, StructuredResponse
+from blackgeorge.adapters.cost import usage_cost
 from blackgeorge.async_utils import ensure_not_running_loop
 from blackgeorge.config import RunConfig
 from blackgeorge.core.event_types import EventType
 from blackgeorge.core.job import Job
 from blackgeorge.core.message import Message
 from blackgeorge.core.report import Report
+from blackgeorge.core.usage import record_turn, restore_totals, totals_from_metrics
 from blackgeorge.runner.loop_state import CompletionContext, LoopState
 from blackgeorge.runner.streaming import (
     append_tool_error,
@@ -97,26 +99,17 @@ def _confirmation_approved(decision: Any) -> bool:
     return bool(decision)
 
 
+def _supported_kwargs(method: Callable[..., Any], kwargs: dict[str, Any]) -> dict[str, Any]:
+    parameters = inspect.signature(method).parameters
+    return {key: value for key, value in kwargs.items() if key in parameters}
+
+
 def _record_usage(ctx: CompletionContext, usage: dict[str, Any]) -> None:
     if not usage:
         return
-    prompt_tokens = usage.get("prompt_tokens")
-    completion_tokens = usage.get("completion_tokens")
-    turn_cost = 0.0
-    if isinstance(prompt_tokens, (int, float)):
-        turn_cost += get_prompt_cost(ctx.model_name, int(prompt_tokens)) or 0.0
-    if isinstance(completion_tokens, (int, float)):
-        turn_cost += get_completion_cost(ctx.model_name, int(completion_tokens)) or 0.0
-    metrics = ctx.state.metrics
-    metrics["cost_usd"] = metrics.get("cost_usd", 0.0) + turn_cost
-    metrics_usage = metrics.setdefault("usage", {})
-    totals = ctx.config.usage_totals
-    totals["cost_usd"] = totals.get("cost_usd", 0.0) + turn_cost
-    for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
-        value = usage.get(key)
-        if isinstance(value, (int, float)):
-            metrics_usage[key] = metrics_usage.get(key, 0) + value
-            totals[key] = totals.get(key, 0) + value
+    record_turn(
+        ctx.state.metrics, ctx.config.usage_totals, usage, usage_cost(ctx.model_name, usage)
+    )
 
 
 class WorkerRunner:
@@ -167,27 +160,49 @@ class WorkerRunner:
     async def _astructured_completion(
         self,
         *,
-        config: RunConfig,
-        model: str,
-        messages: list[Message],
+        ctx: CompletionContext,
+        job: Job,
         response_schema: Any,
     ) -> Any:
-        payload = messages_to_payload(messages)
+        config = ctx.config
+        payload = messages_to_payload(ctx.state.messages)
+        options = {
+            "temperature": config.temperature,
+            "max_tokens": config.max_tokens,
+            "thinking": job.thinking,
+            "drop_params": job.drop_params,
+            "extra_body": job.extra_body,
+            "num_retries": config.num_retries,
+        }
+        if hasattr(config.adapter, "set_callback_context"):
+            config.adapter.set_callback_context(config.run_id, config.emit)
         try:
-            return await config.adapter.astructured_complete(
-                model=model,
-                messages=payload,
-                response_schema=response_schema,
-                retries=config.structured_output_retries,
-            )
-        except NotImplementedError:
-            return await asyncio.to_thread(
-                config.adapter.structured_complete,
-                model=model,
-                messages=payload,
-                response_schema=response_schema,
-                retries=config.structured_output_retries,
-            )
+            try:
+                astructured_complete = config.adapter.astructured_complete
+                result = await astructured_complete(
+                    model=ctx.model_name,
+                    messages=payload,
+                    response_schema=response_schema,
+                    retries=config.structured_output_retries,
+                    **_supported_kwargs(astructured_complete, options),
+                )
+            except NotImplementedError:
+                structured_complete = config.adapter.structured_complete
+                result = await asyncio.to_thread(
+                    structured_complete,
+                    model=ctx.model_name,
+                    messages=payload,
+                    response_schema=response_schema,
+                    retries=config.structured_output_retries,
+                    **_supported_kwargs(structured_complete, options),
+                )
+        finally:
+            if hasattr(config.adapter, "clear_callback_context"):
+                config.adapter.clear_callback_context()
+        if isinstance(result, StructuredResponse):
+            _record_usage(ctx, result.usage)
+            return result.data
+        return result
 
     async def _acompletion(
         self,
@@ -252,7 +267,9 @@ class WorkerRunner:
         thinking: dict[str, Any] | None = None,
         drop_params: bool | None = None,
         extra_body: dict[str, Any] | None = None,
+        response_schema: Any = None,
     ) -> ModelResponse:
+        schema_kwargs = {"response_schema": response_schema} if response_schema is not None else {}
         if hasattr(config.adapter, "set_callback_context"):
             config.adapter.set_callback_context(config.run_id, config.emit)
         try:
@@ -270,6 +287,7 @@ class WorkerRunner:
                     drop_params=drop_params,
                     extra_body=extra_body,
                     num_retries=config.num_retries,
+                    **_supported_kwargs(config.adapter.acomplete, schema_kwargs),
                 )
             except NotImplementedError:
                 try:
@@ -287,6 +305,7 @@ class WorkerRunner:
                         drop_params=drop_params,
                         extra_body=extra_body,
                         num_retries=config.num_retries,
+                        **_supported_kwargs(config.adapter.complete, schema_kwargs),
                     )
                 except Exception as exc:
                     if is_stream_unsupported_error(exc):
@@ -578,6 +597,7 @@ class WorkerRunner:
                     thinking=job.thinking,
                     drop_params=job.drop_params,
                     extra_body=job.extra_body,
+                    response_schema=response_schema,
                 )
             except Exception as exc:
                 if not is_context_limit_error(exc):
@@ -590,9 +610,8 @@ class WorkerRunner:
             except Exception:
                 try:
                     data = await self._astructured_completion(
-                        config=ctx.config,
-                        model=ctx.model_name,
-                        messages=ctx.state.messages,
+                        ctx=ctx,
+                        job=job,
                         response_schema=response_schema,
                     )
                 except Exception as exc:
@@ -605,9 +624,8 @@ class WorkerRunner:
         if response_schema and not tools:
             try:
                 data = await self._astructured_completion(
-                    config=ctx.config,
-                    model=ctx.model_name,
-                    messages=ctx.state.messages,
+                    ctx=ctx,
+                    job=job,
                     response_schema=response_schema,
                 )
             except Exception as exc:
@@ -695,9 +713,8 @@ class WorkerRunner:
         if response_schema:
             try:
                 data = await self._astructured_completion(
-                    config=ctx.config,
-                    model=ctx.model_name,
-                    messages=ctx.state.messages,
+                    ctx=ctx,
+                    job=job,
                     response_schema=response_schema,
                 )
             except Exception as exc:
@@ -809,16 +826,7 @@ class WorkerRunner:
     ) -> tuple[Report, RunState | None]:
         if config.run_id != state.run_id:
             config = config.with_overrides(run_id=state.run_id)
-        if not config.usage_totals:
-            restored_cost = state.metrics.get("cost_usd")
-            if isinstance(restored_cost, (int, float)):
-                config.usage_totals["cost_usd"] = restored_cost
-            restored_usage = state.metrics.get("usage")
-            if isinstance(restored_usage, dict):
-                for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
-                    value = restored_usage.get(key)
-                    if isinstance(value, (int, float)):
-                        config.usage_totals[key] = value
+        restore_totals(config.usage_totals, totals_from_metrics(state.metrics))
         pending = state.pending_action
         if pending is None:
             return build_report(

@@ -29,6 +29,14 @@ uv pip install -e .[dev]
 uv run pytest
 ```
 
+`tests/live/` calls `deepseek/deepseek-chat` for a handful of end-to-end checks (workflow loops,
+structured output metering, preview streaming, flow metrics). Those tests skip unless
+`DEEPSEEK_API_KEY` is set:
+
+```
+DEEPSEEK_API_KEY=... uv run pytest tests/live
+```
+
 ## Lint
 
 ```

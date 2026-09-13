@@ -12,6 +12,7 @@ from blackgeorge.core.job import Job
 from blackgeorge.core.message import Message
 from blackgeorge.core.report import Report
 from blackgeorge.core.types import WorkforceMode
+from blackgeorge.core.usage import restore_totals, with_run_metrics
 from blackgeorge.store.state import RunState
 from blackgeorge.tools.base import Tool
 from blackgeorge.worker import Worker
@@ -26,7 +27,6 @@ from blackgeorge.workforce_helpers import (
     merge_swarm_reports,
     root_job,
     select_worker_name,
-    with_run_metrics,
 )
 
 Reducer = Callable[[list[Report]], Report]
@@ -637,9 +637,7 @@ class Workforce:
     ) -> tuple[Report, RunState | None]:
         if config.run_id != state.run_id:
             config = config.with_overrides(run_id=state.run_id)
-        stored_totals = state.payload.get("usage_totals")
-        if isinstance(stored_totals, dict):
-            config.usage_totals.update(stored_totals)
+        restore_totals(config.usage_totals, state.payload.get("usage_totals"))
         payload, stage = state.payload, state.payload.get("stage")
         worker_state_payload = payload.get("worker_state")
         if worker_state_payload is None:

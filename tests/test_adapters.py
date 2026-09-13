@@ -358,6 +358,92 @@ def test_litellm_omits_tool_params_when_tools_absent(monkeypatch) -> None:
     assert "stream_options" not in captured
 
 
+def test_litellm_complete_requests_json_schema_for_response_schema(monkeypatch) -> None:
+    adapter = LiteLLMAdapter()
+    captured: dict[str, object] = {}
+
+    def fake_completion(**kwargs: object) -> dict[str, object]:
+        captured.update(kwargs)
+        return {"choices": [{"message": {"content": '{"answer": "ok"}'}}], "usage": {}}
+
+    monkeypatch.setattr(litellm, "completion", fake_completion)
+    adapter.complete(
+        model="openai/gpt-5-nano",
+        messages=[{"role": "user", "content": "hi"}],
+        tools=None,
+        tool_choice=None,
+        temperature=None,
+        max_tokens=None,
+        stream=False,
+        stream_options=None,
+        response_schema=AnswerModel,
+    )
+
+    response_format = captured.get("response_format")
+    assert isinstance(response_format, dict)
+    assert response_format.get("type") == "json_schema"
+
+
+def test_litellm_complete_falls_back_to_json_object_when_schema_unavailable(monkeypatch) -> None:
+    adapter = LiteLLMAdapter()
+    calls: list[dict[str, object]] = []
+
+    def fake_completion(**kwargs: object) -> dict[str, object]:
+        calls.append(kwargs)
+        if len(calls) == 1:
+            raise RuntimeError("response_format type is unavailable")
+        return {"choices": [{"message": {"content": '{"answer": "ok"}'}}], "usage": {}}
+
+    monkeypatch.setattr(litellm, "completion", fake_completion)
+    adapter.complete(
+        model="deepseek/deepseek-chat",
+        messages=[{"role": "user", "content": "hi"}],
+        tools=None,
+        tool_choice=None,
+        temperature=None,
+        max_tokens=None,
+        stream=True,
+        stream_options={"include_usage": True},
+        response_schema=AnswerModel,
+    )
+
+    assert len(calls) == 2
+    assert calls[1]["response_format"] == {"type": "json_object"}
+    messages = calls[1]["messages"]
+    assert isinstance(messages, list)
+    assert len(messages) == 2
+    assert "JSON" in messages[-1]["content"]
+    assert calls[1]["stream"] is True
+
+
+def test_litellm_complete_drops_response_format_when_provider_rejects_it(monkeypatch) -> None:
+    adapter = LiteLLMAdapter()
+    calls: list[dict[str, object]] = []
+
+    def fake_completion(**kwargs: object) -> dict[str, object]:
+        calls.append(kwargs)
+        if len(calls) == 1:
+            raise RuntimeError("model does not support response_format")
+        return {"choices": [{"message": {"content": "plain text"}}], "usage": {}}
+
+    monkeypatch.setattr(litellm, "completion", fake_completion)
+    adapter.complete(
+        model="openai/gpt-5-nano",
+        messages=[{"role": "user", "content": "hi"}],
+        tools=None,
+        tool_choice=None,
+        temperature=None,
+        max_tokens=None,
+        stream=True,
+        stream_options={"include_usage": True},
+        response_schema=AnswerModel,
+    )
+
+    assert len(calls) == 2
+    assert "response_format" not in calls[1]
+    assert calls[1]["messages"] == [{"role": "user", "content": "hi"}]
+
+
 def test_litellm_stream_emits_completed_after_consumption(monkeypatch) -> None:
     adapter = LiteLLMAdapter()
     events: list[str] = []
@@ -465,7 +551,7 @@ def test_structured_complete_uses_response_format_base_model(monkeypatch) -> Non
         messages=[{"role": "user", "content": "hi"}],
         response_schema=AnswerModel,
         retries=0,
-    )
+    ).data
 
     assert isinstance(result, AnswerModel)
     assert result.answer == "ok"
@@ -475,6 +561,110 @@ def test_structured_complete_uses_response_format_base_model(monkeypatch) -> Non
     json_schema = response_format.get("json_schema")
     assert isinstance(json_schema, dict)
     assert json_schema.get("strict") is True
+
+
+def test_structured_complete_forwards_model_options(monkeypatch) -> None:
+    adapter = LiteLLMAdapter()
+    captured: dict[str, object] = {}
+
+    def fake_completion(**kwargs: object) -> dict[str, object]:
+        captured.update(kwargs)
+        return {"choices": [{"message": {"content": '{"answer": "ok"}'}}], "usage": {}}
+
+    monkeypatch.setattr(litellm, "completion", fake_completion)
+
+    adapter.structured_complete(
+        model="deepseek/deepseek-chat",
+        messages=[{"role": "user", "content": "hi"}],
+        response_schema=AnswerModel,
+        retries=0,
+        temperature=0.2,
+        max_tokens=64,
+        thinking={"type": "enabled"},
+        extra_body={"top_k": 5},
+        num_retries=2,
+    )
+
+    assert captured.get("temperature") == 0.2
+    assert captured.get("max_tokens") == 64
+    assert captured.get("thinking") == {"type": "enabled"}
+    assert captured.get("extra_body") == {"top_k": 5}
+    assert captured.get("num_retries") == 2
+    assert "drop_params" not in captured
+
+
+def test_structured_complete_sums_usage_and_emits_llm_events(monkeypatch) -> None:
+    adapter = LiteLLMAdapter()
+    response_schema = TypeAdapter(list[ItemModel])
+    contents = iter(["not json", '[{"value": 1}]'])
+    events: list[str] = []
+
+    def fake_completion(**kwargs: object) -> dict[str, object]:
+        if "response_format" in kwargs:
+            raise RuntimeError("response_format unsupported")
+        return {
+            "choices": [{"message": {"content": next(contents)}}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        }
+
+    monkeypatch.setattr(litellm, "completion", fake_completion)
+    adapter.set_callback_context(
+        "run", lambda event_type, source, payload: events.append(event_type)
+    )
+    try:
+        response = adapter.structured_complete(
+            model="openai/gpt-5-nano",
+            messages=[{"role": "user", "content": "hi"}],
+            response_schema=response_schema,
+            retries=1,
+        )
+    finally:
+        adapter.clear_callback_context()
+
+    assert [item.value for item in response.data] == [1]
+    assert response.usage == {"prompt_tokens": 20, "completion_tokens": 10, "total_tokens": 30}
+    assert events == [
+        "llm.started",
+        "llm.failed",
+        "llm.started",
+        "llm.completed",
+        "llm.started",
+        "llm.completed",
+    ]
+
+
+def test_structured_complete_instructor_call_omits_thinking(monkeypatch) -> None:
+    adapter = LiteLLMAdapter()
+    instructor_kwargs: dict[str, object] = {}
+
+    class FakeCompletions:
+        def create_with_completion(self, **kwargs: object) -> tuple[object, object]:
+            instructor_kwargs.update(kwargs)
+            return AnswerModel(answer="ok"), {"usage": {"total_tokens": 3}}
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.chat = type("Chat", (), {"completions": FakeCompletions()})()
+
+    def fake_completion(**kwargs: object) -> dict[str, object]:
+        raise RuntimeError("response_format unsupported")
+
+    monkeypatch.setattr(litellm, "completion", fake_completion)
+    monkeypatch.setattr(instructor_clients, "get", lambda model, async_client: FakeClient())
+
+    response = adapter.structured_complete(
+        model="anthropic/claude-sonnet-5",
+        messages=[{"role": "user", "content": "hi"}],
+        response_schema=AnswerModel,
+        retries=0,
+        thinking={"type": "enabled", "budget_tokens": 1024},
+        temperature=0.3,
+    )
+
+    assert response.data == AnswerModel(answer="ok")
+    assert response.usage == {"total_tokens": 3}
+    assert "thinking" not in instructor_kwargs
+    assert instructor_kwargs["temperature"] == 0.3
 
 
 def test_structured_complete_uses_response_format_type_adapter(monkeypatch) -> None:
@@ -504,7 +694,7 @@ def test_structured_complete_uses_response_format_type_adapter(monkeypatch) -> N
         messages=[{"role": "user", "content": "hi"}],
         response_schema=response_schema,
         retries=0,
-    )
+    ).data
 
     assert isinstance(result, list)
     assert [item.value for item in result] == [1, 2]
@@ -541,7 +731,7 @@ def test_structured_complete_type_adapter_manual_fallback(monkeypatch) -> None:
         messages=[{"role": "user", "content": "hi"}],
         response_schema=response_schema,
         retries=0,
-    )
+    ).data
 
     assert [item.value for item in result] == [3]
     assert len(calls) == 2
@@ -575,12 +765,13 @@ async def test_astructured_complete_type_adapter_manual_fallback(monkeypatch) ->
     monkeypatch.setattr(litellm, "acompletion", fake_acompletion)
     monkeypatch.setattr(instructor_clients, "get", fake_get)
 
-    result = await adapter.astructured_complete(
+    response = await adapter.astructured_complete(
         model="openai/gpt-5-nano",
         messages=[{"role": "user", "content": "hi"}],
         response_schema=response_schema,
         retries=0,
     )
+    result = response.data
 
     assert [item.value for item in result] == [4]
     assert len(calls) == 2
@@ -598,7 +789,7 @@ def test_structured_complete_respects_retry_budget(monkeypatch) -> None:
         def __init__(self, counter: CallCounter) -> None:
             self._counter = counter
 
-        def create(self, **kwargs: object) -> object:
+        def create_with_completion(self, **kwargs: object) -> object:
             self._counter.calls += 1
             raise ValueError("bad response")
 

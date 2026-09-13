@@ -3,12 +3,14 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from pydantic import BaseModel
 
 from blackgeorge.adapters.base import ModelResponse
 from blackgeorge.core.job import Job
 from blackgeorge.core.report import Report
 from blackgeorge.core.tool_call import ToolCall
 from blackgeorge.desk import Desk
+from blackgeorge.memory import InMemoryMemoryStore
 from blackgeorge.store.in_memory import InMemoryRunStore
 from blackgeorge.store.sqlite import SQLiteRunStore
 from blackgeorge.tools import tool
@@ -17,7 +19,7 @@ from blackgeorge.workflow import Condition, Loop, Parallel, Step
 from blackgeorge.workflow.context import WorkflowContext
 from blackgeorge.workflow.result import StepOutput
 from blackgeorge.workforce import Workforce
-from tests.utils import AsyncOnlyAdapter, FakeAdapter
+from tests.utils import AsyncOnlyAdapter, FakeAdapter, StreamingAdapter
 
 
 def test_flow_steps() -> None:
@@ -594,3 +596,104 @@ def test_flow_fails_cleanly_when_paused_context_cannot_be_serialized() -> None:
     assert record is not None
     assert record.status == "failed"
     assert not any(event.type == "run.paused" for event in run_store.get_events(report.run_id))
+
+
+def test_desk_lookups_return_registered_runners() -> None:
+    desk = Desk(model="fake", adapter=FakeAdapter([]), run_store=InMemoryRunStore())
+    worker = Worker(name="W", model="fake")
+    workforce = Workforce([worker], mode="collaborate", name="team")
+    desk.register_worker(worker)
+    desk.register_workforce(workforce)
+    assert desk.get_worker("W") is worker
+    assert desk.get_workforce("team") is workforce
+    assert desk.get_worker("missing") is None
+    assert desk.get_workforce("missing") is None
+
+
+def test_flow_applies_worker_memory() -> None:
+    responses = [ModelResponse(content="remembered", tool_calls=[], usage={}, raw={})]
+    memory = InMemoryMemoryStore()
+    worker = Worker(name="Analyst", model="fake")
+    memory.write("context", "prior notes", worker.memory_scope)
+    desk = Desk(
+        model="fake",
+        adapter=FakeAdapter(responses),
+        run_store=InMemoryRunStore(),
+        memory_store=memory,
+    )
+    report = desk.flow([Step(worker)]).run(Job(input="go"))
+
+    assert report.status == "completed"
+    assert any(
+        message.role == "system" and "prior notes" in (message.content or "")
+        for message in report.messages
+    )
+    assert memory.read("last_output", worker.memory_scope) == "remembered"
+
+
+def test_flow_applies_desk_structured_stream_mode() -> None:
+    class Answer(BaseModel):
+        answer: str
+
+    streams = [[{"choices": [{"delta": {"content": '{"answer": "ok"}'}}]}]]
+    desk = Desk(
+        model="fake",
+        adapter=StreamingAdapter(streams),
+        run_store=InMemoryRunStore(),
+        stream=True,
+        structured_stream_mode="preview",
+    )
+    flow = desk.flow([Step(Worker(name="Worker", model="fake"))])
+    report = flow.run(Job(input="run", response_schema=Answer))
+
+    assert report.status == "completed"
+    assert report.data == Answer(answer="ok")
+    assert any(event.type == "stream.token" for event in report.events)
+
+
+def test_loop_predicate_and_job_builder_see_outputs_from_earlier_iterations() -> None:
+    responses = [
+        ModelResponse(content=f"round-{index}", tool_calls=[], usage={}, raw={})
+        for index in range(1, 6)
+    ]
+    desk = Desk(model="fake", adapter=FakeAdapter(responses), run_store=InMemoryRunStore())
+    worker = Worker(name="Worker", model="fake")
+    seen_by_builder: list[str | None] = []
+
+    def build_job(context: WorkflowContext) -> Job:
+        seen_by_builder.append(context.outputs[-1].content if context.outputs else None)
+        return Job(input="again")
+
+    loop = Loop(
+        [Step(worker, job_builder=build_job)],
+        stop=lambda context: len(context.outputs) >= 2,
+        max_iterations=5,
+    )
+    report = desk.flow([loop]).run(Job(input="run"))
+
+    assert report.status == "completed"
+    assert seen_by_builder == [None, "round-1"]
+    assert report.content is not None
+    assert "[step 2] round-2" in report.content
+    assert "[step 3]" not in report.content
+
+
+def test_nested_condition_sees_outputs_from_earlier_branch_steps() -> None:
+    responses = [
+        ModelResponse(content="first", tool_calls=[], usage={}, raw={}),
+        ModelResponse(content="second", tool_calls=[], usage={}, raw={}),
+    ]
+    desk = Desk(model="fake", adapter=FakeAdapter(responses), run_store=InMemoryRunStore())
+    worker_a = Worker(name="A", model="fake")
+    worker_b = Worker(name="B", model="fake")
+    inner = Condition(
+        lambda context: bool(context.outputs) and context.outputs[-1].content == "first",
+        [Step(worker_b)],
+    )
+    report = desk.flow([Condition(lambda context: True, [Step(worker_a), inner])]).run(
+        Job(input="run")
+    )
+
+    assert report.status == "completed"
+    assert report.content is not None
+    assert "[step 2] second" in report.content

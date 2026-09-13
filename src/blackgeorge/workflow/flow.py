@@ -1,5 +1,5 @@
 import asyncio
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any
 
 from blackgeorge.async_utils import ensure_not_running_loop
 from blackgeorge.config import RunConfig
@@ -7,11 +7,13 @@ from blackgeorge.core.event import Event
 from blackgeorge.core.job import Job
 from blackgeorge.core.report import Report
 from blackgeorge.core.serialization import to_json_value
+from blackgeorge.core.usage import restore_totals, with_run_metrics
 from blackgeorge.store.state import RunState
 from blackgeorge.utils import new_id
 from blackgeorge.worker import Worker
 from blackgeorge.workflow.context import WorkflowContext
 from blackgeorge.workflow.nodes import (
+    Executable,
     OutputContinuation,
     Step,
     WorkflowGraph,
@@ -25,9 +27,12 @@ from blackgeorge.workflow.result import (
 )
 from blackgeorge.workforce import Workforce
 
+if TYPE_CHECKING:
+    from blackgeorge.desk import Desk
+
 
 class Flow:
-    def __init__(self, desk: Any, steps: list[Any], name: str | None = None) -> None:
+    def __init__(self, desk: "Desk", steps: list[Executable], name: str | None = None) -> None:
         self.desk = desk
         self.steps = list(steps)
         self.name = name or "flow"
@@ -70,11 +75,13 @@ class Flow:
         config = self._make_run_config(self._stream)
         if isinstance(runner, Worker):
             self.desk.register_worker(runner)
-            return await runner.arun(config, job)
-        if isinstance(runner, Workforce):
+        elif isinstance(runner, Workforce):
             self.desk.register_workforce(runner)
-            return await runner.arun(config, job)
-        raise TypeError("Runner must be Worker or Workforce")
+        else:
+            raise TypeError("Runner must be Worker or Workforce")
+        report, state = await runner.arun(config, self.desk.prepare_job(runner, job))
+        self.desk.record_memory(runner, report)
+        return report, state
 
     async def _resume_runner(
         self,
@@ -84,7 +91,7 @@ class Flow:
     ) -> tuple[Report, RunState | None]:
         config = self._make_run_config(stream)
         if state.runner_type == "worker":
-            worker = self.desk._workers.get(state.runner_name)
+            worker = self.desk.get_worker(state.runner_name)
             if worker is None:
                 report = Report(
                     run_id=state.run_id,
@@ -99,10 +106,11 @@ class Flow:
                     errors=["Worker not registered"],
                 )
                 return report, None
-            worker = cast(Worker, worker)
-            return await worker.aresume(config, state, decision_or_input)
+            report, updated_state = await worker.aresume(config, state, decision_or_input)
+            self.desk.record_memory(worker, report)
+            return report, updated_state
         if state.runner_type == "workforce":
-            workforce = self.desk._workforces.get(state.runner_name)
+            workforce = self.desk.get_workforce(state.runner_name)
             if workforce is None:
                 report = Report(
                     run_id=state.run_id,
@@ -117,7 +125,6 @@ class Flow:
                     errors=["Workforce not registered"],
                 )
                 return report, None
-            workforce = cast(Workforce, workforce)
             return await workforce.aresume(config, state, decision_or_input)
         report = Report(
             run_id=state.run_id,
@@ -152,6 +159,7 @@ class Flow:
             "flow_signature": graph.signature,
             "context": context.snapshot(),
             "continuations": serialize_continuations(graph, continuations),
+            "usage_totals": dict(self._usage_totals),
         }
         return RunState(
             run_id=self._run_id,
@@ -167,7 +175,7 @@ class Flow:
             payload=payload,
         )
 
-    def _restore_outputs(self, payload: Any) -> list[Report]:
+    def _restore_outputs(self, payload: object) -> list[Report]:
         if payload is None:
             return []
         if not isinstance(payload, list):
@@ -182,7 +190,7 @@ class Flow:
             {"index": idx, "content": report.content, "data": report.data}
             for idx, report in enumerate(reports, start=1)
         ]
-        return Report(
+        combined = Report(
             run_id=self._run_id,
             status="completed",
             content="\n\n".join(content_parts),
@@ -194,6 +202,7 @@ class Flow:
             pending_action=None,
             errors=[error for report in reports for error in report.errors],
         )
+        return with_run_metrics(combined, self._usage_totals)
 
     def _normalize_results(self, results: list[StepOutput]) -> list[StepResult]:
         normalized: list[StepResult] = []
@@ -321,12 +330,12 @@ class Flow:
                 self._emit_run_failed(report)
                 return report
             all_reports.append(report)
-            context.outputs.append(report)
+            context.add_output(report)
         return None
 
     async def _run_steps(
         self,
-        steps: list[Any],
+        steps: list[Executable],
         context: WorkflowContext,
         all_reports: list[Report],
         job: Job,
@@ -438,6 +447,8 @@ class Flow:
         except (TypeError, ValueError) as exc:
             return self._resume_failure(state, f"Invalid flow state: {exc}")
 
+        self._usage_totals = {}
+        restore_totals(self._usage_totals, payload.get("usage_totals"))
         self.desk.register_flow_run(self._run_id, self)
         self.desk.emit(self._events, self._run_id, "run.resumed", self.name, {})
 
@@ -489,7 +500,7 @@ class Flow:
             return report
 
         all_reports.append(report)
-        context.outputs.append(report)
+        context.add_output(report)
 
         while continuations:
             continuation = continuations.pop(0)

@@ -26,6 +26,8 @@ Key behaviors:
 - passes messages and optional model parameters (`temperature`, `max_tokens`, `thinking`, `extra_body`)
 - only sends `tools` and `tool_choice` when tools are present
 - supports streaming when requested
+- when `complete`/`acomplete` receive a `response_schema`, requests a `json_schema` response format
+  for it and retries with `json_object` plus a schema prompt if the provider rejects `json_schema`
 - enables `parallel_tool_calls` when model metadata indicates `supports_parallel_function_calling`
 - for streaming calls, emits `llm.completed` on stream exhaustion/close and `llm.failed` if stream iteration raises
 
@@ -52,11 +54,26 @@ Structured output uses LiteLLM JSON schema response formats when possible and fa
 - `instructor.from_provider("litellm/<model>", async_client=True)`
 
 If the LiteLLM structured response fails or is unavailable, the worker calls `chat.completions.create(..., response_model=YourModel)` and returns the validated Pydantic object as `Report.data`.
-Structured output retries are clamped to a minimum of 3 attempts for resilience (`retries=0` still performs 3 retries after the first failed attempt).
+`structured_output_retries` sets how many extra attempts follow a failed validation. With
+`retries=0` a single attempt is made. Provider errors other than an unsupported response format
+are raised immediately and never retried.
 
 ## Adapter hooks for structured output
 
 If your adapter implements `structured_complete`/`astructured_complete`, the worker will call those hooks for response-schema jobs. This lets you route structured output through non-LiteLLM providers or custom pipelines. If the hooks are not implemented, the worker falls back to the LiteLLM + Instructor path.
+
+The worker also passes the run's `temperature`, `max_tokens`, and `num_retries` plus the job's
+`thinking`, `drop_params`, and `extra_body` as keyword arguments. The worker only sends keywords
+your hook names explicitly in its signature; a bare `**kwargs` receives none of them. Hooks with the
+older four-argument signature keep working unchanged.
+
+Return a `StructuredResponse(data, usage)` from `blackgeorge.adapters` to have the worker add the
+call's token usage and cost to `Report.metrics` and the run's `max_cost_usd` budget. Returning the
+parsed data directly is still accepted, but such calls are not metered. `LiteLLMAdapter` returns
+`StructuredResponse` with usage summed over every attempt (schema, JSON fallback, retries) and emits
+`llm.started`, `llm.completed`, and `llm.failed` for each attempt. The Instructor fallback forces a
+tool call, so `thinking` is not forwarded to it; providers such as Anthropic reject extended thinking
+combined with a forced tool choice.
 
 ## Cost tracking
 

@@ -14,6 +14,12 @@ class ModelResponse:
     raw: Any = None
 
 
+@dataclass(frozen=True)
+class StructuredResponse:
+    data: Any
+    usage: dict[str, Any] = field(default_factory=dict)
+
+
 class BaseModelAdapter:
     def complete(
         self,
@@ -30,6 +36,7 @@ class BaseModelAdapter:
         drop_params: bool | None = None,
         extra_body: dict[str, Any] | None = None,
         num_retries: int | None = None,
+        response_schema: Any = None,
     ) -> ModelResponse | list[dict[str, Any]]:
         raise NotImplementedError
 
@@ -48,6 +55,7 @@ class BaseModelAdapter:
         drop_params: bool | None = None,
         extra_body: dict[str, Any] | None = None,
         num_retries: int | None = None,
+        response_schema: Any = None,
     ) -> ModelResponse | Any:
         raise NotImplementedError
 
@@ -58,6 +66,12 @@ class BaseModelAdapter:
         messages: list[dict[str, Any]],
         response_schema: Any,
         retries: int,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        thinking: dict[str, Any] | None = None,
+        drop_params: bool | None = None,
+        extra_body: dict[str, Any] | None = None,
+        num_retries: int | None = None,
     ) -> Any:
         raise NotImplementedError
 
@@ -68,5 +82,11 @@ class BaseModelAdapter:
         messages: list[dict[str, Any]],
         response_schema: Any,
         retries: int,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        thinking: dict[str, Any] | None = None,
+        drop_params: bool | None = None,
+        extra_body: dict[str, Any] | None = None,
+        num_retries: int | None = None,
     ) -> Any:
         raise NotImplementedError

@@ -2,7 +2,7 @@ from typing import Any
 
 from pydantic import BaseModel, TypeAdapter
 
-from blackgeorge.adapters.base import BaseModelAdapter, ModelResponse
+from blackgeorge.adapters.base import BaseModelAdapter, ModelResponse, StructuredResponse
 
 
 class ScriptedAdapter(BaseModelAdapter):
@@ -18,14 +18,14 @@ class ScriptedAdapter(BaseModelAdapter):
         return self._responses.pop(0)
 
     @staticmethod
-    def _structured_value(response: ModelResponse, response_schema: Any) -> Any:
+    def _structured_value(response: ModelResponse, response_schema: Any) -> StructuredResponse:
         content = response.content
         if content is None:
             raise RuntimeError("Scripted structured responses must define content")
         if isinstance(response_schema, TypeAdapter):
-            return response_schema.validate_json(content)
+            return StructuredResponse(response_schema.validate_json(content), response.usage)
         if isinstance(response_schema, type) and issubclass(response_schema, BaseModel):
-            return response_schema.model_validate_json(content)
+            return StructuredResponse(response_schema.model_validate_json(content), response.usage)
         raise TypeError(f"Unsupported response_schema type: {type(response_schema).__name__}")
 
     def complete(
@@ -43,6 +43,7 @@ class ScriptedAdapter(BaseModelAdapter):
         drop_params: bool | None = None,
         extra_body: dict[str, Any] | None = None,
         num_retries: int | None = None,
+        response_schema: Any = None,
     ) -> ModelResponse:
         self.calls.append(
             {
@@ -51,6 +52,7 @@ class ScriptedAdapter(BaseModelAdapter):
                 "messages": messages,
                 "tools": tools,
                 "stream": stream,
+                "response_schema": response_schema,
             }
         )
         return self._next_response("completion")
@@ -70,6 +72,7 @@ class ScriptedAdapter(BaseModelAdapter):
         drop_params: bool | None = None,
         extra_body: dict[str, Any] | None = None,
         num_retries: int | None = None,
+        response_schema: Any = None,
     ) -> ModelResponse:
         self.calls.append(
             {
@@ -78,6 +81,7 @@ class ScriptedAdapter(BaseModelAdapter):
                 "messages": messages,
                 "tools": tools,
                 "stream": stream,
+                "response_schema": response_schema,
             }
         )
         return self._next_response("completion")
@@ -89,13 +93,21 @@ class ScriptedAdapter(BaseModelAdapter):
         messages: list[dict[str, Any]],
         response_schema: Any,
         retries: int,
-    ) -> Any:
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        thinking: dict[str, Any] | None = None,
+        drop_params: bool | None = None,
+        extra_body: dict[str, Any] | None = None,
+        num_retries: int | None = None,
+    ) -> StructuredResponse:
         self.calls.append(
             {
                 "kind": "structured",
                 "model": model,
                 "messages": messages,
                 "response_schema": response_schema,
+                "thinking": thinking,
+                "extra_body": extra_body,
             }
         )
         return self._structured_value(self._next_response("structured completion"), response_schema)
@@ -107,13 +119,21 @@ class ScriptedAdapter(BaseModelAdapter):
         messages: list[dict[str, Any]],
         response_schema: Any,
         retries: int,
-    ) -> Any:
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        thinking: dict[str, Any] | None = None,
+        drop_params: bool | None = None,
+        extra_body: dict[str, Any] | None = None,
+        num_retries: int | None = None,
+    ) -> StructuredResponse:
         self.calls.append(
             {
                 "kind": "structured",
                 "model": model,
                 "messages": messages,
                 "response_schema": response_schema,
+                "thinking": thinking,
+                "extra_body": extra_body,
             }
         )
         return self._structured_value(self._next_response("structured completion"), response_schema)

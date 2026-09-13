@@ -16,6 +16,7 @@ from blackgeorge.core.report import Report
 from blackgeorge.core.tool_call import ToolCall
 from blackgeorge.desk import Desk
 from blackgeorge.memory.base import MemoryScope, MemoryStore
+from blackgeorge.runner.streaming import parse_structured_stream_json
 from blackgeorge.store.in_memory import InMemoryRunStore
 from blackgeorge.store.state import RunState
 from blackgeorge.tools import tool, transfer_to_agent_tool
@@ -1791,6 +1792,51 @@ def test_structured_stream_preview_falls_back_on_invalid_json() -> None:
     assert "".join(streamed_tokens) == "not-json"
     assert adapter.stream_calls == 1
     assert adapter.structured_calls == 1
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        '{"answer": "ok"}',
+        '```json\n{"answer": "ok"}\n```',
+        'Here you go:\n{"answer": "ok"}\nLet me know if you need more.',
+    ],
+)
+def test_parse_structured_stream_json_tolerates_fences_and_prose(content: str) -> None:
+    assert parse_structured_stream_json(AnswerModel, content) == AnswerModel(answer="ok")
+
+
+def test_structured_stream_preview_passes_schema_to_adapter() -> None:
+    class SchemaAwarePreviewAdapter(StructuredStreamPreviewAdapter):
+        def __init__(self) -> None:
+            super().__init__(
+                chunks=[
+                    {"choices": [{"delta": {"content": '```json\n{"answer": '}}]},
+                    {"choices": [{"delta": {"content": '"ok"}\n```'}}]},
+                ],
+                fallback_answer="unused",
+            )
+            self.schemas: list[Any] = []
+
+        async def acomplete(self, *, response_schema: Any = None, **kwargs: Any) -> Any:
+            self.schemas.append(response_schema)
+            return await super().acomplete(**kwargs)
+
+    adapter = SchemaAwarePreviewAdapter()
+    desk = Desk(
+        model="fake",
+        adapter=adapter,
+        run_store=InMemoryRunStore(),
+        stream=True,
+        structured_stream_mode="preview",
+    )
+    report = desk.run(
+        Worker(name="Worker", model="fake"), Job(input="run", response_schema=AnswerModel)
+    )
+    assert report.status == "completed"
+    assert report.data == AnswerModel(answer="ok")
+    assert adapter.schemas == [AnswerModel]
+    assert adapter.structured_calls == 0
 
 
 def test_structured_output_stream_remains_strict_by_default() -> None:

@@ -5,7 +5,7 @@ Blackgeorge defines a simple memory interface that can be used by your own tools
 ## Desk integration
 
 `Desk` always has a memory store. If you do not pass one, it uses `InMemoryMemoryStore`.
-For worker runs, the desk uses two conventional keys:
+For worker runs, including worker steps inside a flow, the desk uses two conventional keys:
 
 - `context`: read before a worker run and inserted as a system message
 - `last_output`: written after a completed run

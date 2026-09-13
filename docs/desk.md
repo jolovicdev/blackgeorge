@@ -30,6 +30,16 @@ desk = Desk(
 - max_tokens: max tokens for completion requests
 - stream: enables streaming when the worker is eligible
 - structured_stream_mode: "off" (strict structured output) or "preview" (stream preview tokens for schema jobs)
+
+The desk setting applies to `desk.run`, `desk.arun`, and every step of a flow; a job's own
+`structured_stream_mode` overrides it.
+
+In preview mode the worker passes the job's `response_schema` to the adapter's streaming call, so
+the model streams JSON for that schema rather than free text. `LiteLLMAdapter` requests a
+`json_schema` response format and falls back to `json_object` plus a schema prompt when the
+provider rejects `json_schema`. The streamed text is parsed tolerantly (code fences and
+surrounding prose are stripped). If it still does not validate, the worker makes one strict
+structured call and uses that result.
 - structured_output_retries: retries for structured output validation
 - max_iterations: max model turns per worker run
 - max_tool_calls: max tool calls per worker run
@@ -49,6 +59,10 @@ The desk applies simple read/write memory behavior for workers:
 
 - Before a worker run, it reads `context` from the store using `worker.memory_scope` and inserts it as a system message after any existing leading system messages.
 - After a completed run, it writes `last_output` (structured data or content) using the same scope.
+
+The same two hooks run for every worker `Step` inside a flow, so flow steps read `context` and
+write `last_output` exactly like `desk.run`. `desk.prepare_job(runner, job)` and
+`desk.record_memory(runner, report)` expose this behavior for custom runners.
 
 This is intentionally minimal so you can build your own memory workflows on top.
 
@@ -163,6 +177,9 @@ If you create many temporary workers or workforces, unregister them when you are
 desk.unregister_worker(worker)
 desk.unregister_workforce(workforce)
 ```
+
+`desk.get_worker(name)` and `desk.get_workforce(name)` return the registered runner or `None`.
+Flows use them to find the runner for a paused step when resuming.
 
 ## Events
 
