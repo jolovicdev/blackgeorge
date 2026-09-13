@@ -67,6 +67,20 @@ def test_scripted_adapter_structured_output() -> None:
     assert adapter.calls[0]["kind"] == "structured"
 
 
+def test_scripted_adapter_structured_output_receives_job_options() -> None:
+    adapter = ScriptedAdapter([_response('{"answer": "ok"}')])
+    job = Job(
+        input="hi",
+        response_schema=Answer,
+        thinking={"type": "enabled"},
+        extra_body={"top_k": 5},
+    )
+    report = _desk(adapter).run(Worker(name="W"), job)
+    assert report.status == "completed"
+    assert adapter.calls[0]["thinking"] == {"type": "enabled"}
+    assert adapter.calls[0]["extra_body"] == {"top_k": 5}
+
+
 def test_scripted_adapter_structured_output_rejects_invalid_json() -> None:
     adapter = ScriptedAdapter([_response("not json")])
     report = _desk(adapter).run(Worker(name="W"), Job(input="hi", response_schema=Answer))

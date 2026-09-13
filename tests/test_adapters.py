@@ -477,6 +477,36 @@ def test_structured_complete_uses_response_format_base_model(monkeypatch) -> Non
     assert json_schema.get("strict") is True
 
 
+def test_structured_complete_forwards_model_options(monkeypatch) -> None:
+    adapter = LiteLLMAdapter()
+    captured: dict[str, object] = {}
+
+    def fake_completion(**kwargs: object) -> dict[str, object]:
+        captured.update(kwargs)
+        return {"choices": [{"message": {"content": '{"answer": "ok"}'}}], "usage": {}}
+
+    monkeypatch.setattr(litellm, "completion", fake_completion)
+
+    adapter.structured_complete(
+        model="deepseek/deepseek-chat",
+        messages=[{"role": "user", "content": "hi"}],
+        response_schema=AnswerModel,
+        retries=0,
+        temperature=0.2,
+        max_tokens=64,
+        thinking={"type": "enabled"},
+        extra_body={"top_k": 5},
+        num_retries=2,
+    )
+
+    assert captured.get("temperature") == 0.2
+    assert captured.get("max_tokens") == 64
+    assert captured.get("thinking") == {"type": "enabled"}
+    assert captured.get("extra_body") == {"top_k": 5}
+    assert captured.get("num_retries") == 2
+    assert "drop_params" not in captured
+
+
 def test_structured_complete_uses_response_format_type_adapter(monkeypatch) -> None:
     adapter = LiteLLMAdapter()
     response_schema = TypeAdapter(list[ItemModel])

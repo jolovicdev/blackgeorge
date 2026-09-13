@@ -3,6 +3,7 @@ import atexit
 import json
 import warnings
 from collections.abc import AsyncIterator, Callable, Iterator
+from dataclasses import dataclass
 from typing import Any, cast
 
 import litellm
@@ -208,6 +209,53 @@ def _build_json_object_prompt(response_schema: Any) -> str:
     return f"Respond with valid JSON matching this schema: {json.dumps(schema, indent=2)}"
 
 
+@dataclass
+class _StructuredRequest:
+    model: str
+    options: dict[str, Any]
+
+    def _params(
+        self, messages: list[dict[str, Any]], response_format: dict[str, Any] | None
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {"model": self.model, "messages": messages, **self.options}
+        if response_format is not None:
+            params["response_format"] = response_format
+        return params
+
+    def complete(
+        self, messages: list[dict[str, Any]], response_format: dict[str, Any] | None = None
+    ) -> Any:
+        return litellm.completion(**self._params(messages, response_format))
+
+    async def acomplete(
+        self, messages: list[dict[str, Any]], response_format: dict[str, Any] | None = None
+    ) -> Any:
+        return await litellm.acompletion(**self._params(messages, response_format))
+
+
+def _structured_request(
+    model: str,
+    *,
+    temperature: float | None,
+    max_tokens: int | None,
+    thinking: dict[str, Any] | None,
+    drop_params: bool | None,
+    extra_body: dict[str, Any] | None,
+    num_retries: int | None,
+) -> _StructuredRequest:
+    candidates = {
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+        "thinking": thinking,
+        "drop_params": drop_params,
+        "extra_body": extra_body,
+        "num_retries": num_retries,
+    }
+    return _StructuredRequest(
+        model, {key: value for key, value in candidates.items() if value is not None}
+    )
+
+
 def _json_object_fallback_result(response: Any, response_schema: Any) -> Any | None:
     content = _response_content(response)
     if content:
@@ -216,7 +264,7 @@ def _json_object_fallback_result(response: Any, response_schema: Any) -> Any | N
 
 
 def _try_json_object_fallback(
-    model: str,
+    request: _StructuredRequest,
     payload: list[dict[str, Any]],
     response_schema: Any,
 ) -> Any | None:
@@ -226,11 +274,7 @@ def _try_json_object_fallback(
     augmented_payload = list(payload)
     augmented_payload.append({"role": "user", "content": schema_prompt})
     try:
-        response = litellm.completion(
-            model=model,
-            messages=augmented_payload,
-            response_format={"type": "json_object"},
-        )
+        response = request.complete(augmented_payload, {"type": "json_object"})
     except Exception as exc:
         if _is_response_format_unsupported_error(exc):
             return None
@@ -242,7 +286,7 @@ def _try_json_object_fallback(
 
 
 async def _atry_json_object_fallback(
-    model: str,
+    request: _StructuredRequest,
     payload: list[dict[str, Any]],
     response_schema: Any,
 ) -> Any | None:
@@ -252,11 +296,7 @@ async def _atry_json_object_fallback(
     augmented_payload = list(payload)
     augmented_payload.append({"role": "user", "content": schema_prompt})
     try:
-        response = await litellm.acompletion(
-            model=model,
-            messages=augmented_payload,
-            response_format={"type": "json_object"},
-        )
+        response = await request.acomplete(augmented_payload, {"type": "json_object"})
     except Exception as exc:
         if _is_response_format_unsupported_error(exc):
             return None
@@ -276,7 +316,7 @@ def _parse_completion_response(response: Any, response_schema: Any) -> Any:
 
 def _structured_json_retry(
     *,
-    model: str,
+    request: _StructuredRequest,
     payload: list[dict[str, Any]],
     response_schema: Any,
     retries: int,
@@ -285,14 +325,7 @@ def _structured_json_retry(
     attempts = 0
     while True:
         try:
-            if response_format is None:
-                response = litellm.completion(model=model, messages=payload)
-            else:
-                response = litellm.completion(
-                    model=model,
-                    messages=payload,
-                    response_format=response_format,
-                )
+            response = request.complete(payload, response_format)
             return _parse_completion_response(response, response_schema)
         except Exception as exc:
             if attempts >= retries:
@@ -303,7 +336,7 @@ def _structured_json_retry(
 
 async def _astructured_json_retry(
     *,
-    model: str,
+    request: _StructuredRequest,
     payload: list[dict[str, Any]],
     response_schema: Any,
     retries: int,
@@ -312,14 +345,7 @@ async def _astructured_json_retry(
     attempts = 0
     while True:
         try:
-            if response_format is None:
-                response = await litellm.acompletion(model=model, messages=payload)
-            else:
-                response = await litellm.acompletion(
-                    model=model,
-                    messages=payload,
-                    response_format=response_format,
-                )
+            response = await request.acomplete(payload, response_format)
             return _parse_completion_response(response, response_schema)
         except Exception as exc:
             if attempts >= retries:
@@ -686,17 +712,13 @@ class LiteLLMAdapter(BaseModelAdapter):
 
     def _attempt_schema_completion(
         self,
-        model: str,
+        request: _StructuredRequest,
         payload: list[dict[str, Any]],
         response_format: dict[str, Any] | None,
         response_schema: Any,
     ) -> tuple[bool, Any | None]:
         try:
-            response = litellm.completion(
-                model=model,
-                messages=payload,
-                response_format=response_format,
-            )
+            response = request.complete(payload, response_format)
         except Exception as exc:
             result = _schema_attempt_error(exc)
             if result is not None:
@@ -706,17 +728,13 @@ class LiteLLMAdapter(BaseModelAdapter):
 
     async def _aattempt_schema_completion(
         self,
-        model: str,
+        request: _StructuredRequest,
         payload: list[dict[str, Any]],
         response_format: dict[str, Any] | None,
         response_schema: Any,
     ) -> tuple[bool, Any | None]:
         try:
-            response = await litellm.acompletion(
-                model=model,
-                messages=payload,
-                response_format=response_format,
-            )
+            response = await request.acomplete(payload, response_format)
         except Exception as exc:
             result = _schema_attempt_error(exc)
             if result is not None:
@@ -731,26 +749,41 @@ class LiteLLMAdapter(BaseModelAdapter):
         messages: list[dict[str, Any]],
         response_schema: Any,
         retries: int,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        thinking: dict[str, Any] | None = None,
+        drop_params: bool | None = None,
+        extra_body: dict[str, Any] | None = None,
+        num_retries: int | None = None,
     ) -> Any:
         payload = list(messages)
+        request = _structured_request(
+            model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            thinking=thinking,
+            drop_params=drop_params,
+            extra_body=extra_body,
+            num_retries=num_retries,
+        )
         response_format = _response_format(response_schema)
         json_schema_failed = False
 
         if response_format is not None:
             json_schema_failed, result = self._attempt_schema_completion(
-                model, payload, response_format, response_schema
+                request, payload, response_format, response_schema
             )
             if result is not None:
                 return result
 
         if json_schema_failed:
-            result = _try_json_object_fallback(model, payload, response_schema)
+            result = _try_json_object_fallback(request, payload, response_schema)
             if result is not None:
                 return result
 
         if not _is_base_model_schema(response_schema):
             return _structured_json_retry(
-                model=model,
+                request=request,
                 payload=payload,
                 response_schema=response_schema,
                 retries=retries,
@@ -764,6 +797,7 @@ class LiteLLMAdapter(BaseModelAdapter):
                     model=model,
                     messages=payload,
                     response_model=response_schema,
+                    **request.options,
                 )
             except Exception as exc:
                 if attempts >= retries:
@@ -783,26 +817,41 @@ class LiteLLMAdapter(BaseModelAdapter):
         messages: list[dict[str, Any]],
         response_schema: Any,
         retries: int,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        thinking: dict[str, Any] | None = None,
+        drop_params: bool | None = None,
+        extra_body: dict[str, Any] | None = None,
+        num_retries: int | None = None,
     ) -> Any:
         payload = list(messages)
+        request = _structured_request(
+            model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            thinking=thinking,
+            drop_params=drop_params,
+            extra_body=extra_body,
+            num_retries=num_retries,
+        )
         response_format = _response_format(response_schema)
         json_schema_failed = False
 
         if response_format is not None:
             json_schema_failed, result = await self._aattempt_schema_completion(
-                model, payload, response_format, response_schema
+                request, payload, response_format, response_schema
             )
             if result is not None:
                 return result
 
         if json_schema_failed:
-            result = await _atry_json_object_fallback(model, payload, response_schema)
+            result = await _atry_json_object_fallback(request, payload, response_schema)
             if result is not None:
                 return result
 
         if not _is_base_model_schema(response_schema):
             return await _astructured_json_retry(
-                model=model,
+                request=request,
                 payload=payload,
                 response_schema=response_schema,
                 retries=retries,
@@ -816,6 +865,7 @@ class LiteLLMAdapter(BaseModelAdapter):
                     model=model,
                     messages=payload,
                     response_model=response_schema,
+                    **request.options,
                 )
             except Exception as exc:
                 if attempts >= retries:

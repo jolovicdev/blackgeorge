@@ -58,6 +58,11 @@ Structured output retries are clamped to a minimum of 3 attempts for resilience 
 
 If your adapter implements `structured_complete`/`astructured_complete`, the worker will call those hooks for response-schema jobs. This lets you route structured output through non-LiteLLM providers or custom pipelines. If the hooks are not implemented, the worker falls back to the LiteLLM + Instructor path.
 
+The worker also passes the run's `temperature`, `max_tokens`, and `num_retries` plus the job's
+`thinking`, `drop_params`, and `extra_body` as keyword arguments. Declare the ones you need in your
+hook signature (or accept `**kwargs`); the worker only sends keywords your hook declares, so hooks
+with the older four-argument signature keep working.
+
 ## Cost tracking
 
 The LiteLLM adapter provides cost tracking through callback events. When using `LiteLLMAdapter`, the following events are automatically emitted:

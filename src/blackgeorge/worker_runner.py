@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import json
 import warnings
 from collections.abc import Callable, Iterable
@@ -97,6 +98,13 @@ def _confirmation_approved(decision: Any) -> bool:
     return bool(decision)
 
 
+def _supported_kwargs(method: Callable[..., Any], kwargs: dict[str, Any]) -> dict[str, Any]:
+    parameters = inspect.signature(method).parameters
+    if any(param.kind is inspect.Parameter.VAR_KEYWORD for param in parameters.values()):
+        return kwargs
+    return {key: value for key, value in kwargs.items() if key in parameters}
+
+
 def _record_usage(ctx: CompletionContext, usage: dict[str, Any]) -> None:
     if not usage:
         return
@@ -167,26 +175,38 @@ class WorkerRunner:
     async def _astructured_completion(
         self,
         *,
-        config: RunConfig,
-        model: str,
-        messages: list[Message],
+        ctx: CompletionContext,
+        job: Job,
         response_schema: Any,
     ) -> Any:
-        payload = messages_to_payload(messages)
+        config = ctx.config
+        payload = messages_to_payload(ctx.state.messages)
+        options = {
+            "temperature": config.temperature,
+            "max_tokens": config.max_tokens,
+            "thinking": job.thinking,
+            "drop_params": job.drop_params,
+            "extra_body": job.extra_body,
+            "num_retries": config.num_retries,
+        }
         try:
-            return await config.adapter.astructured_complete(
-                model=model,
+            astructured_complete = config.adapter.astructured_complete
+            return await astructured_complete(
+                model=ctx.model_name,
                 messages=payload,
                 response_schema=response_schema,
                 retries=config.structured_output_retries,
+                **_supported_kwargs(astructured_complete, options),
             )
         except NotImplementedError:
+            structured_complete = config.adapter.structured_complete
             return await asyncio.to_thread(
-                config.adapter.structured_complete,
-                model=model,
+                structured_complete,
+                model=ctx.model_name,
                 messages=payload,
                 response_schema=response_schema,
                 retries=config.structured_output_retries,
+                **_supported_kwargs(structured_complete, options),
             )
 
     async def _acompletion(
@@ -590,9 +610,8 @@ class WorkerRunner:
             except Exception:
                 try:
                     data = await self._astructured_completion(
-                        config=ctx.config,
-                        model=ctx.model_name,
-                        messages=ctx.state.messages,
+                        ctx=ctx,
+                        job=job,
                         response_schema=response_schema,
                     )
                 except Exception as exc:
@@ -605,9 +624,8 @@ class WorkerRunner:
         if response_schema and not tools:
             try:
                 data = await self._astructured_completion(
-                    config=ctx.config,
-                    model=ctx.model_name,
-                    messages=ctx.state.messages,
+                    ctx=ctx,
+                    job=job,
                     response_schema=response_schema,
                 )
             except Exception as exc:
@@ -695,9 +713,8 @@ class WorkerRunner:
         if response_schema:
             try:
                 data = await self._astructured_completion(
-                    config=ctx.config,
-                    model=ctx.model_name,
-                    messages=ctx.state.messages,
+                    ctx=ctx,
+                    job=job,
                     response_schema=response_schema,
                 )
             except Exception as exc:

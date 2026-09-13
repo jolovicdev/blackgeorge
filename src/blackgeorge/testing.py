@@ -89,6 +89,12 @@ class ScriptedAdapter(BaseModelAdapter):
         messages: list[dict[str, Any]],
         response_schema: Any,
         retries: int,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        thinking: dict[str, Any] | None = None,
+        drop_params: bool | None = None,
+        extra_body: dict[str, Any] | None = None,
+        num_retries: int | None = None,
     ) -> Any:
         self.calls.append(
             {
@@ -96,6 +102,8 @@ class ScriptedAdapter(BaseModelAdapter):
                 "model": model,
                 "messages": messages,
                 "response_schema": response_schema,
+                "thinking": thinking,
+                "extra_body": extra_body,
             }
         )
         return self._structured_value(self._next_response("structured completion"), response_schema)
@@ -107,6 +115,12 @@ class ScriptedAdapter(BaseModelAdapter):
         messages: list[dict[str, Any]],
         response_schema: Any,
         retries: int,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        thinking: dict[str, Any] | None = None,
+        drop_params: bool | None = None,
+        extra_body: dict[str, Any] | None = None,
+        num_retries: int | None = None,
     ) -> Any:
         self.calls.append(
             {
@@ -114,6 +128,8 @@ class ScriptedAdapter(BaseModelAdapter):
                 "model": model,
                 "messages": messages,
                 "response_schema": response_schema,
+                "thinking": thinking,
+                "extra_body": extra_body,
             }
         )
         return self._structured_value(self._next_response("structured completion"), response_schema)

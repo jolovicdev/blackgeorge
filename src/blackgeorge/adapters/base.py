@@ -58,6 +58,12 @@ class BaseModelAdapter:
         messages: list[dict[str, Any]],
         response_schema: Any,
         retries: int,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        thinking: dict[str, Any] | None = None,
+        drop_params: bool | None = None,
+        extra_body: dict[str, Any] | None = None,
+        num_retries: int | None = None,
     ) -> Any:
         raise NotImplementedError
 
@@ -68,5 +74,11 @@ class BaseModelAdapter:
         messages: list[dict[str, Any]],
         response_schema: Any,
         retries: int,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        thinking: dict[str, Any] | None = None,
+        drop_params: bool | None = None,
+        extra_body: dict[str, Any] | None = None,
+        num_retries: int | None = None,
     ) -> Any:
         raise NotImplementedError
