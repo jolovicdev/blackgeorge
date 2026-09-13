@@ -46,6 +46,10 @@ def build_job(context):
 step = Step(worker, job_builder=build_job)
 ```
 
+`context.outputs` holds the completed reports so far. It grows as each step finishes, including
+steps nested inside `Condition`, `Router`, `Loop`, and `Parallel`, so job builders and predicates
+inside a composite see the results of the steps that ran before them.
+
 ### Parallel
 
 ```python

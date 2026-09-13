@@ -594,3 +594,51 @@ def test_flow_fails_cleanly_when_paused_context_cannot_be_serialized() -> None:
     assert record is not None
     assert record.status == "failed"
     assert not any(event.type == "run.paused" for event in run_store.get_events(report.run_id))
+
+
+def test_loop_predicate_and_job_builder_see_outputs_from_earlier_iterations() -> None:
+    responses = [
+        ModelResponse(content=f"round-{index}", tool_calls=[], usage={}, raw={})
+        for index in range(1, 6)
+    ]
+    desk = Desk(model="fake", adapter=FakeAdapter(responses), run_store=InMemoryRunStore())
+    worker = Worker(name="Worker", model="fake")
+    seen_by_builder: list[str | None] = []
+
+    def build_job(context: WorkflowContext) -> Job:
+        seen_by_builder.append(context.outputs[-1].content if context.outputs else None)
+        return Job(input="again")
+
+    loop = Loop(
+        [Step(worker, job_builder=build_job)],
+        stop=lambda context: len(context.outputs) >= 2,
+        max_iterations=5,
+    )
+    report = desk.flow([loop]).run(Job(input="run"))
+
+    assert report.status == "completed"
+    assert seen_by_builder == [None, "round-1"]
+    assert report.content is not None
+    assert "[step 2] round-2" in report.content
+    assert "[step 3]" not in report.content
+
+
+def test_nested_condition_sees_outputs_from_earlier_branch_steps() -> None:
+    responses = [
+        ModelResponse(content="first", tool_calls=[], usage={}, raw={}),
+        ModelResponse(content="second", tool_calls=[], usage={}, raw={}),
+    ]
+    desk = Desk(model="fake", adapter=FakeAdapter(responses), run_store=InMemoryRunStore())
+    worker_a = Worker(name="A", model="fake")
+    worker_b = Worker(name="B", model="fake")
+    inner = Condition(
+        lambda context: bool(context.outputs) and context.outputs[-1].content == "first",
+        [Step(worker_b)],
+    )
+    report = desk.flow([Condition(lambda context: True, [Step(worker_a), inner])]).run(
+        Job(input="run")
+    )
+
+    assert report.status == "completed"
+    assert report.content is not None
+    assert "[step 2] second" in report.content

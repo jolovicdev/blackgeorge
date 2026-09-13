@@ -31,6 +31,13 @@ def should_stop(outputs: list[StepOutput]) -> bool:
     return any(report_for(output).status in ("paused", "failed") for output in outputs)
 
 
+def publish_outputs(context: WorkflowContext, outputs: list[StepOutput]) -> None:
+    for output in outputs:
+        report = report_for(output)
+        if report.status == "completed":
+            context.add_output(report)
+
+
 @dataclass(frozen=True)
 class SequenceContinuation:
     steps: tuple[Executable, ...]
@@ -76,6 +83,7 @@ async def execute_sequence(
     for index, step in enumerate(steps):
         step_outputs = await step.execute(flow, context)
         outputs.extend(step_outputs)
+        publish_outputs(context, step_outputs)
         if not should_stop(step_outputs):
             continue
         if any(report_for(output).status == "paused" for output in step_outputs):
@@ -200,6 +208,7 @@ class Loop:
             for index in range(start_index, len(self.steps)):
                 step_outputs = await self.steps[index].execute(flow, context)
                 outputs.extend(step_outputs)
+                publish_outputs(context, step_outputs)
                 if not should_stop(step_outputs):
                     continue
                 if any(report_for(output).status == "paused" for output in step_outputs):

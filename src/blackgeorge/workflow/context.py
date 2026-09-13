@@ -14,6 +14,11 @@ class WorkflowContext:
     artifacts: dict[str, Any] = field(default_factory=dict)
     _loop_iterations: dict[str, int] = field(default_factory=dict)
 
+    def add_output(self, report: Report) -> None:
+        if any(existing is report for existing in self.outputs):
+            return
+        self.outputs.append(report)
+
     def loop_iteration(self, loop_name: str) -> int:
         return self._loop_iterations.get(loop_name, 0)
 

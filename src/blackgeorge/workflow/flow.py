@@ -321,7 +321,7 @@ class Flow:
                 self._emit_run_failed(report)
                 return report
             all_reports.append(report)
-            context.outputs.append(report)
+            context.add_output(report)
         return None
 
     async def _run_steps(
@@ -489,7 +489,7 @@ class Flow:
             return report
 
         all_reports.append(report)
-        context.outputs.append(report)
+        context.add_output(report)
 
         while continuations:
             continuation = continuations.pop(0)
