@@ -7,6 +7,7 @@ from blackgeorge.adapters.base import ModelResponse
 from blackgeorge.core.tool_call import ToolCall
 from blackgeorge.store.in_memory import InMemoryRunStore
 from blackgeorge.tools import tool
+from blackgeorge.workflow import Step
 
 MODEL = "deepseek/deepseek-v4-flash"
 USAGE = {"prompt_tokens": 1000, "completion_tokens": 500, "total_tokens": 1500}
@@ -92,6 +93,36 @@ def test_managed_report_has_run_totals() -> None:
     assert report.content == "answer"
     assert report.metrics["cost_usd"] == pytest.approx(2 * TURN_COST)
     assert report.metrics["usage"]["total_tokens"] == 3000
+
+
+def test_flow_report_has_run_totals() -> None:
+    adapter = ScriptedAdapter([_response("a"), _response("b")])
+    desk = _desk(adapter)
+    flow = desk.flow([Step(Worker(name="W1")), Step(Worker(name="W2"))])
+    report = flow.run(Job(input="go"))
+    assert report.status == "completed"
+    assert report.metrics["cost_usd"] == pytest.approx(2 * TURN_COST)
+    assert report.metrics["usage"]["total_tokens"] == 3000
+
+
+def test_flow_resume_keeps_run_totals() -> None:
+    adapter = ScriptedAdapter(
+        [
+            _response("a"),
+            _response(None, [ToolCall(id="1", name="risky", arguments={})]),
+            _response("b"),
+        ]
+    )
+    desk = _desk(adapter)
+    flow = desk.flow([Step(Worker(name="W1")), Step(Worker(name="W2", tools=[risky]))])
+    paused = flow.run(Job(input="go"))
+    assert paused.status == "paused"
+    report = desk.flow([Step(Worker(name="W1")), Step(Worker(name="W2", tools=[risky]))]).resume(
+        paused, True
+    )
+    assert report.status == "completed"
+    assert report.metrics["cost_usd"] == pytest.approx(3 * TURN_COST)
+    assert report.metrics["usage"]["total_tokens"] == 4500
 
 
 def test_structured_job_records_usage() -> None:

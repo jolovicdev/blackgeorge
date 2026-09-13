@@ -19,6 +19,8 @@ report = flow.run(Job(input="Analyze feedback"))
 ```
 
 A flow produces a report. If there are multiple steps, the content is combined with step headers.
+`Report.metrics` carries the run's `usage` and `cost_usd` totals summed across every step, and
+those totals survive a pause and resume.
 
 ## Steps
 

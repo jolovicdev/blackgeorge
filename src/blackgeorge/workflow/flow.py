@@ -24,6 +24,7 @@ from blackgeorge.workflow.result import (
     WorkflowContinuation,
 )
 from blackgeorge.workforce import Workforce
+from blackgeorge.workforce_helpers import with_run_metrics
 
 
 class Flow:
@@ -152,6 +153,7 @@ class Flow:
             "flow_signature": graph.signature,
             "context": context.snapshot(),
             "continuations": serialize_continuations(graph, continuations),
+            "usage_totals": dict(self._usage_totals),
         }
         return RunState(
             run_id=self._run_id,
@@ -182,7 +184,7 @@ class Flow:
             {"index": idx, "content": report.content, "data": report.data}
             for idx, report in enumerate(reports, start=1)
         ]
-        return Report(
+        combined = Report(
             run_id=self._run_id,
             status="completed",
             content="\n\n".join(content_parts),
@@ -194,6 +196,7 @@ class Flow:
             pending_action=None,
             errors=[error for report in reports for error in report.errors],
         )
+        return with_run_metrics(combined, self._usage_totals)
 
     def _normalize_results(self, results: list[StepOutput]) -> list[StepResult]:
         normalized: list[StepResult] = []
@@ -438,6 +441,8 @@ class Flow:
         except (TypeError, ValueError) as exc:
             return self._resume_failure(state, f"Invalid flow state: {exc}")
 
+        stored_totals = payload.get("usage_totals")
+        self._usage_totals = dict(stored_totals) if isinstance(stored_totals, dict) else {}
         self.desk.register_flow_run(self._run_id, self)
         self.desk.emit(self._events, self._run_id, "run.resumed", self.name, {})
 
