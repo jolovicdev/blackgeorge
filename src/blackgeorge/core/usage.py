@@ -40,8 +40,9 @@ def totals_from_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
 
 
 def restore_totals(totals: dict[str, Any], stored: Any) -> None:
-    if isinstance(stored, dict):
-        totals.update(stored)
+    if totals or not isinstance(stored, dict):
+        return
+    totals.update(stored)
 
 
 def run_metrics(totals: dict[str, Any]) -> dict[str, Any]:

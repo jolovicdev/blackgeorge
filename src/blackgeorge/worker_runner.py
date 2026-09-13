@@ -13,7 +13,7 @@ from blackgeorge.core.event_types import EventType
 from blackgeorge.core.job import Job
 from blackgeorge.core.message import Message
 from blackgeorge.core.report import Report
-from blackgeorge.core.usage import record_turn, totals_from_metrics
+from blackgeorge.core.usage import record_turn, restore_totals, totals_from_metrics
 from blackgeorge.runner.loop_state import CompletionContext, LoopState
 from blackgeorge.runner.streaming import (
     append_tool_error,
@@ -828,8 +828,7 @@ class WorkerRunner:
     ) -> tuple[Report, RunState | None]:
         if config.run_id != state.run_id:
             config = config.with_overrides(run_id=state.run_id)
-        if not config.usage_totals:
-            config.usage_totals.update(totals_from_metrics(state.metrics))
+        restore_totals(config.usage_totals, totals_from_metrics(state.metrics))
         pending = state.pending_action
         if pending is None:
             return build_report(

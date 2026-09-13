@@ -2,6 +2,7 @@ from blackgeorge.core.report import Report
 from blackgeorge.core.usage import (
     add_token_usage,
     record_turn,
+    restore_totals,
     run_metrics,
     totals_from_metrics,
     with_run_metrics,
@@ -23,6 +24,14 @@ def test_record_turn_updates_metrics_and_totals() -> None:
     record_turn(metrics, totals, {"prompt_tokens": 4, "total_tokens": 6}, 0.25)
     assert metrics == {"cost_usd": 0.25, "usage": {"prompt_tokens": 4, "total_tokens": 6}}
     assert totals == {"cost_usd": 0.75, "total_tokens": 16, "prompt_tokens": 4}
+
+
+def test_restore_totals_only_fills_empty_totals() -> None:
+    totals: dict[str, object] = {}
+    restore_totals(totals, {"cost_usd": 0.1})
+    restore_totals(totals, {"cost_usd": 0.05})
+    restore_totals(totals, "not a dict")
+    assert totals == {"cost_usd": 0.1}
 
 
 def test_totals_round_trip_through_metrics() -> None:

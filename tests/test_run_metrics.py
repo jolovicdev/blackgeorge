@@ -7,7 +7,7 @@ from blackgeorge.adapters.base import ModelResponse
 from blackgeorge.core.tool_call import ToolCall
 from blackgeorge.store.in_memory import InMemoryRunStore
 from blackgeorge.tools import tool
-from blackgeorge.workflow import Step
+from blackgeorge.workflow import Parallel, Step
 
 MODEL = "deepseek/deepseek-v4-flash"
 USAGE = {"prompt_tokens": 1000, "completion_tokens": 500, "total_tokens": 1500}
@@ -120,6 +120,28 @@ def test_flow_resume_keeps_run_totals() -> None:
     report = desk.flow([Step(Worker(name="W1")), Step(Worker(name="W2", tools=[risky]))]).resume(
         paused, True
     )
+    assert report.status == "completed"
+    assert report.metrics["cost_usd"] == pytest.approx(3 * TURN_COST)
+    assert report.metrics["usage"]["total_tokens"] == 4500
+
+
+def test_flow_resume_keeps_totals_recorded_after_workforce_snapshot() -> None:
+    adapter = ScriptedAdapter(
+        [
+            _response(None, [ToolCall(id="1", name="risky", arguments={})]),
+            _response("b"),
+            _response("w"),
+        ]
+    )
+    desk = _desk(adapter)
+
+    def build() -> list[Parallel]:
+        team = Workforce([Worker(name="W", tools=[risky])], mode="collaborate", name="team")
+        return [Parallel(Step(team), Step(Worker(name="B")))]
+
+    paused = desk.flow(build()).run(Job(input="go"))
+    assert paused.status == "paused"
+    report = desk.flow(build()).resume(paused, True)
     assert report.status == "completed"
     assert report.metrics["cost_usd"] == pytest.approx(3 * TURN_COST)
     assert report.metrics["usage"]["total_tokens"] == 4500
