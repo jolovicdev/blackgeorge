@@ -101,8 +101,6 @@ def _confirmation_approved(decision: Any) -> bool:
 
 def _supported_kwargs(method: Callable[..., Any], kwargs: dict[str, Any]) -> dict[str, Any]:
     parameters = inspect.signature(method).parameters
-    if any(param.kind is inspect.Parameter.VAR_KEYWORD for param in parameters.values()):
-        return kwargs
     return {key: value for key, value in kwargs.items() if key in parameters}
 
 

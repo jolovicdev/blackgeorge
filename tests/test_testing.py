@@ -1,3 +1,5 @@
+from typing import Any
+
 import pytest
 from pydantic import BaseModel
 
@@ -79,6 +81,28 @@ def test_scripted_adapter_structured_output_receives_job_options() -> None:
     assert report.status == "completed"
     assert adapter.calls[0]["thinking"] == {"type": "enabled"}
     assert adapter.calls[0]["extra_body"] == {"top_k": 5}
+
+
+def test_structured_options_skip_hooks_that_only_take_kwargs() -> None:
+    class ForwardingAdapter(ScriptedAdapter):
+        def structured_complete(  # type: ignore[override]
+            self,
+            *,
+            model: str,
+            messages: list[dict[str, Any]],
+            response_schema: Any,
+            retries: int,
+        ) -> Any:
+            return self._structured_value(self._next_response("structured"), response_schema)
+
+        async def astructured_complete(self, **kwargs: Any) -> Any:  # type: ignore[override]
+            return self.structured_complete(**kwargs)
+
+    adapter = ForwardingAdapter([_response('{"answer": "ok"}')])
+    job = Job(input="hi", response_schema=Answer, thinking={"type": "enabled"})
+    report = _desk(adapter).run(Worker(name="W"), job)
+    assert report.status == "completed"
+    assert report.data.answer == "ok"
 
 
 def test_scripted_adapter_structured_output_rejects_invalid_json() -> None:

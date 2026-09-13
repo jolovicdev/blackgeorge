@@ -63,9 +63,9 @@ are raised immediately and never retried.
 If your adapter implements `structured_complete`/`astructured_complete`, the worker will call those hooks for response-schema jobs. This lets you route structured output through non-LiteLLM providers or custom pipelines. If the hooks are not implemented, the worker falls back to the LiteLLM + Instructor path.
 
 The worker also passes the run's `temperature`, `max_tokens`, and `num_retries` plus the job's
-`thinking`, `drop_params`, and `extra_body` as keyword arguments. Declare the ones you need in your
-hook signature (or accept `**kwargs`); the worker only sends keywords your hook declares, so hooks
-with the older four-argument signature keep working.
+`thinking`, `drop_params`, and `extra_body` as keyword arguments. The worker only sends keywords
+your hook names explicitly in its signature; a bare `**kwargs` receives none of them. Hooks with the
+older four-argument signature keep working unchanged.
 
 Return a `StructuredResponse(data, usage)` from `blackgeorge.adapters` to have the worker add the
 call's token usage and cost to `Report.metrics` and the run's `max_cost_usd` budget. Returning the
