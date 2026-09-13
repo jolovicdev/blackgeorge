@@ -3,13 +3,13 @@ import atexit
 import json
 import warnings
 from collections.abc import AsyncIterator, Callable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, cast
 
 import litellm
 from pydantic import BaseModel, TypeAdapter
 
-from blackgeorge.adapters.base import BaseModelAdapter, ModelResponse
+from blackgeorge.adapters.base import BaseModelAdapter, ModelResponse, StructuredResponse
 from blackgeorge.adapters.instructor_client import instructor_clients
 from blackgeorge.adapters.litellm_callbacks import (
     callback_context,
@@ -117,6 +117,19 @@ def _get(obj: Any, key: str, default: Any = None) -> Any:
     return getattr(obj, key, default)
 
 
+def _response_usage(response: Any) -> dict[str, Any]:
+    usage = _get(response, "usage", {}) or {}
+    if isinstance(usage, BaseModel):
+        usage = usage.model_dump(mode="json", warnings=False)
+    return usage if isinstance(usage, dict) else {}
+
+
+def _add_usage(totals: dict[str, Any], response: Any) -> None:
+    for key, value in _response_usage(response).items():
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            totals[key] = totals.get(key, 0) + value
+
+
 def _response_content(response: Any) -> str | None:
     choices = _get(response, "choices", [])
     message = _get(choices[0], "message") if choices else None
@@ -213,6 +226,7 @@ def _build_json_object_prompt(response_schema: Any) -> str:
 class _StructuredRequest:
     model: str
     options: dict[str, Any]
+    usage: dict[str, Any] = field(default_factory=dict)
 
     def _params(
         self, messages: list[dict[str, Any]], response_format: dict[str, Any] | None
@@ -222,15 +236,39 @@ class _StructuredRequest:
             params["response_format"] = response_format
         return params
 
+    def started(self, messages: list[dict[str, Any]]) -> None:
+        emit_llm_started(self.model, len(messages), 0)
+
+    def failed(self, exc: Exception) -> None:
+        emit_llm_failed(self.model, exc)
+
+    def record(self, response: Any) -> None:
+        _add_usage(self.usage, response)
+        emit_llm_completed(self.model, response)
+
     def complete(
         self, messages: list[dict[str, Any]], response_format: dict[str, Any] | None = None
     ) -> Any:
-        return litellm.completion(**self._params(messages, response_format))
+        self.started(messages)
+        try:
+            response = litellm.completion(**self._params(messages, response_format))
+        except Exception as exc:
+            self.failed(exc)
+            raise
+        self.record(response)
+        return response
 
     async def acomplete(
         self, messages: list[dict[str, Any]], response_format: dict[str, Any] | None = None
     ) -> Any:
-        return await litellm.acompletion(**self._params(messages, response_format))
+        self.started(messages)
+        try:
+            response = await litellm.acompletion(**self._params(messages, response_format))
+        except Exception as exc:
+            self.failed(exc)
+            raise
+        self.record(response)
+        return response
 
 
 def _structured_request(
@@ -412,15 +450,12 @@ def _parse_response(response: Any) -> ModelResponse:
     reasoning_content = _get(message, "reasoning_content") if message else None
     thinking_blocks = _get(message, "thinking_blocks") if message else None
     tool_calls = _parse_tool_calls(message) if message else []
-    usage = _get(response, "usage", {}) or {}
-    if isinstance(usage, BaseModel):
-        usage = usage.model_dump(mode="json", warnings=False)
     return ModelResponse(
         content=content,
         reasoning_content=reasoning_content,
         thinking_blocks=thinking_blocks,
         tool_calls=tool_calls,
-        usage=usage,
+        usage=_response_usage(response),
         raw=response,
     )
 
@@ -755,8 +790,7 @@ class LiteLLMAdapter(BaseModelAdapter):
         drop_params: bool | None = None,
         extra_body: dict[str, Any] | None = None,
         num_retries: int | None = None,
-    ) -> Any:
-        payload = list(messages)
+    ) -> StructuredResponse:
         request = _structured_request(
             model,
             temperature=temperature,
@@ -766,6 +800,16 @@ class LiteLLMAdapter(BaseModelAdapter):
             extra_body=extra_body,
             num_retries=num_retries,
         )
+        data = self._structured_data(request, list(messages), response_schema, retries)
+        return StructuredResponse(data, request.usage)
+
+    def _structured_data(
+        self,
+        request: _StructuredRequest,
+        payload: list[dict[str, Any]],
+        response_schema: Any,
+        retries: int,
+    ) -> Any:
         response_format = _response_format(response_schema)
         json_schema_failed = False
 
@@ -789,17 +833,19 @@ class LiteLLMAdapter(BaseModelAdapter):
                 retries=retries,
                 response_format=None,
             )
-        client = instructor_clients.get(model, async_client=False)
+        client = instructor_clients.get(request.model, async_client=False)
         attempts = 0
         while True:
+            request.started(payload)
             try:
-                return client.chat.completions.create(
-                    model=model,
+                result, completion = client.chat.completions.create_with_completion(
+                    model=request.model,
                     messages=payload,
                     response_model=response_schema,
                     **request.options,
                 )
             except Exception as exc:
+                request.failed(exc)
                 if attempts >= retries:
                     raise
                 payload.append(
@@ -809,6 +855,9 @@ class LiteLLMAdapter(BaseModelAdapter):
                     }
                 )
                 attempts += 1
+                continue
+            request.record(completion)
+            return result
 
     async def astructured_complete(
         self,
@@ -823,8 +872,7 @@ class LiteLLMAdapter(BaseModelAdapter):
         drop_params: bool | None = None,
         extra_body: dict[str, Any] | None = None,
         num_retries: int | None = None,
-    ) -> Any:
-        payload = list(messages)
+    ) -> StructuredResponse:
         request = _structured_request(
             model,
             temperature=temperature,
@@ -834,6 +882,16 @@ class LiteLLMAdapter(BaseModelAdapter):
             extra_body=extra_body,
             num_retries=num_retries,
         )
+        data = await self._astructured_data(request, list(messages), response_schema, retries)
+        return StructuredResponse(data, request.usage)
+
+    async def _astructured_data(
+        self,
+        request: _StructuredRequest,
+        payload: list[dict[str, Any]],
+        response_schema: Any,
+        retries: int,
+    ) -> Any:
         response_format = _response_format(response_schema)
         json_schema_failed = False
 
@@ -857,17 +915,19 @@ class LiteLLMAdapter(BaseModelAdapter):
                 retries=retries,
                 response_format=None,
             )
-        client = instructor_clients.get(model, async_client=True)
+        client = instructor_clients.get(request.model, async_client=True)
         attempts = 0
         while True:
+            request.started(payload)
             try:
-                return await client.chat.completions.create(
-                    model=model,
+                result, completion = await client.chat.completions.create_with_completion(
+                    model=request.model,
                     messages=payload,
                     response_model=response_schema,
                     **request.options,
                 )
             except Exception as exc:
+                request.failed(exc)
                 if attempts >= retries:
                     raise
                 payload.append(
@@ -877,3 +937,6 @@ class LiteLLMAdapter(BaseModelAdapter):
                     }
                 )
                 attempts += 1
+                continue
+            request.record(completion)
+            return result

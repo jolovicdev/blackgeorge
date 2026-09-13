@@ -2,7 +2,7 @@ from typing import Any
 
 from pydantic import BaseModel, TypeAdapter
 
-from blackgeorge.adapters.base import BaseModelAdapter, ModelResponse
+from blackgeorge.adapters.base import BaseModelAdapter, ModelResponse, StructuredResponse
 
 
 class ScriptedAdapter(BaseModelAdapter):
@@ -18,14 +18,14 @@ class ScriptedAdapter(BaseModelAdapter):
         return self._responses.pop(0)
 
     @staticmethod
-    def _structured_value(response: ModelResponse, response_schema: Any) -> Any:
+    def _structured_value(response: ModelResponse, response_schema: Any) -> StructuredResponse:
         content = response.content
         if content is None:
             raise RuntimeError("Scripted structured responses must define content")
         if isinstance(response_schema, TypeAdapter):
-            return response_schema.validate_json(content)
+            return StructuredResponse(response_schema.validate_json(content), response.usage)
         if isinstance(response_schema, type) and issubclass(response_schema, BaseModel):
-            return response_schema.model_validate_json(content)
+            return StructuredResponse(response_schema.model_validate_json(content), response.usage)
         raise TypeError(f"Unsupported response_schema type: {type(response_schema).__name__}")
 
     def complete(
@@ -95,7 +95,7 @@ class ScriptedAdapter(BaseModelAdapter):
         drop_params: bool | None = None,
         extra_body: dict[str, Any] | None = None,
         num_retries: int | None = None,
-    ) -> Any:
+    ) -> StructuredResponse:
         self.calls.append(
             {
                 "kind": "structured",
@@ -121,7 +121,7 @@ class ScriptedAdapter(BaseModelAdapter):
         drop_params: bool | None = None,
         extra_body: dict[str, Any] | None = None,
         num_retries: int | None = None,
-    ) -> Any:
+    ) -> StructuredResponse:
         self.calls.append(
             {
                 "kind": "structured",

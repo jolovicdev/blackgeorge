@@ -5,7 +5,7 @@ import warnings
 from collections.abc import Callable, Iterable
 from typing import Any, cast
 
-from blackgeorge.adapters.base import ModelResponse
+from blackgeorge.adapters.base import ModelResponse, StructuredResponse
 from blackgeorge.adapters.cost import get_completion_cost, get_prompt_cost
 from blackgeorge.async_utils import ensure_not_running_loop
 from blackgeorge.config import RunConfig
@@ -189,25 +189,35 @@ class WorkerRunner:
             "extra_body": job.extra_body,
             "num_retries": config.num_retries,
         }
+        if hasattr(config.adapter, "set_callback_context"):
+            config.adapter.set_callback_context(config.run_id, config.emit)
         try:
-            astructured_complete = config.adapter.astructured_complete
-            return await astructured_complete(
-                model=ctx.model_name,
-                messages=payload,
-                response_schema=response_schema,
-                retries=config.structured_output_retries,
-                **_supported_kwargs(astructured_complete, options),
-            )
-        except NotImplementedError:
-            structured_complete = config.adapter.structured_complete
-            return await asyncio.to_thread(
-                structured_complete,
-                model=ctx.model_name,
-                messages=payload,
-                response_schema=response_schema,
-                retries=config.structured_output_retries,
-                **_supported_kwargs(structured_complete, options),
-            )
+            try:
+                astructured_complete = config.adapter.astructured_complete
+                result = await astructured_complete(
+                    model=ctx.model_name,
+                    messages=payload,
+                    response_schema=response_schema,
+                    retries=config.structured_output_retries,
+                    **_supported_kwargs(astructured_complete, options),
+                )
+            except NotImplementedError:
+                structured_complete = config.adapter.structured_complete
+                result = await asyncio.to_thread(
+                    structured_complete,
+                    model=ctx.model_name,
+                    messages=payload,
+                    response_schema=response_schema,
+                    retries=config.structured_output_retries,
+                    **_supported_kwargs(structured_complete, options),
+                )
+        finally:
+            if hasattr(config.adapter, "clear_callback_context"):
+                config.adapter.clear_callback_context()
+        if isinstance(result, StructuredResponse):
+            _record_usage(ctx, result.usage)
+            return result.data
+        return result
 
     async def _acompletion(
         self,

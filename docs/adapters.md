@@ -63,6 +63,12 @@ The worker also passes the run's `temperature`, `max_tokens`, and `num_retries` 
 hook signature (or accept `**kwargs`); the worker only sends keywords your hook declares, so hooks
 with the older four-argument signature keep working.
 
+Return a `StructuredResponse(data, usage)` from `blackgeorge.adapters` to have the worker add the
+call's token usage and cost to `Report.metrics` and the run's `max_cost_usd` budget. Returning the
+parsed data directly is still accepted, but such calls are not metered. `LiteLLMAdapter` returns
+`StructuredResponse` with usage summed over every attempt (schema, JSON fallback, retries) and emits
+`llm.started`, `llm.completed`, and `llm.failed` for each attempt.
+
 ## Cost tracking
 
 The LiteLLM adapter provides cost tracking through callback events. When using `LiteLLMAdapter`, the following events are automatically emitted:

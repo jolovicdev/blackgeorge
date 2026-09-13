@@ -465,7 +465,7 @@ def test_structured_complete_uses_response_format_base_model(monkeypatch) -> Non
         messages=[{"role": "user", "content": "hi"}],
         response_schema=AnswerModel,
         retries=0,
-    )
+    ).data
 
     assert isinstance(result, AnswerModel)
     assert result.answer == "ok"
@@ -507,6 +507,46 @@ def test_structured_complete_forwards_model_options(monkeypatch) -> None:
     assert "drop_params" not in captured
 
 
+def test_structured_complete_sums_usage_and_emits_llm_events(monkeypatch) -> None:
+    adapter = LiteLLMAdapter()
+    response_schema = TypeAdapter(list[ItemModel])
+    contents = iter(["not json", '[{"value": 1}]'])
+    events: list[str] = []
+
+    def fake_completion(**kwargs: object) -> dict[str, object]:
+        if "response_format" in kwargs:
+            raise RuntimeError("response_format unsupported")
+        return {
+            "choices": [{"message": {"content": next(contents)}}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        }
+
+    monkeypatch.setattr(litellm, "completion", fake_completion)
+    adapter.set_callback_context(
+        "run", lambda event_type, source, payload: events.append(event_type)
+    )
+    try:
+        response = adapter.structured_complete(
+            model="openai/gpt-5-nano",
+            messages=[{"role": "user", "content": "hi"}],
+            response_schema=response_schema,
+            retries=1,
+        )
+    finally:
+        adapter.clear_callback_context()
+
+    assert [item.value for item in response.data] == [1]
+    assert response.usage == {"prompt_tokens": 20, "completion_tokens": 10, "total_tokens": 30}
+    assert events == [
+        "llm.started",
+        "llm.failed",
+        "llm.started",
+        "llm.completed",
+        "llm.started",
+        "llm.completed",
+    ]
+
+
 def test_structured_complete_uses_response_format_type_adapter(monkeypatch) -> None:
     adapter = LiteLLMAdapter()
     response_schema = TypeAdapter(list[ItemModel])
@@ -534,7 +574,7 @@ def test_structured_complete_uses_response_format_type_adapter(monkeypatch) -> N
         messages=[{"role": "user", "content": "hi"}],
         response_schema=response_schema,
         retries=0,
-    )
+    ).data
 
     assert isinstance(result, list)
     assert [item.value for item in result] == [1, 2]
@@ -571,7 +611,7 @@ def test_structured_complete_type_adapter_manual_fallback(monkeypatch) -> None:
         messages=[{"role": "user", "content": "hi"}],
         response_schema=response_schema,
         retries=0,
-    )
+    ).data
 
     assert [item.value for item in result] == [3]
     assert len(calls) == 2
@@ -605,12 +645,13 @@ async def test_astructured_complete_type_adapter_manual_fallback(monkeypatch) ->
     monkeypatch.setattr(litellm, "acompletion", fake_acompletion)
     monkeypatch.setattr(instructor_clients, "get", fake_get)
 
-    result = await adapter.astructured_complete(
+    response = await adapter.astructured_complete(
         model="openai/gpt-5-nano",
         messages=[{"role": "user", "content": "hi"}],
         response_schema=response_schema,
         retries=0,
     )
+    result = response.data
 
     assert [item.value for item in result] == [4]
     assert len(calls) == 2
@@ -628,7 +669,7 @@ def test_structured_complete_respects_retry_budget(monkeypatch) -> None:
         def __init__(self, counter: CallCounter) -> None:
             self._counter = counter
 
-        def create(self, **kwargs: object) -> object:
+        def create_with_completion(self, **kwargs: object) -> object:
             self._counter.calls += 1
             raise ValueError("bad response")
 

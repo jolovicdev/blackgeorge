@@ -14,6 +14,12 @@ class ModelResponse:
     raw: Any = None
 
 
+@dataclass(frozen=True)
+class StructuredResponse:
+    data: Any
+    usage: dict[str, Any] = field(default_factory=dict)
+
+
 class BaseModelAdapter:
     def complete(
         self,

@@ -1,5 +1,6 @@
 import litellm
 import pytest
+from pydantic import BaseModel
 
 from blackgeorge import Desk, Job, ScriptedAdapter, Worker, Workforce
 from blackgeorge.adapters.base import ModelResponse
@@ -12,6 +13,10 @@ USAGE = {"prompt_tokens": 1000, "completion_tokens": 500, "total_tokens": 1500}
 INPUT_RATE = 1.4e-07
 OUTPUT_RATE = 2.8e-07
 TURN_COST = USAGE["prompt_tokens"] * INPUT_RATE + USAGE["completion_tokens"] * OUTPUT_RATE
+
+
+class Answer(BaseModel):
+    answer: str
 
 
 @pytest.fixture(autouse=True)
@@ -85,8 +90,26 @@ def test_managed_report_has_run_totals() -> None:
     report = _desk(adapter).run(workforce, Job(input="go"))
     assert report.status == "completed"
     assert report.content == "answer"
+    assert report.metrics["cost_usd"] == pytest.approx(2 * TURN_COST)
+    assert report.metrics["usage"]["total_tokens"] == 3000
+
+
+def test_structured_job_records_usage() -> None:
+    adapter = ScriptedAdapter([_response('{"answer": "ok"}')])
+    report = _desk(adapter).run(Worker(name="W"), Job(input="go", response_schema=Answer))
+    assert report.status == "completed"
     assert report.metrics["cost_usd"] == pytest.approx(TURN_COST)
     assert report.metrics["usage"]["total_tokens"] == 1500
+
+
+def test_shared_budget_counts_structured_calls() -> None:
+    adapter = ScriptedAdapter([_response('{"answer": "a"}'), _response('{"answer": "b"}')])
+    workforce = Workforce([Worker(name="W1"), Worker(name="W2")], mode="collaborate")
+    report = _desk(adapter, max_cost_usd=TURN_COST / 2).run(
+        workforce, Job(input="go", response_schema=Answer)
+    )
+    assert report.status == "failed"
+    assert any("Cost budget exceeded" in error for error in report.errors)
 
 
 def test_shared_budget_stops_second_worker() -> None:
